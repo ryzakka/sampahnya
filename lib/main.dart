@@ -125,7 +125,7 @@ class _LobbyHomeState extends State<LobbyHome>
   Future<void> _createRoom() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
-      setState(() => _error = 'Masukkan nama juragan kost terlebih dahulu!');
+      setState(() => _error = 'Masukkan nama pemain kost terlebih dahulu!');
       return;
     }
 
@@ -188,7 +188,7 @@ class _LobbyHomeState extends State<LobbyHome>
     final name = _nameController.text.trim();
     final code = _codeController.text.trim().toUpperCase();
     if (name.isEmpty || code.isEmpty) {
-      setState(() => _error = 'Isi nama juragan dan 6 digit kode ruangan!');
+      setState(() => _error = 'Isi nama pemain dan 6 digit kode ruangan!');
       return;
     }
 
@@ -330,7 +330,7 @@ class _LobbyHomeState extends State<LobbyHome>
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
                                 const Text(
-                                  'IDENTITAS JURAGAN',
+                                  'Nama Pemain',
                                   style: TextStyle(
                                     color: Color(0xFF81C784),
                                     fontSize: 11,
@@ -349,7 +349,7 @@ class _LobbyHomeState extends State<LobbyHome>
                                     fontWeight: FontWeight.w700,
                                   ),
                                   decoration: InputDecoration(
-                                    hintText: 'Contoh: Juragan Budi',
+                                    hintText: 'Mama Kos',
                                     hintStyle: TextStyle(
                                       color:
                                       Colors.white.withValues(alpha: 0.35),
@@ -389,14 +389,14 @@ class _LobbyHomeState extends State<LobbyHome>
                                         child: _modeTab(
                                           index: 0,
                                           icon: Icons.add_business_rounded,
-                                          label: 'Buka Lahan',
+                                          label: 'Buat Host',
                                         ),
                                       ),
                                       Expanded(
                                         child: _modeTab(
                                           index: 1,
                                           icon: Icons.meeting_room_rounded,
-                                          label: 'Masuk Kode',
+                                          label: 'Bergabung',
                                         ),
                                       ),
                                     ],
@@ -485,7 +485,7 @@ class _LobbyHomeState extends State<LobbyHome>
               Icon(Icons.delete_sweep_rounded, size: 16, color: Colors.black87),
               SizedBox(width: 6),
               Text(
-                'v1.2.2210',
+                'v1.4.1 (2210)',
                 style: TextStyle(
                   color: Colors.black87,
                   fontSize: 11,
@@ -963,7 +963,7 @@ class _RoomLobbyState extends State<RoomLobby> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  'LOBI PERSIAPAN KOST',
+                                  'Ruang Tunggu',
                                   style: TextStyle(
                                     color: Color(0xFF81C784),
                                     fontSize: 11,
@@ -972,7 +972,7 @@ class _RoomLobbyState extends State<RoomLobby> {
                                   ),
                                 ),
                                 Text(
-                                  'Menunggu Para Juragan',
+                                  'Menunggu Pemain Lain...',
                                   style: TextStyle(
                                     color: Colors.white,
                                     fontSize: 20,
@@ -1128,7 +1128,7 @@ class _RoomLobbyState extends State<RoomLobby> {
                       Text(
                         isHost
                             ? (allReady
-                            ? 'Semua juragan sudah siap! Tekan MULAI GAME.'
+                            ? 'Semua pemain sudah siap! Tekan MULAI GAME.'
                             : 'Menunggu minimal 2 pemain & semuanya menekan SAYA SIAP.')
                             : 'Menunggu Host memulai pertandingan…',
                         textAlign: TextAlign.center,

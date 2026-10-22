@@ -81,6 +81,8 @@ class _GameScreenState extends State<GameScreen>
   final Map<String, List<KostFx>> _fx = {};
   final Map<String, double> _haulTotal = {};
   int _lastEventMs = -100000;
+  int _lastEmojiSentMs = -10000;
+  bool _emojiBarOpen = false;
 
   Duration _offset = Duration.zero;
   RealtimeChannel? _channel;
@@ -207,7 +209,8 @@ class _GameScreenState extends State<GameScreen>
   void _ensureFx(String? id, FxType t, {double amount = 0}) {
     if (id == null) return;
     final list = _fx[id] ??= <KostFx>[];
-    final hasRecent = list.any((f) => f.type == t && f.age < 750);
+    final hasRecent =
+    list.any((f) => f.type == t && f.amount == amount && f.age < 650);
     if (!hasRecent) {
       list.add(KostFx(t, amount: amount));
     }
@@ -245,11 +248,33 @@ class _GameScreenState extends State<GameScreen>
         _ensureFx(actor, FxType.hijack, amount: amt);
         _ensureFx(target, FxType.hijack, amount: amt);
         break;
+      case 'emoji':
+        _ensureFx(actor, FxType.emoji, amount: amt);
+        break;
       case 'eliminated':
         _ensureFx(target, FxType.collapse, amount: amt);
         break;
       default:
         break;
+    }
+  }
+
+  Future<void> _sendEmoji(int code) async {
+    final now = sceneNowMs();
+    if (now - _lastEmojiSentMs < 1200) return; // cegah spam terlalu cepat
+    _lastEmojiSentMs = now;
+
+    // Tampilkan langsung di layar sendiri secara instan (optimistic UI)
+    _ensureFx(_me, FxType.emoji, amount: code.toDouble());
+    setState(() => _emojiBarOpen = false);
+
+    try {
+      await _db.rpc('send_emoji', params: {
+        'p_room': widget.roomId,
+        'p_code': code,
+      });
+    } catch (e) {
+      _toast('Gagal mengirim reaksi: $e');
     }
   }
 
@@ -450,17 +475,21 @@ class _GameScreenState extends State<GameScreen>
     }
   }
 
-  String _trashStage(double ratio) {
+  String _trashStage(double ratio, int wasteLevel) {
     if (ratio >= 0.9) return 'KRITIS: income -60%';
     if (ratio >= 0.75) return 'Penghuni kabur: income -40%';
     if (ratio >= 0.5) return 'Mulai bau: income -15%';
-    return 'Normal';
+    if (wasteLevel > 0 && ratio > 1.0 / 3.0) {
+      return 'Kotak penuh! Sampah mulai meluber ke luar';
+    }
+    return 'Tertampung di kotak sampah';
   }
 
   Color _trashColor(double ratio) {
     if (ratio >= 0.9) return Colors.red.shade700;
     if (ratio >= 0.75) return Colors.deepOrange;
     if (ratio >= 0.5) return Colors.amber.shade800;
+    if (ratio > 1.0 / 3.0) return Colors.lightGreen.shade600;
     return Colors.green.shade700;
   }
 
@@ -499,6 +528,8 @@ class _GameScreenState extends State<GameScreen>
         return t == 'Anda'
             ? '$a membajak truk sampah milikmu!'
             : '$a membajak truk sampah dari kost $t!';
+      case 'emoji':
+        return '$a bereaksi ${emojiFromCode(amt)}';
       case 'event_rain_flood':
         return 'CUACA: Hujan Badai & Banjir melanda kawasan kost!';
       case 'event_new_semester':
@@ -534,6 +565,8 @@ class _GameScreenState extends State<GameScreen>
         return (Icons.policy, Colors.redAccent);
       case 'hijack':
         return (Icons.u_turn_left, Colors.orange);
+      case 'emoji':
+        return (Icons.emoji_emotions, Colors.amberAccent);
       case 'eliminated':
         return (Icons.warning_amber_rounded, Colors.red.shade700);
       default:
@@ -732,13 +765,23 @@ class _GameScreenState extends State<GameScreen>
                   ),
                 ),
 
-              // 6) Kabar singkat & Bilah Aksi
+              // 6) Pemilih Emoji Reaksi + Kabar Singkat + Bilah Aksi
               if (hasBar) ...[
                 Positioned(
                   left: 12 + pad.left,
                   right: (wide ? rightInset : 12) + pad.right,
                   bottom: bottomInset - 2,
-                  child: IgnorePointer(child: Center(child: _eventToast())),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_emojiBarOpen)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 6),
+                          child: _emojiPickerBar(),
+                        ),
+                      IgnorePointer(child: Center(child: _eventToast())),
+                    ],
+                  ),
                 ),
                 Positioned(
                   left: 12 + pad.left,
@@ -795,6 +838,29 @@ class _GameScreenState extends State<GameScreen>
         ],
       ),
       child: child,
+    );
+  }
+
+  Widget _emojiPickerBar() {
+    return _glass(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < kEmojiList.length; i++)
+            InkWell(
+              onTap: () => _sendEmoji(i + 1),
+              borderRadius: BorderRadius.circular(12),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
+                child: Text(
+                  kEmojiList[i],
+                  style: const TextStyle(fontSize: 22),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -892,6 +958,15 @@ class _GameScreenState extends State<GameScreen>
       visualDensity: VisualDensity.compact,
       tooltip: 'Kembali',
     );
+    final emojiBtn = IconButton(
+      onPressed: () => setState(() => _emojiBarOpen = !_emojiBarOpen),
+      icon: Icon(
+        _emojiBarOpen ? Icons.emoji_emotions : Icons.emoji_emotions_outlined,
+        color: const Color(0xFFFFCA28),
+      ),
+      visualDensity: VisualDensity.compact,
+      tooltip: 'Kirim Emoji Reaksi',
+    );
     final history = IconButton(
       onPressed: _showFeed,
       icon: const Icon(Icons.history, color: Colors.white),
@@ -920,10 +995,11 @@ class _GameScreenState extends State<GameScreen>
       final ratio = live.trash / cap;
       final tier = _num(s['kost_tier']).toInt().clamp(0, 2);
       final wl = _num(s['waste_level']).toInt().clamp(0, 12);
+      final inBin = wl > 0 && ratio <= 1.0 / 3.0;
 
       trashMeter = _hudMeter(
-        icon: Icons.delete,
-        label: 'Sampah',
+        icon: inBin ? Icons.delete_outline : Icons.delete_forever,
+        label: inBin ? 'Di Kotak' : (wl > 0 ? 'Meluber!' : 'Sampah'),
         value: '${live.trash.floor()}/${cap.floor()}',
         v: live.trash,
         maxV: cap,
@@ -971,6 +1047,7 @@ class _GameScreenState extends State<GameScreen>
             ],
             Expanded(child: polMeter),
             const SizedBox(width: 4),
+            emojiBtn,
             history,
           ],
         ),
@@ -996,6 +1073,7 @@ class _GameScreenState extends State<GameScreen>
                   child: _moneyChip(s),
                 ),
               ),
+              emojiBtn,
               history,
             ],
           ),
@@ -1060,6 +1138,7 @@ class _GameScreenState extends State<GameScreen>
       final cap = max(1.0, _num(s['trash_capacity']));
       final ratio = live.trash / cap;
       final out = s['eliminated_at'] != null;
+      final wl = _num(s['waste_level']).toInt();
       final sealed = _remaining(s['sealed_until']);
       if (!out && sealed > 0) {
         tags.add(_tag(
@@ -1068,11 +1147,10 @@ class _GameScreenState extends State<GameScreen>
           Colors.redAccent.shade700,
         ));
       }
-      if (!out && ratio >= 0.5) {
-        tags.add(_tag(
-            Icons.warning_amber_rounded, _trashStage(ratio), _trashColor(ratio)));
+      if (!out && (ratio >= 0.5 || (wl > 0 && ratio > 1.0 / 3.0))) {
+        tags.add(_tag(Icons.warning_amber_rounded, _trashStage(ratio, wl),
+            _trashColor(ratio)));
       }
-      final wl = _num(s['waste_level']).toInt();
       if (!out && (wl == 8 || wl == 9)) {
         tags.add(_tag(
           Icons.factory,
@@ -1302,7 +1380,6 @@ class _GameScreenState extends State<GameScreen>
     final mode = (short || !wide) ? 2 : 0;
 
     final buttons = <Widget>[
-      // 1. Bangun Kamar
       _ActionButton(
         mode: mode,
         icon: Icons.add_home_work,
@@ -1316,16 +1393,14 @@ class _GameScreenState extends State<GameScreen>
             ? () => _act('build_room')
             : null,
       ),
-      // 2. Bank Sampah & Insinerator (Lv 1..12)
       _ActionButton(
         mode: mode,
         icon: wasteLv >= 7 ? Icons.factory : Icons.recycling,
         color: wasteLv == 7 || wasteLv == 8
             ? Colors.amber
             : Colors.lightGreenAccent.shade700,
-        title: wasteLv >= _maxWaste
-            ? 'Limbah Maks'
-            : _wasteNames[nextWasteLv],
+        title:
+        wasteLv >= _maxWaste ? 'Limbah Maks' : _wasteNames[nextWasteLv],
         subtitle: wasteLv >= _maxWaste
             ? 'Lv 12/12 Eco'
             : 'Lv $nextWasteLv · $wasteCost',
@@ -1334,14 +1409,12 @@ class _GameScreenState extends State<GameScreen>
             ? () => _act('upgrade_waste')
             : null,
       ),
-      // 3. Upgrade Kelas Kost (Reguler -> Eksklusif -> Sultan)
       _ActionButton(
         mode: mode,
         icon: Icons.workspace_premium,
         color: Colors.amber,
-        title: tier >= _maxTier
-            ? 'Kost Sultan'
-            : 'Kost ${_tierNames[nextTier]}',
+        title:
+        tier >= _maxTier ? 'Kost Sultan' : 'Kost ${_tierNames[nextTier]}',
         subtitle: tier >= _maxTier
             ? 'Kelas Maks'
             : (rooms < tierMinRooms
@@ -1355,7 +1428,6 @@ class _GameScreenState extends State<GameScreen>
             ? () => _act('upgrade_kost_tier')
             : null,
       ),
-      // 4. Sewa Tukang Sampah
       _ActionButton(
         mode: mode,
         icon: Icons.local_shipping,
@@ -1375,7 +1447,6 @@ class _GameScreenState extends State<GameScreen>
             ? () => _act('hire_hauler')
             : null,
       ),
-      // 5. Bakar Sampah
       _ActionButton(
         mode: mode,
         icon: Icons.local_fire_department,
@@ -1391,7 +1462,6 @@ class _GameScreenState extends State<GameScreen>
             ? () => _act('burn')
             : null,
       ),
-      // 6. Pertahanan
       _ActionButton(
         mode: mode,
         icon: Icons.shield,
@@ -1425,7 +1495,6 @@ class _GameScreenState extends State<GameScreen>
       );
     }
 
-    // Pada layar HP (sempit): susun 2 baris x 3 kolom agar semua 6 tombol nyaman ditekan
     return _glass(
       padding: const EdgeInsets.all(6),
       child: SizedBox(
@@ -1653,7 +1722,6 @@ class _GameScreenState extends State<GameScreen>
             padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
             child: Row(
               children: [
-                // 1) Lempar Sampah
                 Expanded(
                   child: _sabotageBtn(
                     icon: Icons.rocket_launch_rounded,
@@ -1665,7 +1733,6 @@ class _GameScreenState extends State<GameScreen>
                   ),
                 ),
                 const SizedBox(width: 4),
-                // 2) Sidak RT / Dinas
                 Expanded(
                   child: _sabotageBtn(
                     icon: Icons.policy_rounded,
@@ -1678,7 +1745,6 @@ class _GameScreenState extends State<GameScreen>
                   ),
                 ),
                 const SizedBox(width: 4),
-                // 3) Bajak Truk Sampah
                 Expanded(
                   child: _sabotageBtn(
                     icon: Icons.u_turn_left_rounded,
