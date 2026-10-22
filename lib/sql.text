@@ -1,65 +1,563 @@
--- ====================================================================
--- 1. PENAMBAHAN KOLOM PADA TABEL
--- ====================================================================
+-- =====================================================================
+--  SAMPAHNYA v2 "Intens": Tangkis, Dendam, Bounty, Tekanan Sampah, Tempo
+--  Jalankan SEKALI di Supabase SQL Editor. Aman diulang (IF NOT EXISTS /
+--  CREATE OR REPLACE), tetapi seluruh fungsi di bawah menimpa versi lama:
+--  throw_trash, sabotage_inspect, sabotage_hijack, buy_defense,
+--  sync_room_state, start_game.
+--  Fungsi lama _settle_room/_calc_rates/_refresh_rates/_check_winner
+--  TIDAK disentuh (tidak dipakai lagi).
+-- =====================================================================
 
-ALTER TABLE public.rooms
-  ADD COLUMN IF NOT EXISTS world_event text,
-  ADD COLUMN IF NOT EXISTS world_event_until timestamp with time zone,
-  ADD COLUMN IF NOT EXISTS next_event_at timestamp with time zone DEFAULT (now() + interval '40 seconds');
+-- ---------------------------------------------------------------- kolom baru
 
 ALTER TABLE public.player_state
-  ADD COLUMN IF NOT EXISTS waste_level integer NOT NULL DEFAULT 0 CHECK (waste_level BETWEEN 0 AND 12),
-  ADD COLUMN IF NOT EXISTS kost_tier integer NOT NULL DEFAULT 0 CHECK (kost_tier BETWEEN 0 AND 2),
-  ADD COLUMN IF NOT EXISTS sabotage_cooldown_until timestamp with time zone,
-  ADD COLUMN IF NOT EXISTS sealed_until timestamp with time zone;
+  ADD COLUMN IF NOT EXISTS pending_attack_type   text,
+  ADD COLUMN IF NOT EXISTS pending_attack_from   uuid,
+  ADD COLUMN IF NOT EXISTS pending_attack_amount numeric NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS pending_attack_until  timestamptz,
+  ADD COLUMN IF NOT EXISTS parry_cooldown_until  timestamptz,
+  ADD COLUMN IF NOT EXISTS revenge_target        uuid,
+  ADD COLUMN IF NOT EXISTS revenge_until         timestamptz;
 
--- ====================================================================
--- 2. FUNGSI PEMBANTU PERHITUNGAN & SINKRONISASI STATE RUANGAN
--- ====================================================================
+ALTER TABLE public.rooms
+  ADD COLUMN IF NOT EXISTS bounty_id uuid;
 
-CREATE OR REPLACE FUNCTION public.waste_capacity_for(p_level integer)
-RETURNS numeric LANGUAGE sql IMMUTABLE AS $$
-  SELECT CASE p_level
-    WHEN 0 THEN 100
-    WHEN 1 THEN 125
-    WHEN 2 THEN 155
-    WHEN 3 THEN 195
-    WHEN 4 THEN 240
-    WHEN 5 THEN 295
-    WHEN 6 THEN 360
-    WHEN 7 THEN 400
-    WHEN 8 THEN 430
-    WHEN 9 THEN 470
-    WHEN 10 THEN 500
-    WHEN 11 THEN 550
-    WHEN 12 THEN 620
-    ELSE 100
-  END::numeric;
+-- ------------------------------------------------- bounty: Juragan Teladan
+
+CREATE OR REPLACE FUNCTION public._update_bounty(p_room uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_cur uuid;
+  v_cur_money numeric;
+  v_top uuid;
+  v_top_money numeric;
+  v_second numeric;
+  v_new uuid;
+BEGIN
+  SELECT bounty_id INTO v_cur FROM public.rooms WHERE id = p_room;
+
+  SELECT player_id, money INTO v_top, v_top_money
+  FROM public.player_state
+  WHERE room_id = p_room AND eliminated_at IS NULL
+  ORDER BY money DESC LIMIT 1;
+
+  SELECT money INTO v_second
+  FROM public.player_state
+  WHERE room_id = p_room AND eliminated_at IS NULL AND player_id <> v_top
+  ORDER BY money DESC LIMIT 1;
+
+  v_new := v_cur;
+
+  IF v_top IS NULL OR v_second IS NULL THEN
+    v_new := NULL;                         -- butuh >= 2 pemain hidup
+  ELSE
+    SELECT money INTO v_cur_money
+    FROM public.player_state
+    WHERE room_id = p_room AND player_id = v_cur AND eliminated_at IS NULL;
+
+    IF v_cur IS NULL OR v_cur_money IS NULL THEN
+      -- belum ada / pemegang lama sudah tertimbun
+      IF v_top_money >= 200 AND v_top_money >= v_second * 1.15 THEN
+        v_new := v_top;
+      ELSE
+        v_new := NULL;
+      END IF;
+    ELSIF v_top <> v_cur AND v_top_money >= v_cur_money * 1.15 THEN
+      v_new := v_top;                      -- histeresis 15%: tidak gonta-ganti tiap detik
+    END IF;
+  END IF;
+
+  IF v_new IS DISTINCT FROM v_cur THEN
+    UPDATE public.rooms SET bounty_id = v_new WHERE id = p_room;
+  END IF;
+END;
 $$;
 
-CREATE OR REPLACE FUNCTION public.waste_cost_for(p_next_level integer)
-RETURNS numeric LANGUAGE sql IMMUTABLE AS $$
-  SELECT CASE p_next_level
-    WHEN 1 THEN 80
-    WHEN 2 THEN 130
-    WHEN 3 THEN 200
-    WHEN 4 THEN 290
-    WHEN 5 THEN 400
-    WHEN 6 THEN 540
-    WHEN 7 THEN 720
-    WHEN 8 THEN 950
-    WHEN 9 THEN 1250
-    WHEN 10 THEN 1650
-    WHEN 11 THEN 2150
-    WHEN 12 THEN 2800
-    ELSE 999999
-  END::numeric;
+-- ----------------------------- penyelesaian serangan tertunda (Tangkis)
+
+CREATE OR REPLACE FUNCTION public._resolve_pending(
+  p_room uuid, p_victim uuid, p_parried boolean)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_v public.player_state%ROWTYPE;
+  v_a public.player_state%ROWTYPE;
+  v_a_alive boolean;
+  v_bounty uuid;
+  v_landed numeric;
+  v_fine numeric;
+BEGIN
+  SELECT * INTO v_v FROM public.player_state
+  WHERE room_id = p_room AND player_id = p_victim FOR UPDATE;
+  IF NOT FOUND OR v_v.pending_attack_type IS NULL THEN RETURN; END IF;
+
+  SELECT * INTO v_a FROM public.player_state
+  WHERE room_id = p_room AND player_id = v_v.pending_attack_from FOR UPDATE;
+  v_a_alive := FOUND;
+  IF v_a_alive THEN v_a_alive := (v_a.eliminated_at IS NULL); END IF;
+
+  -- bersihkan status tertunda lebih dulu
+  UPDATE public.player_state
+  SET pending_attack_type = NULL,
+      pending_attack_from = NULL,
+      pending_attack_amount = 0,
+      pending_attack_until = NULL
+  WHERE room_id = p_room AND player_id = p_victim;
+
+  IF v_v.eliminated_at IS NOT NULL THEN RETURN; END IF;
+
+  -- ------------------------------------------------------- LEMPAR SAMPAH
+  IF v_v.pending_attack_type = 'throw' THEN
+    IF NOT p_parried THEN
+      -- Pertahanan Lv1..3 mengurangi sampah yang masuk 10% per level (maks 30%)
+      v_landed := ROUND(v_v.pending_attack_amount
+                        * (1.0 - LEAST(3, v_v.defense) * 0.10));
+
+      UPDATE public.player_state
+      SET trash = trash + v_landed,
+          last_hit_at = now(),
+          revenge_target = v_v.pending_attack_from,
+          revenge_until = now() + interval '20 seconds'
+      WHERE room_id = p_room AND player_id = p_victim;
+
+      SELECT bounty_id INTO v_bounty FROM public.rooms WHERE id = p_room;
+      IF v_a_alive AND v_bounty = p_victim THEN
+        UPDATE public.player_state SET money = money + 40
+        WHERE room_id = p_room AND player_id = v_v.pending_attack_from;
+      END IF;
+
+      INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
+      VALUES (p_room, v_v.pending_attack_from, p_victim, 'throw', v_landed);
+
+    ELSIF v_a_alive THEN
+      -- TANGKIS: sampah dipantulkan PENUH ke pelempar
+      UPDATE public.player_state
+      SET trash = trash + v_v.pending_attack_amount
+      WHERE room_id = p_room AND player_id = v_v.pending_attack_from;
+
+      UPDATE public.player_state
+      SET revenge_target = v_v.pending_attack_from,
+          revenge_until = now() + interval '20 seconds'
+      WHERE room_id = p_room AND player_id = p_victim;
+
+      INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
+      VALUES (p_room, p_victim, v_v.pending_attack_from, 'parry',
+              v_v.pending_attack_amount);
+    END IF;
+
+  -- ----------------------------------------------------------- SIDAK
+  ELSIF v_v.pending_attack_type = 'inspect' THEN
+    IF NOT p_parried THEN
+      v_fine := ROUND(v_v.money * v_v.pending_attack_amount);
+
+      UPDATE public.player_state
+      SET money = GREATEST(0, money - v_fine),
+          sealed_until = now() + interval '14 seconds',
+          revenge_target = v_v.pending_attack_from,
+          revenge_until = now() + interval '20 seconds'
+      WHERE room_id = p_room AND player_id = p_victim;
+
+      IF v_a_alive THEN
+        UPDATE public.player_state SET money = money + ROUND(v_fine * 0.6)
+        WHERE room_id = p_room AND player_id = v_v.pending_attack_from;
+      END IF;
+
+      INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
+      VALUES (p_room, v_v.pending_attack_from, p_victim, 'inspect', v_fine);
+
+    ELSIF v_a_alive THEN
+      -- TANGKIS: denda & segel menimpa penyidak
+      v_fine := ROUND(v_a.money * v_v.pending_attack_amount);
+
+      UPDATE public.player_state
+      SET money = GREATEST(0, money - v_fine),
+          sealed_until = now() + interval '14 seconds'
+      WHERE room_id = p_room AND player_id = v_v.pending_attack_from;
+
+      UPDATE public.player_state
+      SET money = money + ROUND(v_fine * 0.6),
+          revenge_target = v_v.pending_attack_from,
+          revenge_until = now() + interval '20 seconds'
+      WHERE room_id = p_room AND player_id = p_victim;
+
+      INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
+      VALUES (p_room, p_victim, v_v.pending_attack_from, 'parry_inspect', v_fine);
+    END IF;
+  END IF;
+END;
 $$;
+
+CREATE OR REPLACE FUNCTION public._resolve_expired(p_room uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  r record;
+BEGIN
+  FOR r IN
+    SELECT player_id FROM public.player_state
+    WHERE room_id = p_room
+      AND pending_attack_type IS NOT NULL
+      AND pending_attack_until <= now()
+  LOOP
+    PERFORM public._resolve_pending(p_room, r.player_id, false);
+  END LOOP;
+END;
+$$;
+
+-- fungsi internal: tidak boleh dipanggil langsung dari klien
+REVOKE ALL ON FUNCTION public._update_bounty(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public._resolve_pending(uuid, uuid, boolean) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public._resolve_expired(uuid) FROM PUBLIC, anon, authenticated;
+
+-- ------------------------------------------------------------- TANGKIS
+
+CREATE OR REPLACE FUNCTION public.tangkis(p_room uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me public.player_state%ROWTYPE;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Belum masuk.'; END IF;
+  PERFORM public.sync_room_state(p_room);
+
+  SELECT * INTO v_me FROM public.player_state
+  WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
+
+  IF NOT FOUND OR v_me.eliminated_at IS NOT NULL THEN
+    RAISE EXCEPTION 'Kost Anda sudah tertimbun.';
+  END IF;
+  IF v_me.pending_attack_type IS NULL OR v_me.pending_attack_until <= now() THEN
+    RAISE EXCEPTION 'Tidak ada serangan yang bisa ditangkis.';
+  END IF;
+  IF v_me.parry_cooldown_until IS NOT NULL AND v_me.parry_cooldown_until > now() THEN
+    RAISE EXCEPTION 'Tangkis masih diisi ulang.';
+  END IF;
+
+  UPDATE public.player_state
+  SET parry_cooldown_until = now() + interval '15 seconds'
+  WHERE room_id = p_room AND player_id = auth.uid();
+
+  PERFORM public._resolve_pending(p_room, auth.uid(), true);
+  PERFORM public.sync_room_state(p_room);
+END;
+$$;
+
+-- ---------------------------------------------------------- throw_trash
+
+CREATE OR REPLACE FUNCTION public.throw_trash(p_room uuid, p_target uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me public.player_state%ROWTYPE;
+  v_tg public.player_state%ROWTYPE;
+  v_raw numeric;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Belum masuk.'; END IF;
+  IF p_target = auth.uid() THEN RAISE EXCEPTION 'Target tidak valid.'; END IF;
+
+  PERFORM public.sync_room_state(p_room);
+  IF (SELECT status FROM public.rooms WHERE id = p_room) <> 'playing' THEN
+    RAISE EXCEPTION 'Permainan tidak sedang berjalan.';
+  END IF;
+
+  SELECT * INTO v_me FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
+  SELECT * INTO v_tg FROM public.player_state WHERE room_id = p_room AND player_id = p_target FOR UPDATE;
+
+  IF v_me.player_id IS NULL OR v_tg.player_id IS NULL
+     OR v_me.eliminated_at IS NOT NULL OR v_tg.eliminated_at IS NOT NULL THEN
+    RAISE EXCEPTION 'Target tidak valid.';
+  END IF;
+  IF v_me.throw_cooldown_until IS NOT NULL AND v_me.throw_cooldown_until > now() THEN
+    RAISE EXCEPTION 'Pelontar sampah sedang diisi ulang.';
+  END IF;
+  IF v_tg.protected_until IS NOT NULL AND v_tg.protected_until > now() THEN
+    RAISE EXCEPTION 'Kost lawan sedang dilindungi perisai aktif!';
+  END IF;
+  IF v_tg.pending_attack_type IS NOT NULL AND v_tg.pending_attack_until > now() THEN
+    RAISE EXCEPTION 'Lawan sedang diserang, tunggu sebentar.';
+  END IF;
+  IF v_me.money < 10 OR v_me.trash < 1 THEN
+    RAISE EXCEPTION 'Butuh minimal 10 uang dan 1 sampah.';
+  END IF;
+
+  v_raw := LEAST(v_me.trash, 18 + v_me.rooms_count * 1.5);
+
+  -- sampah keluar dari kost sekarang, tetapi baru mendarat setelah 2,5 detik
+  UPDATE public.player_state
+  SET money = money - 10,
+      trash = GREATEST(0, trash - v_raw),
+      throw_cooldown_until = now() + interval '4 seconds'
+  WHERE room_id = p_room AND player_id = auth.uid();
+
+  UPDATE public.player_state
+  SET pending_attack_type = 'throw',
+      pending_attack_from = auth.uid(),
+      pending_attack_amount = v_raw,
+      pending_attack_until = now() + interval '2.5 seconds'
+  WHERE room_id = p_room AND player_id = p_target;
+
+  INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
+  VALUES (p_room, auth.uid(), p_target, 'throw_launch', v_raw);
+
+  PERFORM public.sync_room_state(p_room);
+END;
+$$;
+
+-- ------------------------------------------------------ sabotage_inspect
+
+CREATE OR REPLACE FUNCTION public.sabotage_inspect(p_room uuid, p_target uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me public.player_state%ROWTYPE;
+  v_tg public.player_state%ROWTYPE;
+  v_bounty uuid;
+  v_revenge boolean;
+  v_cost numeric;
+  v_rate numeric;
+  v_violating boolean;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Belum masuk.'; END IF;
+  IF p_target = auth.uid() THEN RAISE EXCEPTION 'Target tidak valid.'; END IF;
+
+  PERFORM public.sync_room_state(p_room);
+  IF (SELECT status FROM public.rooms WHERE id = p_room) <> 'playing' THEN
+    RAISE EXCEPTION 'Permainan tidak sedang berjalan.';
+  END IF;
+
+  SELECT * INTO v_me FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
+  SELECT * INTO v_tg FROM public.player_state WHERE room_id = p_room AND player_id = p_target FOR UPDATE;
+  SELECT bounty_id INTO v_bounty FROM public.rooms WHERE id = p_room;
+
+  IF v_me.player_id IS NULL OR v_tg.player_id IS NULL
+     OR v_me.eliminated_at IS NOT NULL OR v_tg.eliminated_at IS NOT NULL THEN
+    RAISE EXCEPTION 'Target tidak valid.';
+  END IF;
+
+  v_revenge := v_me.revenge_target = p_target AND v_me.revenge_until > now();
+
+  IF NOT v_revenge AND v_me.sabotage_cooldown_until IS NOT NULL
+     AND v_me.sabotage_cooldown_until > now() THEN
+    RAISE EXCEPTION 'Tim Sidak masih sibuk, tunggu jeda sabotase.';
+  END IF;
+  IF v_tg.pending_attack_type IS NOT NULL AND v_tg.pending_attack_until > now() THEN
+    RAISE EXCEPTION 'Lawan sedang diserang, tunggu sebentar.';
+  END IF;
+
+  -- Bounty: lebih murah 30%, denda lebih besar. Dendam: biaya 50%.
+  v_cost := ROUND(90
+                  * (CASE WHEN v_bounty = p_target THEN 0.7 ELSE 1.0 END)
+                  * (CASE WHEN v_revenge THEN 0.5 ELSE 1.0 END));
+  v_rate := CASE WHEN v_bounty = p_target THEN 0.35 ELSE 0.25 END;
+
+  IF v_me.money < v_cost THEN
+    RAISE EXCEPTION 'Butuh % uang untuk menyewa Tim Sidak RT/Dinas.', v_cost;
+  END IF;
+
+  v_violating := (v_tg.burn_penalty_until IS NOT NULL AND v_tg.burn_penalty_until > now())
+                 OR (v_tg.waste_level IN (8, 9))
+                 OR (v_tg.trash / GREATEST(1, v_tg.trash_capacity) >= 0.70);
+
+  IF NOT v_violating THEN
+    RAISE EXCEPTION 'Lawan sedang tertib! Sidak hanya bisa dikirim jika lawan habis bakar sampah, pakai Insinerator Berpolusi (Lv 8-9), atau sampahnya >70%%.';
+  END IF;
+
+  UPDATE public.player_state
+  SET money = money - v_cost,
+      sabotage_cooldown_until = CASE WHEN v_revenge THEN sabotage_cooldown_until
+                                     ELSE now() + interval '22 seconds' END
+  WHERE room_id = p_room AND player_id = auth.uid();
+
+  -- Sidak tertunda 2,5 detik: korban boleh menangkis
+  UPDATE public.player_state
+  SET pending_attack_type = 'inspect',
+      pending_attack_from = auth.uid(),
+      pending_attack_amount = v_rate,
+      pending_attack_until = now() + interval '2.5 seconds'
+  WHERE room_id = p_room AND player_id = p_target;
+
+  INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
+  VALUES (p_room, auth.uid(), p_target, 'inspect_launch', v_cost);
+
+  PERFORM public.sync_room_state(p_room);
+END;
+$$;
+
+-- ------------------------------------------------------ sabotage_hijack
+
+CREATE OR REPLACE FUNCTION public.sabotage_hijack(p_room uuid, p_target uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_me public.player_state%ROWTYPE;
+  v_tg public.player_state%ROWTYPE;
+  v_revenge boolean;
+  v_cost numeric;
+  v_stolen numeric;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Belum masuk.'; END IF;
+  IF p_target = auth.uid() THEN RAISE EXCEPTION 'Target tidak valid.'; END IF;
+
+  PERFORM public.sync_room_state(p_room);
+  IF (SELECT status FROM public.rooms WHERE id = p_room) <> 'playing' THEN
+    RAISE EXCEPTION 'Permainan tidak sedang berjalan.';
+  END IF;
+
+  SELECT * INTO v_me FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
+  SELECT * INTO v_tg FROM public.player_state WHERE room_id = p_room AND player_id = p_target FOR UPDATE;
+
+  IF v_me.player_id IS NULL OR v_tg.player_id IS NULL
+     OR v_me.eliminated_at IS NOT NULL OR v_tg.eliminated_at IS NOT NULL THEN
+    RAISE EXCEPTION 'Target tidak valid.';
+  END IF;
+
+  v_revenge := v_me.revenge_target = p_target AND v_me.revenge_until > now();
+  v_cost := CASE WHEN v_revenge THEN 35 ELSE 70 END;
+
+  IF NOT v_revenge AND v_me.sabotage_cooldown_until IS NOT NULL
+     AND v_me.sabotage_cooldown_until > now() THEN
+    RAISE EXCEPTION 'Jeda sabotase masih aktif.';
+  END IF;
+  IF v_tg.hauler_busy_until IS NULL OR v_tg.hauler_busy_until <= now() OR v_tg.hauler_amount <= 0 THEN
+    RAISE EXCEPTION 'Lawan sedang tidak menyewa truk sampah!';
+  END IF;
+  IF v_me.money < v_cost THEN
+    RAISE EXCEPTION 'Butuh % uang untuk menyuap sopir truk lawan.', v_cost;
+  END IF;
+
+  v_stolen := v_tg.hauler_amount;
+
+  UPDATE public.player_state
+  SET hauler_amount = 0,
+      hauler_busy_until = NULL
+  WHERE room_id = p_room AND player_id = p_target;
+
+  UPDATE public.player_state
+  SET money = money - v_cost,
+      hauler_amount = v_stolen,
+      hauler_busy_until = now() + interval '5 seconds',
+      sabotage_cooldown_until = CASE WHEN v_revenge THEN sabotage_cooldown_until
+                                     ELSE now() + interval '20 seconds' END
+  WHERE room_id = p_room AND player_id = auth.uid();
+
+  INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
+  VALUES (p_room, auth.uid(), p_target, 'hijack', v_stolen);
+END;
+$$;
+
+-- ----------------------------------------------------------- buy_defense
+
+CREATE OR REPLACE FUNCTION public.buy_defense(p_room uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_p public.player_state%ROWTYPE;
+  v_cost numeric;
+BEGIN
+  IF auth.uid() IS NULL THEN RAISE EXCEPTION 'Belum masuk.'; END IF;
+  PERFORM public.sync_room_state(p_room);
+  SELECT * INTO v_p FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
+
+  IF NOT FOUND OR v_p.eliminated_at IS NOT NULL THEN RAISE EXCEPTION 'Kost Anda sudah tertimbun.'; END IF;
+  IF v_p.defense >= 3 THEN RAISE EXCEPTION 'Pertahanan sudah level maksimal.'; END IF;
+
+  v_cost := 150 * (v_p.defense + 1);
+  IF v_p.money < v_cost THEN RAISE EXCEPTION 'Uang belum cukup untuk memperkuat pertahanan.'; END IF;
+
+  UPDATE public.player_state
+  SET money = money - v_cost,
+      defense = defense + 1,
+      protected_until = now() + interval '3 seconds'   -- dulu 10 detik
+  WHERE room_id = p_room AND player_id = auth.uid();
+
+  INSERT INTO public.game_events (room_id, actor_id, type, amount)
+  VALUES (p_room, auth.uid(), 'defense', v_p.defense + 1);
+END;
+$$;
+
+-- ------------------------------------------------------------ start_game
+
+CREATE OR REPLACE FUNCTION public.start_game(p_room uuid)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+  v_room public.rooms%ROWTYPE;
+  v_count integer;
+BEGIN
+  SELECT * INTO v_room FROM public.rooms WHERE id = p_room FOR UPDATE;
+  IF NOT FOUND THEN RAISE EXCEPTION 'Ruangan tidak ditemukan.'; END IF;
+  IF v_room.host_id <> auth.uid() THEN
+    RAISE EXCEPTION 'Hanya Host yang dapat memulai permainan.';
+  END IF;
+  IF v_room.status = 'playing' THEN
+    RAISE EXCEPTION 'Permainan sudah berjalan.';
+  END IF;
+
+  SELECT count(*) INTO v_count FROM public.room_players WHERE room_id = p_room;
+  IF v_count < 2 THEN
+    RAISE EXCEPTION 'Minimal 2 pemain untuk memulai.';
+  END IF;
+
+  DELETE FROM public.player_state WHERE room_id = p_room;
+  INSERT INTO public.player_state (
+    room_id, player_id, money, trash, trash_capacity, rooms_count, defense,
+    income_rate, trash_rate, waste_level, kost_tier
+  )
+  -- tempo: income awal ×1,3 (2.35 -> 3.05)
+  SELECT p_room, player_id, 120, 5, 100, 1, 0, 3.05, 0.20, 0, 0
+  FROM public.room_players WHERE room_id = p_room;
+
+  UPDATE public.rooms
+  SET status = 'playing',
+      started_at = now(),
+      finished_at = NULL,
+      winner_id = NULL,
+      bounty_id = NULL,
+      pollution = 0,
+      pollution_updated_at = now(),
+      smog_until = NULL,
+      world_event = NULL,
+      world_event_until = NULL,
+      next_event_at = now() + interval '35 seconds'
+  WHERE id = p_room;
+END;
+$$;
+
+-- ------------------------------------------------------ sync_room_state
 
 CREATE OR REPLACE FUNCTION public.sync_room_state(p_room uuid)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
   v_room public.rooms%ROWTYPE;
@@ -80,6 +578,7 @@ DECLARE
   v_waste_inc_bonus numeric;
   v_pol_mult numeric;
   v_trash_mult numeric;
+  v_pressure numeric;
   v_alive_count integer := 0;
   v_last_alive uuid;
   v_roll numeric;
@@ -93,6 +592,14 @@ BEGIN
   IF v_room.status <> 'playing' THEN
     RETURN jsonb_build_object('server_now', v_now, 'status', v_room.status);
   END IF;
+
+  -- Selesaikan serangan (lempar/sidak) yang jendela Tangkis-nya sudah habis
+  PERFORM public._resolve_expired(p_room);
+
+  -- Tekanan sampah: +20% laju sampah semua pemain tiap 2 menit (tanpa batas atas)
+  v_pressure := 1.0 + 0.2 * floor(
+    GREATEST(0, EXTRACT(EPOCH FROM (v_now - COALESCE(v_room.started_at, v_now)))) / 120.0
+  );
 
   -- Bersihkan world_event yang sudah selesai
   IF v_room.world_event IS NOT NULL AND v_room.world_event_until <= v_now THEN
@@ -120,7 +627,7 @@ BEGIN
     VALUES (p_room, 'event_' || v_ev, 22);
   END IF;
 
-  -- Hitung perubahan polusi dari pemain yang memakai Insinerator Lv 8/9 atau Lv 11/12
+  -- Perubahan polusi dari Insinerator Lv 8/9 (naik) dan Lv 11/12 (turun)
   FOR v_p IN SELECT * FROM public.player_state WHERE room_id = p_room AND eliminated_at IS NULL LOOP
     IF v_p.waste_level = 8 THEN
       v_pol_delta := v_pol_delta + 0.25;
@@ -134,13 +641,11 @@ BEGIN
   END LOOP;
 
   v_dt := GREATEST(0, EXTRACT(EPOCH FROM (v_now - v_room.pollution_updated_at)));
-  -- Laju penurunan polusi alami -0.4/dtk (atau -0.8/dtk saat Subsidi Hijau)
   v_pol_delta := v_pol_delta - (CASE WHEN v_room.world_event = 'eco_subsidy' THEN 0.8 ELSE 0.4 END);
   v_room.pollution := LEAST(100, GREATEST(0, v_room.pollution + v_pol_delta * v_dt));
   v_room.pollution_updated_at := v_now;
   v_room.last_tick_at := v_now;
 
-  -- Jika polusi menyentuh >= 90, picu Kabut Asap (Smog) selama 18 detik
   IF v_room.pollution >= 90 AND (v_room.smog_until IS NULL OR v_room.smog_until < v_now) THEN
     v_room.smog_until := v_now + interval '18 seconds';
   END IF;
@@ -167,7 +672,6 @@ BEGIN
     v_new_money := v_p.money + v_p.income_rate * v_p_dt;
     v_new_trash := v_p.trash + v_p.trash_rate * v_p_dt;
 
-    -- Selesaikan angkut truk sampah bila waktunya sudah lewat
     IF v_p.hauler_amount > 0 AND (v_p.hauler_busy_until IS NULL OR v_p.hauler_busy_until <= v_now) THEN
       v_new_trash := GREATEST(0, v_new_trash - v_p.hauler_amount);
       v_p.hauler_amount := 0;
@@ -176,7 +680,7 @@ BEGIN
 
     v_new_trash := GREATEST(0, v_new_trash);
 
-    -- Cek eliminasi bila sampah penuh
+    -- Penuh total -> tertimbun
     IF v_new_trash >= v_cap THEN
       v_new_trash := v_cap;
       v_p.eliminated_at := v_now;
@@ -185,11 +689,11 @@ BEGIN
       INSERT INTO public.game_events (room_id, target_id, type)
       VALUES (p_room, v_p.player_id, 'eliminated');
     ELSE
-      -- Hitung ulang income_rate & trash_rate berdasarkan kamar, kost_tier, waste_level, polusi, dan world_event
       v_tier_inc_mult := CASE v_p.kost_tier WHEN 1 THEN 1.6 WHEN 2 THEN 2.4 ELSE 1.0 END;
       v_tier_tr_mult  := CASE v_p.kost_tier WHEN 1 THEN 1.25 WHEN 2 THEN 1.5 ELSE 1.0 END;
 
-      v_base_inc := (1.2 + v_p.rooms_count * 1.15) * v_tier_inc_mult;
+      -- tempo: income dasar ×1,3
+      v_base_inc := (1.2 + v_p.rooms_count * 1.15) * v_tier_inc_mult * 1.3;
       v_base_tr  := (0.12 + v_p.rooms_count * 0.085) * v_tier_tr_mult;
 
       v_waste_tr_red := CASE v_p.waste_level
@@ -224,7 +728,6 @@ BEGIN
         WHEN v_ratio >= 0.50 THEN 0.85
         ELSE 1.00
       END;
-      -- Kost Sultan lebih sensitif terhadap bau sampah
       IF v_p.kost_tier = 2 AND v_ratio >= 0.50 THEN
         v_trash_mult := v_trash_mult * 0.75;
       END IF;
@@ -238,30 +741,29 @@ BEGIN
 
       v_p.income_rate := (v_base_inc * v_trash_mult * v_pol_mult) + v_waste_inc_bonus;
 
-      -- Penalti bakar sampah beruntun
       IF v_p.burn_penalty_until IS NOT NULL AND v_p.burn_penalty_until > v_now THEN
         v_p.income_rate := v_p.income_rate * GREATEST(0.35, 1.0 - v_p.burn_stacks * 0.15);
       ELSE
         v_p.burn_stacks := 0;
       END IF;
 
-      -- Penalti disegel akibat Sidak RT/Dinas
       IF v_p.sealed_until IS NOT NULL AND v_p.sealed_until > v_now THEN
         v_p.income_rate := v_p.income_rate * 0.5;
       END IF;
 
-      -- Bonus Musim Mahasiswa Baru
       IF v_room.world_event = 'new_semester' THEN
         v_p.income_rate := v_p.income_rate * 1.35;
       END IF;
 
-      -- Laju sampah bersih (bisa bernilai negatif bila Insinerator lebih kuat dari produksi sampah kamar)
       IF v_room.pollution >= 85 THEN
         v_base_tr := v_base_tr * 1.20;
       END IF;
       IF v_room.world_event = 'rain_flood' THEN
         v_base_tr := v_base_tr * 1.35;
       END IF;
+
+      -- Tekanan sampah bertahap (x1.0, 1.2, 1.4, ... tiap 2 menit)
+      v_base_tr := v_base_tr * v_pressure;
 
       v_p.trash_rate := GREATEST(-0.80, v_base_tr - v_waste_tr_red);
     END IF;
@@ -285,7 +787,10 @@ BEGIN
     END IF;
   END LOOP;
 
-  -- Cek apakah permainan selesai (tersisa <= 1 pemain hidup)
+  -- Bounty: pemain terkaya (histeresis 15%)
+  PERFORM public._update_bounty(p_room);
+
+  -- Ronde berakhir HANYA bila tersisa <= 1 pemain hidup (sampah penuh total)
   IF v_alive_count <= 1 THEN
     UPDATE public.rooms
     SET status = 'finished',
@@ -294,429 +799,16 @@ BEGIN
     WHERE id = p_room;
   END IF;
 
-  RETURN jsonb_build_object('server_now', v_now, 'status', v_room.status);
+  RETURN jsonb_build_object('server_now', v_now, 'status', v_room.status,
+                            'pressure', v_pressure);
 END;
 $$;
 
--- ====================================================================
--- 3. FUNGSI RPC UTAMA & FITUR BARU
--- ====================================================================
-
-CREATE OR REPLACE FUNCTION public.game_tick(p_room uuid)
-RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER AS $$
-BEGIN
-  RETURN public.sync_room_state(p_room);
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION public.start_game(p_room uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_room public.rooms%ROWTYPE;
-  v_count integer;
-  v_ready integer;
-BEGIN
-  SELECT * INTO v_room FROM public.rooms WHERE id = p_room FOR UPDATE;
-  IF v_room.host_id <> auth.uid() THEN
-    RAISE EXCEPTION 'Hanya Host yang dapat memulai permainan.';
-  END IF;
-
-  SELECT count(*), count(*) FILTER (WHERE is_ready)
-  INTO v_count, v_ready
-  FROM public.room_players WHERE room_id = p_room;
-
-  IF v_count < 2 THEN
-    RAISE EXCEPTION 'Minimal 2 pemain untuk memulai.';
-  END IF;
-
-  DELETE FROM public.player_state WHERE room_id = p_room;
-  INSERT INTO public.player_state (
-    room_id, player_id, money, trash, trash_capacity, rooms_count, defense,
-    income_rate, trash_rate, waste_level, kost_tier
-  )
-  SELECT p_room, player_id, 120, 5, 100, 1, 0, 2.35, 0.20, 0, 0
-  FROM public.room_players WHERE room_id = p_room;
-
-  UPDATE public.rooms
-  SET status = 'playing',
-      started_at = now(),
-      pollution = 0,
-      pollution_updated_at = now(),
-      smog_until = NULL,
-      world_event = NULL,
-      world_event_until = NULL,
-      next_event_at = now() + interval '35 seconds'
-  WHERE id = p_room;
-END;
-$$;
-
--- Bangun Kamar Baru
-CREATE OR REPLACE FUNCTION public.build_room(p_room uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_room public.rooms%ROWTYPE;
-  v_p public.player_state%ROWTYPE;
-  v_cost numeric;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_room FROM public.rooms WHERE id = p_room;
-  SELECT * INTO v_p FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-
-  IF v_p.eliminated_at IS NOT NULL THEN RAISE EXCEPTION 'Kost Anda sudah tertimbun.'; END IF;
-  IF v_p.sealed_until IS NOT NULL AND v_p.sealed_until > now() THEN
-    RAISE EXCEPTION 'Kost sedang disegel Dinas/RT! Tunggu segel dibuka.';
-  END IF;
-  IF v_p.rooms_count >= 12 THEN RAISE EXCEPTION 'Jumlah kamar sudah maksimal (12).'; END IF;
-
-  v_cost := ROUND(
-    100 * power(1.35, v_p.rooms_count)
-    * (CASE WHEN v_room.pollution >= 60 THEN 1.5 ELSE 1.0 END)
-    * (CASE WHEN v_room.world_event = 'new_semester' THEN 0.75 ELSE 1.0 END)
-  );
-
-  IF v_p.money < v_cost THEN RAISE EXCEPTION 'Uang belum cukup untuk membangun kamar.'; END IF;
-
-  UPDATE public.player_state
-  SET money = money - v_cost,
-      rooms_count = rooms_count + 1
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  INSERT INTO public.game_events (room_id, actor_id, type, amount)
-  VALUES (p_room, auth.uid(), 'build', v_p.rooms_count + 1);
-
-  PERFORM public.sync_room_state(p_room);
-END;
-$$;
-
--- Upgrade Bank Sampah & Insinerator (Level 1..12)
-CREATE OR REPLACE FUNCTION public.upgrade_waste(p_room uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_room public.rooms%ROWTYPE;
-  v_p public.player_state%ROWTYPE;
-  v_next integer;
-  v_cost numeric;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_room FROM public.rooms WHERE id = p_room;
-  SELECT * INTO v_p FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-
-  IF v_p.eliminated_at IS NOT NULL THEN RAISE EXCEPTION 'Kost Anda sudah tertimbun.'; END IF;
-  IF v_p.waste_level >= 12 THEN RAISE EXCEPTION 'Fasilitas pengolahan limbah sudah level maksimal!'; END IF;
-
-  v_next := v_p.waste_level + 1;
-  v_cost := public.waste_cost_for(v_next);
-  IF v_room.world_event = 'eco_subsidy' THEN
-    v_cost := ROUND(v_cost * 0.70);
-  END IF;
-
-  IF v_p.money < v_cost THEN RAISE EXCEPTION 'Uang belum cukup untuk meningkatkan Bank Sampah.'; END IF;
-
-  UPDATE public.player_state
-  SET money = money - v_cost,
-      waste_level = v_next,
-      trash_capacity = public.waste_capacity_for(v_next)
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  INSERT INTO public.game_events (room_id, actor_id, type, amount)
-  VALUES (p_room, auth.uid(), 'waste', v_next);
-
-  PERFORM public.sync_room_state(p_room);
-END;
-$$;
-
--- Upgrade Kelas Kost (0 -> 1 Eksklusif -> 2 Sultan)
-CREATE OR REPLACE FUNCTION public.upgrade_kost_tier(p_room uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_p public.player_state%ROWTYPE;
-  v_next integer;
-  v_cost numeric;
-  v_min_rooms integer;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_p FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-
-  IF v_p.eliminated_at IS NOT NULL THEN RAISE EXCEPTION 'Kost Anda sudah tertimbun.'; END IF;
-  IF v_p.kost_tier >= 2 THEN RAISE EXCEPTION 'Kelas kost sudah tingkat Sultan (Maksimal)!'; END IF;
-
-  v_next := v_p.kost_tier + 1;
-  v_cost := CASE v_next WHEN 1 THEN 650 ELSE 1600 END;
-  v_min_rooms := CASE v_next WHEN 1 THEN 4 ELSE 8 END;
-
-  IF v_p.rooms_count < v_min_rooms THEN
-    RAISE EXCEPTION 'Butuh minimal % kamar untuk renovasi ke kelas ini.', v_min_rooms;
-  END IF;
-  IF v_p.money < v_cost THEN
-    RAISE EXCEPTION 'Uang belum cukup untuk merenovasi kelas kost.';
-  END IF;
-
-  UPDATE public.player_state
-  SET money = money - v_cost,
-      kost_tier = v_next
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  INSERT INTO public.game_events (room_id, actor_id, type, amount)
-  VALUES (p_room, auth.uid(), 'tier', v_next);
-
-  PERFORM public.sync_room_state(p_room);
-END;
-$$;
-
--- Sewa Tukang Sampah
-CREATE OR REPLACE FUNCTION public.hire_hauler(p_room uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_room public.rooms%ROWTYPE;
-  v_p public.player_state%ROWTYPE;
-  v_amt numeric;
-  v_cost numeric;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_room FROM public.rooms WHERE id = p_room;
-  SELECT * INTO v_p FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-
-  IF v_p.eliminated_at IS NOT NULL THEN RAISE EXCEPTION 'Kost Anda sudah tertimbun.'; END IF;
-  IF v_room.world_event = 'hauler_strike' THEN
-    RAISE EXCEPTION 'Tukang sampah sedang mogok kerja massal!';
-  END IF;
-  IF v_p.hauler_busy_until IS NOT NULL AND v_p.hauler_busy_until > now() THEN
-    RAISE EXCEPTION 'Truk sampah sedang dalam perjalanan.';
-  END IF;
-  IF v_p.trash < 1 THEN RAISE EXCEPTION 'Belum ada sampah untuk diangkut.'; END IF;
-
-  v_amt := LEAST(FLOOR(v_p.trash), 45 + v_p.waste_level * 4);
-  v_cost := CEIL(v_amt * 3 * (CASE WHEN v_room.world_event = 'rain_flood' THEN 1.5 ELSE 1.0 END));
-
-  IF v_p.money < v_cost THEN RAISE EXCEPTION 'Uang tidak cukup untuk menyewa truk sampah.'; END IF;
-
-  UPDATE public.player_state
-  SET money = money - v_cost,
-      hauler_amount = v_amt,
-      hauler_busy_until = now() + interval '7 seconds'
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  INSERT INTO public.game_events (room_id, actor_id, type, amount)
-  VALUES (p_room, auth.uid(), 'haul', v_amt);
-END;
-$$;
-
--- Bakar Sampah Darurat
-CREATE OR REPLACE FUNCTION public.burn(p_room uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_room public.rooms%ROWTYPE;
-  v_p public.player_state%ROWTYPE;
-  v_burn_amt numeric;
-  v_pol_add numeric;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_room FROM public.rooms WHERE id = p_room FOR UPDATE;
-  SELECT * INTO v_p FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-
-  IF v_p.eliminated_at IS NOT NULL THEN RAISE EXCEPTION 'Kost Anda sudah tertimbun.'; END IF;
-  IF v_room.smog_until IS NOT NULL AND v_room.smog_until > now() THEN
-    RAISE EXCEPTION 'Kabut asap pekat! Pembakaran sampah diblokir.';
-  END IF;
-  IF v_p.burn_cooldown_until IS NOT NULL AND v_p.burn_cooldown_until > now() THEN
-    RAISE EXCEPTION 'Tungku pembakaran masih panas, tunggu sebentar.';
-  END IF;
-  IF v_p.trash < 2 THEN RAISE EXCEPTION 'Sampah terlalu sedikit untuk dibakar.'; END IF;
-
-  v_burn_amt := LEAST(v_p.trash, 35 + v_p.waste_level * 3);
-  -- Insinerator ramah lingkungan (Lv 10..12) menghasilkan polusi jauh lebih rendah saat bakar manual
-  v_pol_add := CASE
-    WHEN v_p.waste_level >= 10 THEN 6
-    WHEN v_p.waste_level >= 8 THEN 22
-    ELSE 15
-  END;
-
-  UPDATE public.player_state
-  SET trash = GREATEST(0, trash - v_burn_amt),
-      last_burn_at = now(),
-      burn_cooldown_until = now() + interval '8 seconds',
-      burn_penalty_until = CASE WHEN v_p.waste_level >= 10 THEN burn_penalty_until ELSE now() + interval '16 seconds' END,
-      burn_stacks = CASE WHEN v_p.waste_level >= 10 THEN burn_stacks ELSE LEAST(4, burn_stacks + 1) END
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  UPDATE public.rooms
-  SET pollution = LEAST(100, pollution + v_pol_add),
-      smog_until = CASE WHEN pollution + v_pol_add >= 90 THEN now() + interval '18 seconds' ELSE smog_until END
-  WHERE id = p_room;
-
-  INSERT INTO public.game_events (room_id, actor_id, type, amount)
-  VALUES (p_room, auth.uid(), 'burn', v_burn_amt);
-
-  PERFORM public.sync_room_state(p_room);
-END;
-$$;
-
--- Beli Pertahanan
-CREATE OR REPLACE FUNCTION public.buy_defense(p_room uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_p public.player_state%ROWTYPE;
-  v_cost numeric;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_p FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-
-  IF v_p.eliminated_at IS NOT NULL THEN RAISE EXCEPTION 'Kost Anda sudah tertimbun.'; END IF;
-  IF v_p.defense >= 3 THEN RAISE EXCEPTION 'Pertahanan sudah level maksimal.'; END IF;
-
-  v_cost := 150 * (v_p.defense + 1);
-  IF v_p.money < v_cost THEN RAISE EXCEPTION 'Uang belum cukup untuk memperkuat pertahanan.'; END IF;
-
-  UPDATE public.player_state
-  SET money = money - v_cost,
-      defense = defense + 1,
-      protected_until = now() + interval '10 seconds'
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  INSERT INTO public.game_events (room_id, actor_id, type, amount)
-  VALUES (p_room, auth.uid(), 'defense', v_p.defense + 1);
-END;
-$$;
-
--- Sabotase 1: Lempar Sampah ke Lawan
-CREATE OR REPLACE FUNCTION public.throw_trash(p_room uuid, p_target uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_me public.player_state%ROWTYPE;
-  v_tg public.player_state%ROWTYPE;
-  v_raw numeric;
-  v_landed numeric;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_me FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-  SELECT * INTO v_tg FROM public.player_state WHERE room_id = p_room AND player_id = p_target FOR UPDATE;
-
-  IF v_me.eliminated_at IS NOT NULL OR v_tg.eliminated_at IS NOT NULL THEN
-    RAISE EXCEPTION 'Target tidak valid.';
-  END IF;
-  IF v_me.throw_cooldown_until IS NOT NULL AND v_me.throw_cooldown_until > now() THEN
-    RAISE EXCEPTION 'Pelontar sampah sedang diisi ulang.';
-  END IF;
-  IF v_tg.protected_until IS NOT NULL AND v_tg.protected_until > now() THEN
-    RAISE EXCEPTION 'Kost lawan sedang dilindungi perisai aktif!';
-  END IF;
-  IF v_me.money < 10 OR v_me.trash < 1 THEN
-    RAISE EXCEPTION 'Butuh minimal 10 uang dan 1 sampah.';
-  END IF;
-
-  v_raw := LEAST(v_me.trash, 18 + v_me.rooms_count * 1.5);
-  v_landed := ROUND(v_raw * (1.0 - v_tg.defense * 0.22));
-
-  UPDATE public.player_state
-  SET money = money - 10,
-      trash = GREATEST(0, trash - v_raw),
-      throw_cooldown_until = now() + interval '6 seconds'
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  UPDATE public.player_state
-  SET trash = trash + v_landed,
-      hit_streak = hit_streak + 1,
-      last_hit_at = now(),
-      protected_until = CASE WHEN hit_streak + 1 >= 3 THEN now() + interval '12 seconds' ELSE protected_until END
-  WHERE room_id = p_room AND player_id = p_target;
-
-  INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
-  VALUES (p_room, auth.uid(), p_target, 'throw', v_landed);
-
-  PERFORM public.sync_room_state(p_room);
-END;
-$$;
-
--- Sabotase 2: Laporkan Sidak RT / Dinas Lingkungan
-CREATE OR REPLACE FUNCTION public.sabotage_inspect(p_room uuid, p_target uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_me public.player_state%ROWTYPE;
-  v_tg public.player_state%ROWTYPE;
-  v_fine numeric;
-  v_violating boolean;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_me FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-  SELECT * INTO v_tg FROM public.player_state WHERE room_id = p_room AND player_id = p_target FOR UPDATE;
-
-  IF v_me.eliminated_at IS NOT NULL OR v_tg.eliminated_at IS NOT NULL THEN
-    RAISE EXCEPTION 'Target tidak valid.';
-  END IF;
-  IF v_me.sabotage_cooldown_until IS NOT NULL AND v_me.sabotage_cooldown_until > now() THEN
-    RAISE EXCEPTION 'Tim Sidak masih sibuk, tunggu jeda sabotase.';
-  END IF;
-  IF v_me.money < 120 THEN
-    RAISE EXCEPTION 'Butuh 120 uang untuk menyewa Tim Sidak RT/Dinas.';
-  END IF;
-
-  v_violating := (v_tg.burn_penalty_until IS NOT NULL AND v_tg.burn_penalty_until > now())
-                 OR (v_tg.waste_level IN (8, 9))
-                 OR (v_tg.trash / GREATEST(1, v_tg.trash_capacity) >= 0.70);
-
-  IF NOT v_violating THEN
-    RAISE EXCEPTION 'Lawan sedang tertib! Sidak hanya bisa dikirim jika lawan habis bakar sampah, pakai Insinerator Berpolusi (Lv 8-9), atau sampahnya >70%%.';
-  END IF;
-
-  v_fine := ROUND(v_tg.money * 0.25);
-
-  UPDATE public.player_state
-  SET money = money - 120 + ROUND(v_fine * 0.6),
-      sabotage_cooldown_until = now() + interval '22 seconds'
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  UPDATE public.player_state
-  SET money = GREATEST(0, money - v_fine),
-      sealed_until = now() + interval '14 seconds'
-  WHERE room_id = p_room AND player_id = p_target;
-
-  INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
-  VALUES (p_room, auth.uid(), p_target, 'inspect', v_fine);
-
-  PERFORM public.sync_room_state(p_room);
-END;
-$$;
-
--- Sabotase 3: Bajak Truk Sampah Lawan
-CREATE OR REPLACE FUNCTION public.sabotage_hijack(p_room uuid, p_target uuid)
-RETURNS void LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE
-  v_me public.player_state%ROWTYPE;
-  v_tg public.player_state%ROWTYPE;
-  v_stolen numeric;
-BEGIN
-  PERFORM public.sync_room_state(p_room);
-  SELECT * INTO v_me FROM public.player_state WHERE room_id = p_room AND player_id = auth.uid() FOR UPDATE;
-  SELECT * INTO v_tg FROM public.player_state WHERE room_id = p_room AND player_id = p_target FOR UPDATE;
-
-  IF v_me.eliminated_at IS NOT NULL OR v_tg.eliminated_at IS NOT NULL THEN
-    RAISE EXCEPTION 'Target tidak valid.';
-  END IF;
-  IF v_me.sabotage_cooldown_until IS NOT NULL AND v_me.sabotage_cooldown_until > now() THEN
-    RAISE EXCEPTION 'Jeda sabotase masih aktif.';
-  END IF;
-  IF v_tg.hauler_busy_until IS NULL OR v_tg.hauler_busy_until <= now() OR v_tg.hauler_amount <= 0 THEN
-    RAISE EXCEPTION 'Lawan sedang tidak menyewa truk sampah!';
-  END IF;
-  IF v_me.money < 90 THEN
-    RAISE EXCEPTION 'Butuh 90 uang untuk menyuap sopir truk lawan.';
-  END IF;
-
-  v_stolen := v_tg.hauler_amount;
-
-  UPDATE public.player_state
-  SET hauler_amount = 0,
-      hauler_busy_until = NULL
-  WHERE room_id = p_room AND player_id = p_target;
-
-  UPDATE public.player_state
-  SET money = money - 90,
-      hauler_amount = v_stolen,
-      hauler_busy_until = now() + interval '5 seconds',
-      sabotage_cooldown_until = now() + interval '20 seconds'
-  WHERE room_id = p_room AND player_id = auth.uid();
-
-  INSERT INTO public.game_events (room_id, actor_id, target_id, type, amount)
-  VALUES (p_room, auth.uid(), p_target, 'hijack', v_stolen);
-END;
-$$;
+-- Hak eksekusi RPC untuk klien
+GRANT EXECUTE ON FUNCTION public.tangkis(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.throw_trash(uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.sabotage_inspect(uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.sabotage_hijack(uuid, uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.buy_defense(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.start_game(uuid) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.sync_room_state(uuid) TO authenticated;

@@ -22,6 +22,7 @@ enum FxType {
   hijack,
   collapse,
   emoji,
+  parry,
 }
 
 const List<String> kEmojiList = [
@@ -70,6 +71,8 @@ class KostSceneData {
     this.wall = const Color(0xFFF0DFB8),
     this.compact = false,
     this.facingRight = true,
+    this.isBounty = false,
+    this.attackLeft = 0,
   });
 
   final int rooms;
@@ -90,6 +93,8 @@ class KostSceneData {
   final Color wall;
   final bool compact;
   final bool facingRight;
+  final bool isBounty; // "Juragan Teladan": target buruan bernilai bonus
+  final double attackLeft; // detik tersisa jendela Tangkis (0 = tidak ada)
 }
 
 class KostStage extends StatelessWidget {
@@ -471,6 +476,7 @@ class KostPainter extends CustomPainter {
     _drawWorldEventBack(canvas, t);
     _drawCars(canvas, t);
     _drawBuilding(canvas, t);
+    _drawBountyCrown(canvas, t);
     _drawWasteFacility(canvas, t);
     _drawFleeing(canvas, t);
     _drawDefense(canvas, t);
@@ -484,6 +490,7 @@ class KostPainter extends CustomPainter {
     _drawCollapse(canvas);
     _drawCrane(canvas, t);
     _drawThrown(canvas, t);
+    _drawParry(canvas, t);
     _drawWorldEventFront(canvas, t);
     _drawAsh(canvas, t, p);
     _drawHaze(canvas, p);
@@ -491,6 +498,24 @@ class KostPainter extends CustomPainter {
     _drawVignette(canvas, t, p);
     _drawEmojiReactions(canvas, t);
     _drawCinematic(canvas, t);
+
+    // Peringatan serangan masuk: bingkai merah berdenyut cepat (jendela Tangkis)
+    if (d.attackLeft > 0 && !d.eliminated) {
+      final pulse = 0.5 + 0.5 * math.sin(t * 20);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 18
+        ..color = const Color(0xFFFF1744).withValues(alpha: 0.18 + 0.4 * pulse);
+      canvas.drawRect(_view, _p);
+      _p.style = PaintingStyle.fill;
+      _drawBannerText(
+        canvas,
+        'SERANGAN MASUK! TANGKIS!',
+        Offset(200, _roofY - 56),
+        const Color(0xFFFF5252),
+        scale: 1.1 + 0.12 * pulse,
+      );
+    }
 
     if (_critical) {
       final pulse = 0.5 + 0.5 * math.sin(t * 6);
@@ -1649,7 +1674,8 @@ class KostPainter extends CustomPainter {
     if (d.defense >= 3) _pylons(canvas, t);
 
     final prot = d.protectedLeft > 0;
-    if (d.defense >= 3 || prot) _dome(canvas, t, prot);
+    // Kubah HANYA tampil saat proteksi singkat aktif (tidak lagi permanen di Lv 3)
+    if (prot) _dome(canvas, t, true);
 
     if (defP != null) {
       for (var ring = 0; ring < 2; ring++) {
@@ -2425,6 +2451,82 @@ class KostPainter extends CustomPainter {
         Offset(cell.center.dx, cell.top - 10 - q * 28),
         const Color(0xFFFFEE58),
         scale: 0.95 + math.sin(q * math.pi) * 0.25,
+        alpha: 1 - q,
+      );
+    }
+  }
+
+  // ------------------------------------------- mahkota bounty & tangkis
+
+  void _drawBountyCrown(Canvas canvas, double t) {
+    if (!d.isBounty || d.eliminated) return;
+    final cy = _roofY - 58 + math.sin(t * 3) * 1.5;
+    const cx = 150.0;
+    final pulse = 0.5 + 0.5 * math.sin(t * 4);
+
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFFFFD54F).withValues(alpha: 0.18 + 0.18 * pulse);
+    canvas.drawCircle(Offset(cx, cy), 18, _p);
+
+    final crown = Path()
+      ..moveTo(cx - 12, cy + 8)
+      ..lineTo(cx - 14, cy - 6)
+      ..lineTo(cx - 6, cy)
+      ..lineTo(cx, cy - 9)
+      ..lineTo(cx + 6, cy)
+      ..lineTo(cx + 14, cy - 6)
+      ..lineTo(cx + 12, cy + 8)
+      ..close();
+    _p.color = const Color(0xFFFFC107);
+    canvas.drawPath(crown, _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = const Color(0xFF8D6E00);
+    canvas.drawPath(crown, _p);
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFFE53935);
+    canvas.drawCircle(Offset(cx, cy + 3), 2, _p);
+
+    _drawBannerText(canvas, 'BURONAN +40', Offset(cx, cy - 18),
+        const Color(0xFFFFD54F));
+  }
+
+  void _drawParry(Canvas canvas, double t) {
+    const dur = 1800;
+    for (final f in d.fx) {
+      if (f.type != FxType.parry) continue;
+      final age = f.age;
+      if (age < 0 || age > dur) continue;
+      final q = age / dur;
+
+      // perisai biru-putih yang meledak ke luar
+      for (var ring = 0; ring < 3; ring++) {
+        final local = _c01((q - ring * 0.12) / 0.8);
+        if (local <= 0) continue;
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 5 * (1 - local)
+          ..color = (ring == 1 ? Colors.white : const Color(0xFF40C4FF))
+              .withValues(alpha: (1 - local) * 0.9);
+        canvas.drawCircle(
+            Offset(200, _gy - 60), _lerp(20, 190, _ease(local)), _p);
+      }
+      _p.style = PaintingStyle.fill;
+
+      if (q < 0.25) {
+        _p.color = Colors.white.withValues(alpha: (1 - q / 0.25) * 0.5);
+        canvas.drawRect(_view, _p);
+      }
+
+      _drawBannerText(
+        canvas,
+        'TANGKIS!',
+        Offset(200, _roofY - 30 - q * 26),
+        const Color(0xFF80D8FF),
+        scale: 1.1 + math.sin(q * math.pi) * 0.35,
         alpha: 1 - q,
       );
     }

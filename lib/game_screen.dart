@@ -83,6 +83,9 @@ class _GameScreenState extends State<GameScreen>
   int _lastEventMs = -100000;
   int _lastEmojiSentMs = -10000;
   bool _emojiBarOpen = false;
+  bool _tangkisBusy = false;
+  // kunci "pemilik|waktu" serangan tertunda yang sudah memicu tick penyelesaian
+  final Set<String> _tickedPending = {};
 
   Duration _offset = Duration.zero;
   RealtimeChannel? _channel;
@@ -106,6 +109,16 @@ class _GameScreenState extends State<GameScreen>
       final now = sceneNowMs();
       for (final l in _fx.values) {
         l.removeWhere((f) => now - f.startMs > 6000);
+      }
+      // Jendela Tangkis habis -> minta server menyelesaikan serangan segera
+      // (tanpa menunggu tick 4 detik), supaya dampak terasa tepat waktu.
+      for (final s in _states.values) {
+        final u = s['pending_attack_until'];
+        if (u == null) continue;
+        final over = _serverNow.difference(_ts(u)!).inMilliseconds;
+        if (over > 250 && _tickedPending.add('${s['player_id']}|$u')) {
+          _tickServer();
+        }
       }
       setState(() {});
     });
@@ -237,11 +250,24 @@ class _GameScreenState extends State<GameScreen>
       case 'tier':
         _ensureFx(actor, FxType.tier, amount: amt);
         break;
-      case 'throw':
+      case 'throw_launch':
+      // sampah meninggalkan kost pelempar; belum mendarat (jendela Tangkis)
         _ensureFx(actor, FxType.outgoing, amount: amt);
+        break;
+      case 'throw':
+      // mendarat di korban
+        _ensureFx(target, FxType.incoming, amount: amt);
+        break;
+      case 'parry':
+      // actor = penangkis, target = pelempar yang kena pantulan
+        _ensureFx(actor, FxType.parry, amount: amt);
         _ensureFx(target, FxType.incoming, amount: amt);
         break;
       case 'inspect':
+        _ensureFx(target, FxType.inspect, amount: amt);
+        break;
+      case 'parry_inspect':
+        _ensureFx(actor, FxType.parry, amount: amt);
         _ensureFx(target, FxType.inspect, amount: amt);
         break;
       case 'hijack':
@@ -387,6 +413,53 @@ class _GameScreenState extends State<GameScreen>
     return _names[id] ?? 'Pemain';
   }
 
+  // ---------------------------------------------- v2: bounty, dendam, tekanan
+
+  String? get _bountyId => _room['bounty_id']?.toString();
+
+  double get _elapsedSec {
+    final t = _ts(_room['started_at']);
+    if (t == null) return 0;
+    return max(0.0, _serverNow.difference(t).inMilliseconds / 1000);
+  }
+
+  /// Pengali laju sampah: +20% tiap 2 menit (harus sama dengan sync_room_state).
+  double get _pressure => 1.0 + 0.2 * (_elapsedSec / 120).floor();
+
+  String _clock(double sec) {
+    final s = sec.floor();
+    return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  bool _hasRevenge(Map<String, dynamic>? me, String rivalId) =>
+      me != null &&
+          me['revenge_target']?.toString() == rivalId &&
+          _remaining(me['revenge_until']) > 0;
+
+  // Sama dengan SQL: dasar 90, bounty 63 (-30%), dendam dibagi dua (pembulatan ke atas)
+  int _inspectCost(String rivalId, Map<String, dynamic>? me) {
+    var c = rivalId == _bountyId ? 63 : 90;
+    if (_hasRevenge(me, rivalId)) c = (c + 1) ~/ 2;
+    return c;
+  }
+
+  int _hijackCost(String rivalId, Map<String, dynamic>? me) =>
+      _hasRevenge(me, rivalId) ? 35 : 70;
+
+  Future<void> _tangkis() async {
+    if (_tangkisBusy) return;
+    setState(() => _tangkisBusy = true);
+    try {
+      await _db.rpc('tangkis', params: {'p_room': widget.roomId});
+    } on PostgrestException catch (e) {
+      _toast(e.message);
+    } catch (e) {
+      _toast('$e');
+    } finally {
+      if (mounted) setState(() => _tangkisBusy = false);
+    }
+  }
+
   ({double money, double trash}) _live(Map<String, dynamic> s) {
     final cap = _num(s['trash_capacity']);
     if (s['eliminated_at'] != null) {
@@ -501,10 +574,22 @@ class _GameScreenState extends State<GameScreen>
     switch (e['type']) {
       case 'burn':
         return '$a membakar $amt sampah! Polusi naik.';
+      case 'throw_launch':
+        return t == 'Anda'
+            ? 'AWAS! $a melempar sampah ke kost-mu. TANGKIS sekarang!'
+            : '$a bersiap melempar sampah ke kost $t…';
       case 'throw':
         return t == 'Anda'
             ? '$a melempar $amt sampah ke kost-mu!'
             : '$a melempar $amt sampah ke kost $t.';
+      case 'inspect_launch':
+        return t == 'Anda'
+            ? 'AWAS! $a mengirim Sidak Dinas ke kost-mu. TANGKIS sekarang!'
+            : '$a mengirim Sidak Dinas ke kost $t…';
+      case 'parry':
+        return '$a menangkis & memantulkan $amt sampah ke $t!';
+      case 'parry_inspect':
+        return '$a memantulkan Sidak Dinas! Denda $amt menimpa $t.';
       case 'haul':
         return '$a menyewa truk pengangkut sampah.';
       case 'build':
@@ -551,7 +636,13 @@ class _GameScreenState extends State<GameScreen>
       case 'burn':
         return (Icons.local_fire_department, Colors.deepOrange);
       case 'throw':
+      case 'throw_launch':
         return (Icons.rocket_launch, Colors.brown);
+      case 'inspect_launch':
+        return (Icons.policy, Colors.redAccent);
+      case 'parry':
+      case 'parry_inspect':
+        return (Icons.security, Colors.lightBlueAccent);
       case 'haul':
         return (Icons.local_shipping, Colors.green.shade700);
       case 'build':
@@ -615,6 +706,8 @@ class _GameScreenState extends State<GameScreen>
       wall: _wallFor(id),
       compact: compact,
       facingRight: !compact,
+      isBounty: id == _bountyId,
+      attackLeft: _remaining(s['pending_attack_until']),
     );
   }
 
@@ -660,6 +753,8 @@ class _GameScreenState extends State<GameScreen>
     final finished = _room['status'] == 'finished';
     final alive = me != null && me['eliminated_at'] == null;
     final canAct = alive && !finished && _activeRpc == null;
+    final myAttackLeft =
+    (me != null && alive && !finished) ? _remaining(me['pending_attack_until']) : 0.0;
     final others = _states.entries.where((e) => e.key != _me).toList()
       ..sort((a, b) => _name(a.key).compareTo(_name(b.key)));
 
@@ -797,6 +892,15 @@ class _GameScreenState extends State<GameScreen>
                 ),
               ],
 
+              // 6b) Tombol TANGKIS (muncul saat ada serangan masuk ke kita)
+              if (myAttackLeft > 0)
+                Positioned(
+                  left: 12 + pad.left,
+                  right: (wide ? rightInset : 12) + pad.right,
+                  bottom: bottomInset + 44,
+                  child: Center(child: _tangkisButton(me!, myAttackLeft)),
+                ),
+
               // 7) Layar Selesai
               if (finished)
                 Positioned.fill(
@@ -839,6 +943,64 @@ class _GameScreenState extends State<GameScreen>
         ],
       ),
       child: child,
+    );
+  }
+
+  Widget _tangkisButton(Map<String, dynamic> me, double left) {
+    final cd = _remaining(me['parry_cooldown_until']);
+    final ready = cd == 0 && !_tangkisBusy;
+    final isInspect = me['pending_attack_type'] == 'inspect';
+    final from = _name(me['pending_attack_from']);
+    final pulse = 0.5 + 0.5 * sin(sceneNowMs() / 90);
+    final base = ready ? const Color(0xFFE53935) : Colors.blueGrey.shade700;
+
+    return Material(
+      color: base,
+      elevation: 10,
+      shadowColor: Colors.black,
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(18),
+        onTap: ready ? _tangkis : null,
+        child: Container(
+          constraints: const BoxConstraints(minWidth: 230, minHeight: 64),
+          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: ready ? 0.5 + 0.5 * pulse : 0.2),
+              width: 2.5,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(ready ? Icons.security : Icons.hourglass_bottom,
+                  color: Colors.white, size: 30),
+              const SizedBox(width: 12),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    ready ? 'TANGKIS!' : 'Tangkis isi ulang ${cd.ceil()}s',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.5,
+                    ),
+                  ),
+                  Text(
+                    '${isInspect ? 'Sidak' : 'Lemparan'} dari $from · ${left.toStringAsFixed(1)} dtk',
+                    style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -1121,6 +1283,18 @@ class _GameScreenState extends State<GameScreen>
     if (spectator) {
       tags.add(_tag(Icons.visibility, 'Mode penonton', Colors.blueGrey));
     }
+    if (_room['started_at'] != null && _room['status'] == 'playing') {
+      final el = _elapsedSec;
+      final pr = _pressure;
+      final next = 120 - (el % 120);
+      tags.add(_tag(
+        Icons.timer,
+        pr > 1.0
+            ? '${_clock(el)} · TEKANAN SAMPAH ×${pr.toStringAsFixed(1)} (naik lagi ${_clock(next)})'
+            : '${_clock(el)} · Tekanan sampah naik tiap 2 menit (${_clock(next)})',
+        pr > 1.0 ? Colors.deepOrange.shade800 : Colors.blueGrey.shade700,
+      ));
+    }
     final ev = _activeWorldEvent;
     if (ev != null) {
       final info = _worldEventInfo(ev);
@@ -1171,6 +1345,22 @@ class _GameScreenState extends State<GameScreen>
       if (!out && prot > 0) {
         tags.add(_tag(Icons.shield, 'Dilindungi ${prot.ceil()} dtk',
             Colors.amber.shade800));
+      }
+      if (!out && s['player_id']?.toString() == _bountyId) {
+        tags.add(_tag(
+          Icons.my_location,
+          'BURONAN! Lawan dapat +40 & Sidak murah bila menyerangmu',
+          Colors.amber.shade900,
+        ));
+      }
+      final revT = s['revenge_target']?.toString();
+      final revLeft = _remaining(s['revenge_until']);
+      if (!out && revT != null && revLeft > 0) {
+        tags.add(_tag(
+          Icons.whatshot,
+          'DENDAM! Balas ${_name(revT)}: sabotase 50% & tanpa jeda · ${revLeft.ceil()} dtk',
+          Colors.red.shade800,
+        ));
       }
     }
     final p = _pollution;
@@ -1469,7 +1659,7 @@ class _GameScreenState extends State<GameScreen>
         color: Colors.tealAccent.shade700,
         title: defense >= _maxDefense ? 'Perisai Maks' : 'Pertahanan',
         subtitle: defense >= _maxDefense
-            ? 'Lv $_maxDefense/$_maxDefense'
+            ? 'Lv $_maxDefense/$_maxDefense · -${_maxDefense * 10}% lemparan'
             : 'Lv ${defense + 1} · $defCost',
         busy: _activeRpc == 'buy_defense',
         onTap: canAct && defense < _maxDefense && live.money >= defCost
@@ -1597,9 +1787,18 @@ class _GameScreenState extends State<GameScreen>
     me == null ? 0.0 : _remaining(me['sabotage_cooldown_until']);
     final mine = me == null ? null : _live(me);
 
+    final rivalPending = _remaining(s['pending_attack_until']) > 0;
+    final isBounty = id == _bountyId;
+    final revenge = _hasRevenge(me, id);
+    final inspectCost = _inspectCost(id, me);
+    final hijackCost = _hijackCost(id, me);
+    // Dendam: tanpa jeda sabotase
+    final sabReady = sabLeft == 0 || revenge;
+
     final canThrow = canAct &&
         !out &&
         prot == 0 &&
+        !rivalPending &&
         throwLeft == 0 &&
         mine != null &&
         mine.trash >= 1 &&
@@ -1607,17 +1806,18 @@ class _GameScreenState extends State<GameScreen>
 
     final canInspect = canAct &&
         !out &&
-        sabLeft == 0 &&
+        sabReady &&
+        !rivalPending &&
         rivalViolating &&
         mine != null &&
-        mine.money >= 120;
+        mine.money >= inspectCost;
 
     final canHijack = canAct &&
         !out &&
-        sabLeft == 0 &&
+        sabReady &&
         rivalHauling &&
         mine != null &&
-        mine.money >= 90;
+        mine.money >= hijackCost;
 
     return Material(
       elevation: 5,
@@ -1665,7 +1865,7 @@ class _GameScreenState extends State<GameScreen>
                             const SizedBox(width: 5),
                             Flexible(
                               child: Text(
-                                _name(id),
+                                '${isBounty ? '👑 ' : ''}${revenge ? '🔥 ' : ''}${_name(id)}',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
@@ -1726,8 +1926,11 @@ class _GameScreenState extends State<GameScreen>
                 Expanded(
                   child: _sabotageBtn(
                     icon: Icons.rocket_launch_rounded,
-                    label: throwLeft > 0 ? '${throwLeft.ceil()}s' : '10',
-                    tooltip: 'Lempar Sampah (Biaya 10)',
+                    label: rivalPending
+                        ? '…'
+                        : (throwLeft > 0 ? '${throwLeft.ceil()}s' : '10'),
+                    tooltip:
+                    'Lempar Sampah (Biaya 10). Lawan punya 2,5 dtk untuk Tangkis & memantulkannya.${isBounty ? ' Buronan: +40 koin bila mendarat.' : ''}',
                     color: const Color(0xFFFF7043),
                     enabled: canThrow,
                     onTap: () => _act('throw_trash', {'p_target': id}),
@@ -1737,9 +1940,11 @@ class _GameScreenState extends State<GameScreen>
                 Expanded(
                   child: _sabotageBtn(
                     icon: Icons.policy_rounded,
-                    label: sabLeft > 0 ? '${sabLeft.ceil()}s' : '120',
+                    label: (sabLeft > 0 && !revenge)
+                        ? '${sabLeft.ceil()}s'
+                        : '$inspectCost',
                     tooltip:
-                    'Kirim Sidak Dinas (Biaya 120 · Aktif bila lawan habis bakar sampah / pakai Insinerator Polusi / sampah >70%)',
+                    'Kirim Sidak Dinas (Biaya $inspectCost${isBounty ? ' · Buronan -30%, denda 35%' : ''}${revenge ? ' · Dendam -50%' : ''} · Aktif bila lawan habis bakar sampah / pakai Insinerator Polusi / sampah >70% · bisa ditangkis)',
                     color: const Color(0xFFE53935),
                     enabled: canInspect,
                     onTap: () => _act('sabotage_inspect', {'p_target': id}),
@@ -1749,9 +1954,11 @@ class _GameScreenState extends State<GameScreen>
                 Expanded(
                   child: _sabotageBtn(
                     icon: Icons.u_turn_left_rounded,
-                    label: sabLeft > 0 ? '${sabLeft.ceil()}s' : '90',
+                    label: (sabLeft > 0 && !revenge)
+                        ? '${sabLeft.ceil()}s'
+                        : '$hijackCost',
                     tooltip:
-                    'Bajak Truk Sampah Lawan (Biaya 90 · Aktif saat truk lawan sedang mengangkut)',
+                    'Bajak Truk Sampah Lawan (Biaya $hijackCost${revenge ? ' · Dendam -50%' : ''} · Aktif saat truk lawan sedang mengangkut · tidak bisa ditangkis)',
                     color: const Color(0xFFFFB300),
                     enabled: canHijack,
                     onTap: () => _act('sabotage_hijack', {'p_target': id}),
