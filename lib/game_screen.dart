@@ -245,8 +245,9 @@ class _GameScreenState extends State<GameScreen>
         _ensureFx(target, FxType.inspect, amount: amt);
         break;
       case 'hijack':
-        _ensureFx(actor, FxType.hijack, amount: amt);
-        _ensureFx(target, FxType.hijack, amount: amt);
+      // amount 1 = sisi pembajak (kabur bawa truk), 2 = sisi korban (disergap)
+        _ensureFx(actor, FxType.hijack, amount: 1);
+        _ensureFx(target, FxType.hijack, amount: 2);
         break;
       case 'emoji':
         _ensureFx(actor, FxType.emoji, amount: amt);

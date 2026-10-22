@@ -351,25 +351,43 @@ class KostPainter extends CustomPainter {
     canvas.save();
     canvas.translate(pos.dx, pos.dy);
     canvas.scale(scale);
+    final a = _c01(alpha);
+    // Lapisan kontur hitam agar teks "meledak" dan terbaca jelas
+    final outline = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w900,
+          letterSpacing: 1.0,
+          foreground: Paint()
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 3.2
+            ..strokeJoin = StrokeJoin.round
+            ..color = Colors.black.withValues(alpha: a * 0.9),
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
     final tp = TextPainter(
       text: TextSpan(
         text: label,
         style: TextStyle(
-          color: color.withValues(alpha: _c01(alpha)),
+          color: color.withValues(alpha: a),
           fontSize: 11,
           fontWeight: FontWeight.w900,
           letterSpacing: 1.0,
           shadows: [
             Shadow(
-              color: Colors.black.withValues(alpha: _c01(alpha * 0.9)),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
+              color: color.withValues(alpha: a * 0.7),
+              blurRadius: 10,
             ),
           ],
         ),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
+    outline.paint(canvas, Offset(-outline.width / 2, -outline.height / 2));
     tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
     canvas.restore();
   }
@@ -424,6 +442,21 @@ class KostPainter extends CustomPainter {
       final q = 1 - (incomingP - 0.5) / 0.35;
       shakeX += math.sin(incomingP * 110) * 3.2 * q;
     }
+    // Guncangan kamera saat truk dibajak (hanya di sisi korban)
+    final hj = _fxActive(FxType.hijack, _hijackMs);
+    if (hj != null && hj.amount.round() != 1) {
+      final hp = hj.age / _hijackMs;
+      if (hp > 0.2 && hp < 0.55) {
+        final q = 1 - (hp - 0.2) / 0.35;
+        shakeX += math.sin(hp * 220) * 3.0 * q;
+        shakeY += math.cos(hp * 180) * 2.2 * q;
+      }
+    }
+    // Napas kamera halus agar adegan terasa hidup
+    if (!d.compact) {
+      shakeX += math.sin(t * 0.55) * 0.8;
+      shakeY += math.cos(t * 0.42) * 0.5;
+    }
     if (shakeX != 0 || shakeY != 0) {
       canvas.translate(shakeX, shakeY);
     }
@@ -433,6 +466,7 @@ class KostPainter extends CustomPainter {
     _drawHills(canvas, p);
     _drawSkyline(canvas, p);
     _drawTrees(canvas, t, p);
+    _drawGodRays(canvas, t, p);
     _drawGround(canvas, t, p);
     _drawWorldEventBack(canvas, t);
     _drawCars(canvas, t);
@@ -453,7 +487,10 @@ class KostPainter extends CustomPainter {
     _drawWorldEventFront(canvas, t);
     _drawAsh(canvas, t, p);
     _drawHaze(canvas, p);
+    _drawConfetti(canvas, t);
+    _drawVignette(canvas, t, p);
     _drawEmojiReactions(canvas, t);
+    _drawCinematic(canvas, t);
 
     if (_critical) {
       final pulse = 0.5 + 0.5 * math.sin(t * 6);
@@ -1109,7 +1146,10 @@ class KostPainter extends CustomPainter {
       ..color = _mix(wall, Colors.black, 0.28);
     canvas.drawRect(r, _p);
 
-    final lit = !d.eliminated && ((_hh(idx) % 100) / 100) < _litFactor;
+    // Lampu berkedip panik saat kondisi kritis
+    final flicker = _critical && math.sin(t * 17 + idx * 2.3) > 0.82;
+    final lit =
+        !d.eliminated && !flicker && ((_hh(idx) % 100) / 100) < _litFactor;
     final win = Rect.fromLTWH(r.left + 9, r.top + 9, r.width - 18, 26);
 
     if (lit) {
@@ -1954,17 +1994,8 @@ class KostPainter extends CustomPainter {
   // ------------------------------------------------------ truk sampah
 
   void _drawTruck(Canvas canvas, double t) {
-    final hijackP = _fxProgress(FxType.hijack, 2200);
-    if (hijackP != null) {
-      _drawBannerText(
-        canvas,
-        'TRUK DIBAJAK!',
-        Offset(318, 250 - hijackP * 25),
-        const Color(0xFFFFAB40),
-        scale: 1.0 + math.sin(hijackP * math.pi) * 0.2,
-        alpha: 1 - hijackP,
-      );
-    }
+    // Adegan pembajakan: bila kita korban, truk normal digantikan adegan ini
+    if (_drawHijackScene(canvas, t)) return;
 
     final hp = d.haulProgress;
     if (hp == null) return;
@@ -2581,6 +2612,659 @@ class KostPainter extends CustomPainter {
       }
 
       canvas.restore();
+    }
+  }
+
+  // ===================================================================
+  //  ADEGAN PEMBAJAKAN TRUK
+  //  amount == 1 -> sisi PEMBAJAK (kabur membawa truk rampasan)
+  //  amount != 1 -> sisi KORBAN (truk disergap & dibawa kabur)
+  // ===================================================================
+
+  static const int _hijackMs = 3600;
+
+  KostFx? _fxActive(FxType type, int durMs) {
+    KostFx? best;
+    for (final f in d.fx) {
+      if (f.type != type) continue;
+      final a = f.age;
+      if (a < 0 || a > durMs) continue;
+      if (best == null || a < best.age) best = f;
+    }
+    return best;
+  }
+
+  double _easeIn(double x) {
+    x = _c01(x);
+    return x * x * x;
+  }
+
+  /// Mengembalikan true bila adegan sisi KORBAN sedang tampil
+  /// (truk haul normal tidak perlu digambar lagi).
+  bool _drawHijackScene(Canvas canvas, double t) {
+    final fx = _fxActive(FxType.hijack, _hijackMs);
+    if (fx == null) return false;
+    final p = fx.age / _hijackMs;
+    if (fx.amount.round() == 1) {
+      _hijackThiefView(canvas, t, p);
+      return false;
+    }
+    _hijackVictimView(canvas, t, p);
+    return true;
+  }
+
+  void _hijackVictimView(Canvas canvas, double t, double p) {
+    const gy = 297.0;
+    final escQ = _c01((p - 0.5) / 0.5);
+    final truckRight = p >= 0.46;
+    final truckX = p < 0.5 ? 318.0 : _lerp(318, 560, _easeIn(escQ));
+    final vanIn = _ease(p / 0.22);
+    final vanRight = p < 0.5;
+    final vanX =
+    p < 0.5 ? _lerp(-90, 214, vanIn) : _lerp(214, -150, _easeIn(escQ));
+
+    // Jejak ban hitam di aspal saat van mengerem mendadak
+    if (p > 0.14) {
+      final len = _c01((p - 0.14) / 0.08) * 80;
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..strokeCap = StrokeCap.round
+        ..color = Colors.black.withValues(alpha: 0.35 * (1 - p * 0.6));
+      canvas.drawLine(Offset(214 - len - 8, gy - 1), Offset(206, gy - 1), _p);
+      canvas.drawLine(Offset(214 - len - 8, gy + 2), Offset(206, gy + 2), _p);
+      _p
+        ..style = PaintingStyle.fill
+        ..strokeCap = StrokeCap.butt;
+    }
+
+    // Asap rem
+    if (p > 0.14 && p < 0.42) {
+      for (var k = 0; k < 5; k++) {
+        final ph = _c01((p - 0.14 - k * 0.012) / 0.26);
+        _p.color = const Color(0xFFD7CCC8).withValues(alpha: (1 - ph) * 0.6);
+        canvas.drawCircle(
+            Offset(190 - ph * 26 - k * 5, gy - 4 - ph * 16), 4 + ph * 10, _p);
+      }
+    }
+
+    // Van pembajak
+    _raiderVan(canvas, vanX, gy, t, right: vanRight, braking: p > 0.14 && p < 0.3);
+
+    // Garis kecepatan di belakang truk yang kabur
+    if (p > 0.52) {
+      final a = _c01((p - 0.52) / 0.1) * (1 - _c01((p - 0.92) / 0.08));
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..strokeCap = StrokeCap.round
+        ..color = Colors.white.withValues(alpha: 0.55 * a);
+      for (var k = 0; k < 7; k++) {
+        final yy = gy - 6 - k * 5.0;
+        final len = 26 + (k % 3) * 14 + escQ * 40;
+        final sx = truckX - 52 - (k % 2) * 10;
+        canvas.drawLine(Offset(sx - len, yy), Offset(sx, yy), _p);
+      }
+      _p
+        ..style = PaintingStyle.fill
+        ..strokeCap = StrokeCap.butt;
+      // Knalpot ngebul hitam
+      for (var k = 0; k < 5; k++) {
+        final ph = (t * 2.2 + k * 0.2) % 1.0;
+        _p.color = const Color(0xFF424242).withValues(alpha: (1 - ph) * 0.6 * a);
+        canvas.drawCircle(
+            Offset(truckX - 50 - ph * 34, gy - 8 - ph * 10), 3 + ph * 8, _p);
+      }
+    }
+
+    // Truk (bergetar -> loncat putar balik -> tancap gas)
+    final hop = (p > 0.44 && p < 0.54)
+        ? -math.sin((p - 0.44) / 0.1 * math.pi) * 7
+        : 0.0;
+    final jitter = (p > 0.22 && p < 0.46) ? math.sin(t * 70) * 0.9 : 0.0;
+    canvas.save();
+    canvas.translate(truckX + jitter, gy + hop);
+    if (truckRight) canvas.scale(-1, 1);
+    _hijackTruck(canvas, t, moving: p >= 0.5, stolen: p >= 0.34);
+    canvas.restore();
+
+    // Maling melompat dari van ke kabin truk
+    if (p >= 0.22 && p < 0.42) {
+      final q = _c01((p - 0.22) / 0.2);
+      final from = Offset(vanX + 6, gy - 30);
+      const to = Offset(284, gy - 18);
+      final pos = Offset(
+        _lerp(from.dx, to.dx, q),
+        _lerp(from.dy, to.dy, q) - math.sin(q * math.pi) * 38,
+      );
+      _person(canvas, pos,
+          shirt: const Color(0xFF212121), mask: true, rot: q * 6.28, swing: 3);
+    } else if (p >= 0.42) {
+      // Kepala maling bertopeng mengintip dari jendela kabin
+      final hx = truckRight ? truckX + 32 : truckX - 32;
+      final hy = gy - 22 + hop;
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF212121);
+      canvas.drawCircle(Offset(hx, hy), 3.8, _p);
+      _p.color = Colors.white;
+      canvas.drawCircle(Offset(hx - 1.4, hy - 0.5), 0.8, _p);
+      canvas.drawCircle(Offset(hx + 1.4, hy - 0.5), 0.8, _p);
+    }
+
+    // Sopir terlempar keluar & pusing
+    if (p >= 0.34) {
+      final td = _c01((p - 0.34) / 0.14);
+      final dx = _lerp(282, 250, _ease(td));
+      final dy = gy - (1 - td) * 10 - math.sin(td * math.pi) * 16;
+      final fade = 1 - _c01((p - 0.9) / 0.1);
+      _person(
+        canvas,
+        Offset(dx, dy),
+        shirt: const Color(0xFF43A047),
+        hat: true,
+        rot: td < 1 ? td * 5.5 : math.sin(t * 3) * 0.08,
+        swing: td < 1 ? 3 : 0.6,
+        alpha: fade,
+      );
+      if (td >= 1) {
+        for (var k = 0; k < 3; k++) {
+          final ang = t * 5 + k * 2.09;
+          _star(
+            canvas,
+            Offset(dx + math.cos(ang) * 7, dy - 19 + math.sin(ang) * 2.5),
+            2.6,
+            const Color(0xFFFFD54F).withValues(alpha: fade),
+          );
+        }
+      }
+      // Garis kaget memancar
+      if (p < 0.62) {
+        final e = 1 - (p - 0.34) / 0.28;
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..strokeCap = StrokeCap.round
+          ..color = const Color(0xFFFF5252).withValues(alpha: _c01(e));
+        for (var k = 0; k < 6; k++) {
+          final ang = -math.pi + k * (math.pi / 5);
+          canvas.drawLine(
+            Offset(dx + math.cos(ang) * 10, dy - 26 + math.sin(ang) * 10),
+            Offset(dx + math.cos(ang) * 17, dy - 26 + math.sin(ang) * 17),
+            _p,
+          );
+        }
+        _p
+          ..style = PaintingStyle.fill
+          ..strokeCap = StrokeCap.butt;
+      }
+    }
+
+    // Kantong sampah berjatuhan dari bak truk yang kabur
+    if (p > 0.52) {
+      for (var j = 0; j < 4; j++) {
+        final dp = 0.56 + j * 0.07;
+        if (p < dp) continue;
+        final lq = _c01((p - dp) / 0.14);
+        final dxp = _lerp(318, 560, _easeIn(_c01((dp - 0.5) / 0.5)));
+        final bx = dxp - 36 + lq * 18;
+        final by = gy - 22 + lq * 20 - math.sin(lq * math.pi) * 14;
+        canvas.save();
+        canvas.translate(bx, by);
+        canvas.rotate(lq * 6);
+        _bag(canvas, Offset.zero, 800 + j, scale: 0.85);
+        canvas.restore();
+      }
+    }
+
+    // Banner besar "slam"
+    if (p > 0.36) {
+      final q = _c01((p - 0.36) / 0.64);
+      final a = q < 0.75 ? 1.0 : (1 - q) / 0.25;
+      final slam = _easeOutBack(_c01(q / 0.18));
+      _drawBannerText(
+        canvas,
+        'TRUK DIBAJAK!',
+        Offset(250, 232 - q * 20),
+        const Color(0xFFFF5252),
+        scale: 0.8 + slam * 0.7,
+        alpha: a,
+      );
+    }
+  }
+
+  void _hijackThiefView(Canvas canvas, double t, double p) {
+    const gy = 297.0;
+    final m = _ease(p);
+    final vanX = _lerp(560, -190, m);
+    final truckX = vanX + 112;
+
+    // Garis kecepatan
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round
+      ..color = Colors.white.withValues(alpha: 0.4);
+    for (var k = 0; k < 7; k++) {
+      final yy = gy - 6 - k * 5.0;
+      final sx = truckX + 52 + (k % 2) * 10;
+      canvas.drawLine(Offset(sx, yy), Offset(sx + 30 + (k % 3) * 14, yy), _p);
+    }
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt;
+
+    _raiderVan(canvas, vanX, gy, t, right: false);
+    canvas.save();
+    canvas.translate(truckX, gy);
+    _hijackTruck(canvas, t, moving: true, stolen: true);
+    canvas.restore();
+
+    // Koin rampasan beterbangan
+    for (var k = 0; k < 8; k++) {
+      final ph = (t * 1.6 + k * 0.125) % 1.0;
+      final x = truckX + 50 + ph * 46 + k * 2;
+      final y = gy - 26 - math.sin(ph * math.pi) * 26;
+      _p.color = const Color(0xFFFFD54F).withValues(alpha: (1 - ph) * 0.95);
+      canvas.drawCircle(Offset(x, y), 2.6, _p);
+      _p.color = const Color(0xFFFFF59D).withValues(alpha: (1 - ph) * 0.95);
+      canvas.drawCircle(Offset(x - 0.7, y - 0.7), 0.9, _p);
+    }
+
+    if (p > 0.15 && p < 0.95) {
+      final q = _c01((p - 0.15) / 0.8);
+      final a = q < 0.8 ? 1.0 : (1 - q) / 0.2;
+      final slam = _easeOutBack(_c01(q / 0.15));
+      _drawBannerText(
+        canvas,
+        'BAJAK BERHASIL!',
+        Offset(200, 220 - q * 14),
+        const Color(0xFFFFD54F),
+        scale: 0.8 + slam * 0.55,
+        alpha: a,
+      );
+    }
+  }
+
+  void _hijackTruck(Canvas canvas, double t,
+      {required bool moving, required bool stolen}) {
+    _p
+      ..style = PaintingStyle.fill
+      ..color = Colors.black.withValues(alpha: 0.25);
+    canvas.drawOval(
+        Rect.fromCenter(center: Offset.zero, width: 88, height: 6), _p);
+
+    _p.color = const Color(0xFF43A047);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-16, -36, 56, 30), const Radius.circular(3)),
+      _p,
+    );
+    _p.color = Colors.white.withValues(alpha: 0.5);
+    canvas.drawRect(const Rect.fromLTWH(-16, -22, 56, 4), _p);
+
+    _p.color = stolen ? const Color(0xFFB71C1C) : const Color(0xFF2E9E5B);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-40, -30, 24, 24), const Radius.circular(4)),
+      _p,
+    );
+    _p.color = const Color(0xFFB3E5FC);
+    canvas.drawRect(const Rect.fromLTWH(-38, -27, 12, 10), _p);
+    _p.color = const Color(0xFFFFF176);
+    canvas.drawRect(const Rect.fromLTWH(-41, -15, 3, 4), _p);
+
+    // Lampu strobo merah-biru saat dibajak
+    final blink = math.sin(t * 18) > 0;
+    final sirenC = stolen
+        ? (blink ? const Color(0xFFFF1744) : const Color(0xFF2979FF))
+        : const Color(0xFFFFA000);
+    _p.color = sirenC.withValues(alpha: 0.35);
+    canvas.drawCircle(const Offset(-29, -33), 10, _p);
+    _p.color = sirenC;
+    canvas.drawRect(const Rect.fromLTWH(-32, -33, 6, 3), _p);
+
+    final wa = moving ? t * 30 : 0.0;
+    for (final wx in const [-26.0, 18.0]) {
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF212121);
+      canvas.drawCircle(Offset(wx, -6), 6.5, _p);
+      _p.color = const Color(0xFF9E9E9E);
+      canvas.drawCircle(Offset(wx, -6), 2.6, _p);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = const Color(0xFF9E9E9E);
+      canvas.drawLine(
+        Offset(wx + math.cos(wa) * 5, -6 + math.sin(wa) * 5),
+        Offset(wx - math.cos(wa) * 5, -6 - math.sin(wa) * 5),
+        _p,
+      );
+      _p.style = PaintingStyle.fill;
+    }
+  }
+
+  void _raiderVan(Canvas canvas, double x, double y, double t,
+      {required bool right, bool braking = false}) {
+    canvas.save();
+    canvas.translate(x, y);
+    if (!right) canvas.scale(-1, 1);
+    if (braking) canvas.rotate(-0.04);
+
+    _p
+      ..style = PaintingStyle.fill
+      ..color = Colors.black.withValues(alpha: 0.25);
+    canvas.drawOval(
+        Rect.fromCenter(center: Offset.zero, width: 70, height: 5), _p);
+
+    // Sorot lampu depan
+    _p.color = const Color(0xFFFFF59D).withValues(alpha: 0.2);
+    canvas.drawPath(
+      Path()
+        ..moveTo(30, -12)
+        ..lineTo(78, -3)
+        ..lineTo(78, -21)
+        ..close(),
+      _p,
+    );
+
+    _p.color = const Color(0xFF4A148C);
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-30, -24, 60, 18), const Radius.circular(4)),
+      _p,
+    );
+    canvas.drawPath(
+      Path()
+        ..moveTo(-18, -24)
+        ..lineTo(-12, -33)
+        ..lineTo(14, -33)
+        ..lineTo(22, -24)
+        ..close(),
+      _p,
+    );
+    _p.color = const Color(0xFFB3E5FC);
+    canvas.drawPath(
+      Path()
+        ..moveTo(-13, -25)
+        ..lineTo(-9, -31)
+        ..lineTo(12, -31)
+        ..lineTo(18, -25)
+        ..close(),
+      _p,
+    );
+    // Wajah bertopeng di balik kaca
+    _p.color = const Color(0xFF212121);
+    canvas.drawCircle(const Offset(8, -27), 3, _p);
+    _p.color = Colors.white;
+    canvas.drawCircle(const Offset(7, -27.5), 0.7, _p);
+    canvas.drawCircle(const Offset(9.2, -27.5), 0.7, _p);
+
+    // Garis kuning-merah
+    _p.color = const Color(0xFFFFD600);
+    canvas.drawRect(const Rect.fromLTWH(-30, -15, 60, 2.5), _p);
+    _p.color = const Color(0xFFFF1744);
+    canvas.drawRect(const Rect.fromLTWH(-30, -12.5, 60, 1.5), _p);
+
+    _p.color = const Color(0xFFFFF176);
+    canvas.drawRect(const Rect.fromLTWH(28, -20, 3, 4), _p);
+    _p.color = const Color(0xFFEF5350);
+    canvas.drawRect(const Rect.fromLTWH(-31, -20, 2, 4), _p);
+
+    // Lampu strobo atap
+    final blink = math.sin(t * 16) > 0;
+    _p.color = (blink ? const Color(0xFFFF1744) : const Color(0xFF2979FF))
+        .withValues(alpha: 0.9);
+    canvas.drawRect(const Rect.fromLTWH(-4, -36, 8, 3), _p);
+
+    final wa = t * 28;
+    for (final wx in const [-17.0, 17.0]) {
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF212121);
+      canvas.drawCircle(Offset(wx, -5), 5.4, _p);
+      _p.color = const Color(0xFFBDBDBD);
+      canvas.drawCircle(Offset(wx, -5), 2, _p);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.9
+        ..color = const Color(0xFF9E9E9E);
+      canvas.drawLine(
+        Offset(wx + math.cos(wa) * 4, -5 + math.sin(wa) * 4),
+        Offset(wx - math.cos(wa) * 4, -5 - math.sin(wa) * 4),
+        _p,
+      );
+      _p.style = PaintingStyle.fill;
+    }
+    canvas.restore();
+  }
+
+  void _person(
+      Canvas canvas,
+      Offset feet, {
+        required Color shirt,
+        bool mask = false,
+        bool hat = false,
+        double rot = 0,
+        double swing = 0,
+        double alpha = 1,
+      }) {
+    final a = _c01(alpha);
+    if (a <= 0.02) return;
+    if (a < 1) {
+      canvas.saveLayer(
+        Rect.fromCenter(center: feet, width: 60, height: 60),
+        Paint()..color = Color.fromRGBO(0, 0, 0, a),
+      );
+    }
+    canvas.save();
+    canvas.translate(feet.dx, feet.dy - 8);
+    canvas.rotate(rot);
+
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF37474F);
+    canvas.drawLine(const Offset(0, 2), Offset(-swing, 8), _p);
+    canvas.drawLine(const Offset(0, 2), Offset(swing, 8), _p);
+    _p.color = shirt;
+    canvas.drawLine(const Offset(0, -3), Offset(-5, -1 + swing * 0.5), _p);
+    canvas.drawLine(const Offset(0, -3), Offset(5, -5 - swing * 0.4), _p);
+
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt
+      ..color = shirt;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-3.2, -6, 6.4, 9), const Radius.circular(2)),
+      _p,
+    );
+    _p.color = const Color(0xFFE0AC84);
+    canvas.drawCircle(const Offset(0, -9.5), 3.2, _p);
+    if (mask) {
+      _p.color = const Color(0xFF212121);
+      canvas.drawRect(const Rect.fromLTWH(-3.2, -10.6, 6.4, 2.4), _p);
+      _p.color = Colors.white;
+      canvas.drawCircle(const Offset(-1.3, -9.5), 0.6, _p);
+      canvas.drawCircle(const Offset(1.3, -9.5), 0.6, _p);
+    }
+    if (hat) {
+      _p.color = const Color(0xFFFF8F00);
+      canvas.drawRect(const Rect.fromLTWH(-3.6, -13.4, 7.2, 2.6), _p);
+    }
+    canvas.restore();
+    if (a < 1) canvas.restore();
+  }
+
+  void _star(Canvas canvas, Offset c, double r, Color color) {
+    final path = Path();
+    for (var i = 0; i < 8; i++) {
+      final rr = i.isEven ? r : r * 0.4;
+      final ang = i * math.pi / 4 - math.pi / 2;
+      final pt = c + Offset(math.cos(ang) * rr, math.sin(ang) * rr);
+      if (i == 0) {
+        path.moveTo(pt.dx, pt.dy);
+      } else {
+        path.lineTo(pt.dx, pt.dy);
+      }
+    }
+    path.close();
+    _p
+      ..style = PaintingStyle.fill
+      ..color = color;
+    canvas.drawPath(path, _p);
+  }
+
+  // ------------------------------------------- efek sinematik & dramatis
+
+  void _drawGodRays(Canvas canvas, double t, double p) {
+    if (d.compact || p > 0.45 || d.eliminated || d.worldEvent == 'rain_flood') {
+      return;
+    }
+    const sun = Offset(334, 46);
+    final fade = 1 - p / 0.45;
+    _p
+      ..style = PaintingStyle.fill
+      ..shader = null;
+    for (var k = 0; k < 5; k++) {
+      final ang = math.pi * 0.62 + k * 0.13 + math.sin(t * 0.5 + k) * 0.03;
+      final w = 0.05 + (k % 2) * 0.025;
+      const len = 380.0;
+      final path = Path()
+        ..moveTo(sun.dx, sun.dy)
+        ..lineTo(sun.dx + math.cos(ang - w) * len,
+            sun.dy + math.sin(ang - w) * len)
+        ..lineTo(sun.dx + math.cos(ang + w) * len,
+            sun.dy + math.sin(ang + w) * len)
+        ..close();
+      final a = _c01(0.05 + 0.035 * math.sin(t * 1.3 + k * 1.7)) * fade;
+      _p.color = const Color(0xFFFFF59D).withValues(alpha: a);
+      canvas.drawPath(path, _p);
+    }
+  }
+
+  void _confettiBurst(Canvas canvas, Offset o, double q, int n, int seed) {
+    if (q <= 0 || q >= 1) return;
+    const cols = [
+      Color(0xFFFFD54F),
+      Color(0xFFFF5252),
+      Color(0xFF40C4FF),
+      Color(0xFF69F0AE),
+      Color(0xFFE040FB),
+    ];
+    _p.style = PaintingStyle.fill;
+    for (var k = 0; k < n; k++) {
+      final h = _hh(seed + k);
+      final ang = -math.pi / 2 + ((h % 1000) / 1000 - 0.5) * math.pi * 1.5;
+      final sp = 50.0 + (h % 90);
+      final x = o.dx + math.cos(ang) * sp * q + math.sin(q * 12 + k) * 3;
+      final y = o.dy + math.sin(ang) * sp * q + 110 * q * q;
+      final a = _c01(1 - q * q);
+      _p.color = cols[h % cols.length].withValues(alpha: a);
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate(q * 9 + k);
+      canvas.drawRect(const Rect.fromLTWH(-2, -1.2, 4, 2.4), _p);
+      canvas.restore();
+    }
+  }
+
+  void _drawConfetti(Canvas canvas, double t) {
+    if (d.compact) return;
+    final tierP = _fxProgress(FxType.tier, 2400);
+    if (tierP != null) {
+      _confettiBurst(canvas, Offset(200, _roofY - 10), tierP, 46, 4000);
+    }
+    final buildP = _fxProgress(FxType.build, 2600);
+    if (buildP != null && buildP > 0.34) {
+      final idx = math.max(0, math.min(d.rooms - 1, _floors * 4 - 1));
+      _confettiBurst(
+          canvas, _cell(idx).center, (buildP - 0.34) / 0.66, 26, 5000);
+    }
+  }
+
+  void _drawVignette(Canvas canvas, double t, double p) {
+    var a = 0.28 + p * 0.2 + (_critical ? 0.12 : 0);
+    if (d.compact) a *= 0.6;
+    _p
+      ..style = PaintingStyle.fill
+      ..shader = RadialGradient(
+        radius: 0.9,
+        colors: [
+          Colors.black.withValues(alpha: 0),
+          Colors.black.withValues(alpha: _c01(a)),
+        ],
+        stops: const [0.55, 1.0],
+      ).createShader(_view);
+    canvas.drawRect(_view, _p);
+    _p.shader = null;
+
+    // Semburan cahaya oranye saat membakar sampah
+    final burnP = _fxProgress(FxType.burn, 4500);
+    if (burnP != null) {
+      final env = burnP < 0.12
+          ? burnP / 0.12
+          : (burnP > 0.8 ? (1 - burnP) / 0.2 : 1.0);
+      _p.color = const Color(0xFFFF6D00)
+          .withValues(alpha: _c01(0.12 * env * (0.7 + 0.3 * math.sin(t * 12))));
+      canvas.drawRect(_view, _p);
+    }
+  }
+
+  void _drawCinematic(Canvas canvas, double t) {
+    final fx = _fxActive(FxType.hijack, _hijackMs);
+    if (fx != null && fx.amount.round() != 1) {
+      final p = fx.age / _hijackMs;
+      final env = p < 0.08 ? p / 0.08 : (p > 0.9 ? (1 - p) / 0.1 : 1.0);
+      final e = _ease(env);
+
+      // Sorotan sinematik: sekitar truk terang, sisanya digelapkan
+      if (!d.compact) {
+        const center = Offset(290, 278);
+        _p
+          ..style = PaintingStyle.fill
+          ..shader = RadialGradient(
+            colors: [
+              Colors.black.withValues(alpha: 0),
+              Colors.black.withValues(alpha: 0.55 * e),
+            ],
+            stops: const [0.35, 1.0],
+          ).createShader(Rect.fromCircle(center: center, radius: 210));
+        canvas.drawRect(_view, _p);
+        _p.shader = null;
+      }
+
+      // Denyut alarm merah
+      if (p > 0.3 && p < 0.85) {
+        final pulse = 0.5 + 0.5 * math.sin(t * 18);
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 16
+          ..color = const Color(0xFFFF1744).withValues(alpha: 0.12 + 0.28 * pulse);
+        canvas.drawRect(_view, _p);
+        _p.style = PaintingStyle.fill;
+      }
+
+      // Kilatan putih tepat saat maling merebut kemudi
+      final fl = 1 - (p - 0.40).abs() / 0.06;
+      if (fl > 0) {
+        _p
+          ..style = PaintingStyle.fill
+          ..color = Colors.white.withValues(alpha: _c01(fl) * 0.55);
+        canvas.drawRect(_view, _p);
+      }
+    }
+
+    // Kilatan saat kost tertimbun
+    final cp = _fxProgress(FxType.collapse, 1500);
+    if (cp != null && cp < 0.15) {
+      _p
+        ..style = PaintingStyle.fill
+        ..color = Colors.white.withValues(alpha: (1 - cp / 0.15) * 0.5);
+      canvas.drawRect(_view, _p);
     }
   }
 
