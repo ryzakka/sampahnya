@@ -36,6 +36,10 @@ class _GameScreenState extends State<GameScreen>
   final Map<String, String> _names = {};
   final List<Map<String, dynamic>> _events = [];
 
+  // Pelacak jumlah kamar & pertahanan sebelumnya untuk memicu efek instan tanpa kedip
+  final Map<String, int> _prevRooms = {};
+  final Map<String, int> _prevDefense = {};
+
   // efek visual per pemain (dipicu event realtime) & durasi truk
   final Map<String, List<KostFx>> _fx = {};
   final Map<String, double> _haulTotal = {};
@@ -46,18 +50,19 @@ class _GameScreenState extends State<GameScreen>
   Timer? _uiTimer;
   Timer? _tickTimer;
   late final AnimationController _anim; // penggerak animasi adegan
-  bool _busy = false;
+  String? _activeRpc; // melacak RPC yang sedang berjalan tanpa membuat seluruh UI kedip
   bool _loaded = false;
 
   @override
   void initState() {
     super.initState();
-    _anim = AnimationController(vsync: this, duration: const Duration(seconds: 1))
+    _anim =
+    AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..repeat();
     _subscribe();
     _loadAll();
     _tickServer();
-    _uiTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+    _uiTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!mounted) return;
       final now = sceneNowMs();
       for (final l in _fx.values) {
@@ -97,8 +102,26 @@ class _GameScreenState extends State<GameScreen>
       callback: (p) {
         final r = p.newRecord;
         if (r.isEmpty || !mounted) return;
+        final pid = r['player_id'] as String;
+        final next = Map<String, dynamic>.from(r);
+
+        // Deteksi kenaikan kamar/pertahanan langsung di frame yang sama agar tidak kedip
+        final newRooms = _num(next['rooms_count']).toInt();
+        final oldRooms = _prevRooms[pid];
+        if (oldRooms != null && newRooms > oldRooms) {
+          _ensureFx(pid, FxType.build);
+        }
+        _prevRooms[pid] = newRooms;
+
+        final newDef = _num(next['defense']).toInt();
+        final oldDef = _prevDefense[pid];
+        if (oldDef != null && newDef > oldDef) {
+          _ensureFx(pid, FxType.defense);
+        }
+        _prevDefense[pid] = newDef;
+
         setState(() {
-          _states[r['player_id'] as String] = Map<String, dynamic>.from(r);
+          _states[pid] = next;
         });
       },
     )
@@ -135,35 +158,41 @@ class _GameScreenState extends State<GameScreen>
         .subscribe();
   }
 
+  /// Pastikan efek tidak terduplikasi bila sudah dipicu oleh deteksi state lokal.
+  void _ensureFx(String? id, FxType t, {double amount = 0}) {
+    if (id == null) return;
+    final list = _fx[id] ??= <KostFx>[];
+    final hasRecent = list.any((f) => f.type == t && f.age < 750);
+    if (!hasRecent) {
+      list.add(KostFx(t, amount: amount));
+    }
+  }
+
   /// Ubah event game menjadi efek visual di kost yang bersangkutan.
   void _addFx(Map<String, dynamic> e) {
     final actor = e['actor_id']?.toString();
     final target = e['target_id']?.toString();
     final amt = _num(e['amount']);
-    void add(String? id, FxType t) {
-      if (id == null) return;
-      (_fx[id] ??= <KostFx>[]).add(KostFx(t, amount: amt));
-    }
 
     switch (e['type']) {
       case 'burn':
-        add(actor, FxType.burn);
+        _ensureFx(actor, FxType.burn, amount: amt);
         break;
       case 'build':
-        add(actor, FxType.build);
+        _ensureFx(actor, FxType.build, amount: amt);
         break;
       case 'defense':
-        add(actor, FxType.defense);
+        _ensureFx(actor, FxType.defense, amount: amt);
         break;
       case 'throw':
-        add(actor, FxType.outgoing);
-        add(target, FxType.incoming);
+        _ensureFx(actor, FxType.outgoing, amount: amt);
+        _ensureFx(target, FxType.incoming, amount: amt);
         break;
       case 'eliminated':
-        add(target, FxType.collapse);
+        _ensureFx(target, FxType.collapse, amount: amt);
         break;
       default:
-        break; // 'haul' digambar dari status hauler_busy_until
+        break;
     }
   }
 
@@ -183,26 +212,29 @@ class _GameScreenState extends State<GameScreen>
           .eq('room_id', widget.roomId)
           .order('id', ascending: false)
           .limit(20);
+
       if (!mounted) return;
       setState(() {
         _room = Map<String, dynamic>.from(room);
-        _states.clear();
         for (final s in st) {
-          _states[s['player_id'] as String] = Map<String, dynamic>.from(s);
+          final map = Map<String, dynamic>.from(s);
+          final pid = map['player_id'] as String;
+          _states[pid] = map;
+          _prevRooms[pid] = _num(map['rooms_count']).toInt();
+          _prevDefense[pid] = _num(map['defense']).toInt();
         }
         for (final n in names) {
           _names[n['player_id'] as String] = n['player_name'] as String;
         }
-        _events
-          ..clear()
-          ..addAll(ev.map((e) => Map<String, dynamic>.from(e)));
+        if (_events.isEmpty) {
+          _events.addAll(ev.map((e) => Map<String, dynamic>.from(e)));
+        }
         _loaded = true;
       });
     } catch (e) {
       _toast('Gagal memuat: $e');
     }
   }
-
   Future<void> _tickServer() async {
     if (_room['status'] == 'finished') return;
     try {
@@ -218,17 +250,19 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Future<void> _act(String fn, [Map<String, dynamic> extra = const {}]) async {
-    if (_busy) return;
-    setState(() => _busy = true);
+    if (_activeRpc != null) return;
+    setState(() => _activeRpc = fn);
+
     try {
       await _db.rpc(fn, params: {'p_room': widget.roomId, ...extra});
-      await _loadAll();
+      // Tidak memanggil _loadAll() lagi di sini agar tidak memicu kedip (flicker);
+      // perubahan state sudah langsung dikirim oleh Realtime Postgres Changes.
     } on PostgrestException catch (e) {
       _toast(e.message);
     } catch (e) {
       _toast('$e');
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() => _activeRpc = null);
     }
   }
 
@@ -262,7 +296,9 @@ class _GameScreenState extends State<GameScreen>
   /// Nilai uang & sampah "sekarang", diekstrapolasi dari rate server.
   ({double money, double trash}) _live(Map<String, dynamic> s) {
     final cap = _num(s['trash_capacity']);
-    if (s['eliminated_at'] != null) return (money: _num(s['money']), trash: cap);
+    if (s['eliminated_at'] != null) {
+      return (money: _num(s['money']), trash: cap);
+    }
     final updated = _ts(s['updated_at'])!;
     final dt = max(0.0, _serverNow.difference(updated).inMilliseconds / 1000);
     var trash = _num(s['trash']) + _num(s['trash_rate']) * dt;
@@ -284,13 +320,14 @@ class _GameScreenState extends State<GameScreen>
     return max(0.0, p - 0.4 * dt);
   }
 
-  // harus sama dengan build_room() di SQL
   int _buildCost(Map<String, dynamic> s) =>
       (100 * pow(1.35, _num(s['rooms_count'])) * (_pollution >= 60 ? 1.5 : 1))
           .round();
 
   (String, Color) _pollutionLevel(double p) {
-    if (p >= 85) return ('Darurat: income -40%, sampah +20%', Colors.red.shade700);
+    if (p >= 85) {
+      return ('Darurat: income -40%, sampah +20%', Colors.red.shade700);
+    }
     if (p >= 60) return ('Asap tebal: income -25%', Colors.deepOrange);
     if (p >= 30) return ('Langit kelabu: income -10%', Colors.amber.shade800);
     return ('Udara aman', Colors.green.shade700);
@@ -319,16 +356,16 @@ class _GameScreenState extends State<GameScreen>
         return '$a membakar sampah! Polusi naik.';
       case 'throw':
         return t == 'Anda'
-            ? '$a membuang $amt sampah ke kost-mu!'
-            : '$a membuang $amt sampah ke kost $t.';
+            ? '$a melempar $amt sampah ke kost-mu!'
+            : '$a melempar $amt sampah ke kost $t.';
       case 'haul':
-        return '$a menyewa tukang sampah.';
+        return '$a menyewa truk pengangkut sampah.';
       case 'build':
-        return '$a membangun kamar baru.';
+        return '$a membangun kamar kost baru!';
       case 'defense':
-        return '$a memasang pertahanan.';
+        return '$a memperkuat pertahanan kost!';
       case 'eliminated':
-        return '$t tertimbun sampah!';
+        return '$t tertimbun lautan sampah!';
       default:
         return '';
     }
@@ -359,7 +396,6 @@ class _GameScreenState extends State<GameScreen>
     return _walls[(i < 0 ? 0 : i) % _walls.length];
   }
 
-  /// Progres 0..1 animasi truk sampah, null bila tidak sedang mengangkut.
   double? _haulProgress(String id, Map<String, dynamic> s) {
     final left = _remaining(s['hauler_busy_until']);
     if (left <= 0) {
@@ -411,19 +447,33 @@ class _GameScreenState extends State<GameScreen>
   Widget build(BuildContext context) {
     if (!_loaded) {
       return Scaffold(
-        appBar: AppBar(title: Text('Ruangan ${widget.roomCode}')),
-        body: const Center(child: CircularProgressIndicator()),
+        backgroundColor: const Color(0xFF14201A),
+        body: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: Color(0xFFFFCA28)),
+              const SizedBox(height: 16),
+              Text(
+                'Menyiapkan Kost ${widget.roomCode}…',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
       );
     }
 
     final me = _states[_me];
     final finished = _room['status'] == 'finished';
     final alive = me != null && me['eliminated_at'] == null;
-    final canAct = alive && !finished && !_busy;
+    final canAct = alive && !finished && _activeRpc == null;
     final others = _states.entries.where((e) => e.key != _me).toList()
       ..sort((a, b) => _name(a.key).compareTo(_name(b.key)));
 
-    // penonton: lawan pertama dijadikan sorotan utama
     final String? mainId =
     me != null ? _me : (others.isNotEmpty ? others.first.key : null);
     final mainState = mainId == null ? null : _states[mainId];
@@ -542,8 +592,7 @@ class _GameScreenState extends State<GameScreen>
                   child: Center(
                     child: ConstrainedBox(
                       constraints: const BoxConstraints(maxWidth: 700),
-                      child: _actionBar(me, canAct,
-                          wide: wide, short: short),
+                      child: _actionBar(me, canAct, wide: wide, short: short),
                     ),
                   ),
                 ),
@@ -553,7 +602,7 @@ class _GameScreenState extends State<GameScreen>
               if (finished)
                 Positioned.fill(
                   child: Container(
-                    color: Colors.black.withValues(alpha: 0.55),
+                    color: Colors.black.withValues(alpha: 0.65),
                     alignment: Alignment.center,
                     padding: const EdgeInsets.all(20),
                     child: ConstrainedBox(
@@ -573,14 +622,22 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _glass({
     required Widget child,
-    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    EdgeInsets padding =
+    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
   }) {
     return Container(
       padding: padding,
       decoration: BoxDecoration(
-        color: _ink.withValues(alpha: 0.66),
+        color: _ink.withValues(alpha: 0.72),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.25),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
       ),
       child: child,
     );
@@ -599,7 +656,9 @@ class _GameScreenState extends State<GameScreen>
         const SizedBox(width: 4),
         Text(text,
             style: const TextStyle(
-                color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700)),
       ],
     ),
   );
@@ -614,7 +673,9 @@ class _GameScreenState extends State<GameScreen>
         const SizedBox(width: 6),
         Text(live.money.floor().toString(),
             style: const TextStyle(
-                color: Colors.white, fontSize: 21, fontWeight: FontWeight.w800)),
+                color: Colors.white,
+                fontSize: 21,
+                fontWeight: FontWeight.w800)),
         if (!out) ...[
           const SizedBox(width: 6),
           Text('+${_num(s['income_rate']).toStringAsFixed(1)}/dtk',
@@ -644,7 +705,8 @@ class _GameScreenState extends State<GameScreen>
               Row(
                 children: [
                   Text(label,
-                      style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                      style:
+                      const TextStyle(color: Colors.white70, fontSize: 11)),
                   const Spacer(),
                   Text(value,
                       style: const TextStyle(
@@ -712,8 +774,7 @@ class _GameScreenState extends State<GameScreen>
           _hudStat(Icons.meeting_room,
               '${_num(s['rooms_count']).toInt()}/$_maxRooms'),
           const SizedBox(width: 6),
-          _hudStat(Icons.shield,
-              '${_num(s['defense']).toInt()}/$_maxDefense'),
+          _hudStat(Icons.shield, '${_num(s['defense']).toInt()}/$_maxDefense'),
         ],
       );
     }
@@ -803,7 +864,9 @@ class _GameScreenState extends State<GameScreen>
         const SizedBox(width: 5),
         Text(text,
             style: const TextStyle(
-                color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w700)),
       ],
     ),
   );
@@ -826,8 +889,8 @@ class _GameScreenState extends State<GameScreen>
       final ratio = live.trash / cap;
       final out = s['eliminated_at'] != null;
       if (!out && ratio >= 0.5) {
-        tags.add(_tag(Icons.warning_amber_rounded, _trashStage(ratio),
-            _trashColor(ratio)));
+        tags.add(_tag(
+            Icons.warning_amber_rounded, _trashStage(ratio), _trashColor(ratio)));
       }
       final penalty = _remaining(s['burn_penalty_until']);
       if (!out && penalty > 0) {
@@ -886,8 +949,9 @@ class _GameScreenState extends State<GameScreen>
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
         decoration: BoxDecoration(
-          color: _ink.withValues(alpha: 0.78),
+          color: _ink.withValues(alpha: 0.85),
           borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: color.withValues(alpha: 0.5)),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -898,7 +962,10 @@ class _GameScreenState extends State<GameScreen>
               child: Text(text,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600)),
             ),
           ],
         ),
@@ -944,40 +1011,71 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _finishedCard() {
     final winner = _room['winner_id'];
-    final text = winner == _me
-        ? 'Anda menang! Kost Anda paling bertahan.'
-        : '${_name(winner)} menang. Kost Anda kalah tertimbun sampah.';
-    return Card(
-      color: Theme.of(context).colorScheme.primaryContainer,
-      elevation: 6,
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Icon(winner == _me ? Icons.emoji_events : Icons.delete_forever,
-                    size: 28),
-                const SizedBox(width: 10),
-                const Text('Permainan selesai',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text(text),
-            const SizedBox(height: 16),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () =>
-                    Navigator.of(context).popUntil((r) => r.isFirst),
-                child: const Text('Kembali ke beranda'),
-              ),
-            ),
-          ],
+    final isWin = winner == _me;
+    final text = isWin
+        ? 'Selamat! Kost Anda paling tangguh dan bersih dari kepungan sampah!'
+        : '${_name(winner)} memenangkan pertandingan. Kost Anda telah tertimbun sampah.';
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF16281F),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: isWin ? const Color(0xFFFFCA28) : Colors.redAccent,
+          width: 2,
         ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 24,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          CircleAvatar(
+            radius: 32,
+            backgroundColor: (isWin ? const Color(0xFFFFCA28) : Colors.redAccent)
+                .withValues(alpha: 0.2),
+            child: Icon(
+              isWin ? Icons.emoji_events_rounded : Icons.delete_forever_rounded,
+              size: 36,
+              color: isWin ? const Color(0xFFFFCA28) : Colors.redAccent,
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            isWin ? 'JURAGAN TERBAIK!' : 'KOST TERTIMBUN!',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            text,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFFFCA28),
+                foregroundColor: Colors.black87,
+                textStyle: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              onPressed: () =>
+                  Navigator.of(context).popUntil((r) => r.isFirst),
+              child: const Text('KEMBALI KE BERANDA'),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1006,6 +1104,7 @@ class _GameScreenState extends State<GameScreen>
         color: Colors.lightBlue,
         title: rooms >= _maxRooms ? 'Kamar penuh' : 'Bangun kamar',
         subtitle: rooms >= _maxRooms ? 'Maksimal $_maxRooms' : 'Biaya $cost',
+        busy: _activeRpc == 'build_room',
         onTap: canAct && rooms < _maxRooms && live.money >= cost
             ? () => _act('build_room')
             : null,
@@ -1015,11 +1114,11 @@ class _GameScreenState extends State<GameScreen>
         icon: Icons.local_shipping,
         color: Colors.lightGreen,
         title: 'Tukang sampah',
-        subtitle: haulLeft > 0 ? 'Mengangkut ${haulLeft.ceil()}s' : '~$haulCost',
-        onTap: canAct &&
-            haulLeft == 0 &&
-            live.trash >= 1 &&
-            live.money >= haulCost
+        subtitle:
+        haulLeft > 0 ? 'Mengangkut ${haulLeft.ceil()}s' : '~$haulCost',
+        busy: _activeRpc == 'hire_hauler',
+        onTap:
+        canAct && haulLeft == 0 && live.trash >= 1 && live.money >= haulCost
             ? () => _act('hire_hauler')
             : null,
       ),
@@ -1033,6 +1132,7 @@ class _GameScreenState extends State<GameScreen>
             : smog
             ? 'Terblokir kabut'
             : 'Polusi naik',
+        busy: _activeRpc == 'burn',
         onTap: canAct && burnLeft == 0 && !smog && live.trash >= 2
             ? () => _act('burn')
             : null,
@@ -1045,6 +1145,7 @@ class _GameScreenState extends State<GameScreen>
         subtitle: defense >= _maxDefense
             ? 'Level $_maxDefense/$_maxDefense'
             : 'Lv ${defense + 1} · $defCost',
+        busy: _activeRpc == 'buy_defense',
         onTap: canAct && defense < _maxDefense && live.money >= defCost
             ? () => _act('buy_defense')
             : null,
@@ -1143,7 +1244,7 @@ class _GameScreenState extends State<GameScreen>
 
     return Material(
       elevation: 5,
-      color: Theme.of(context).colorScheme.surface,
+      color: const Color(0xFF1A2820),
       borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
       child: Column(
@@ -1226,25 +1327,33 @@ class _GameScreenState extends State<GameScreen>
             padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
             child: Row(
               children: [
-                const Icon(Icons.meeting_room, size: 14),
+                const Icon(Icons.meeting_room, size: 14, color: Colors.white70),
                 const SizedBox(width: 3),
                 Text('${_num(s['rooms_count']).toInt()}',
                     style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w700)),
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700)),
                 const SizedBox(width: 8),
-                const Icon(Icons.shield, size: 14),
+                const Icon(Icons.shield, size: 14, color: Colors.white70),
                 const SizedBox(width: 3),
                 Text('${_num(s['defense']).toInt()}',
                     style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w700)),
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700)),
                 const Spacer(),
                 Tooltip(
-                  message: 'Buang sampah ke ${_name(id)} (10)',
+                  message: 'Lempar sampah ke ${_name(id)} (Biaya 10)',
                   child: SizedBox(
-                    width: 36,
+                    width: 38,
                     height: 30,
-                    child: FilledButton.tonal(
+                    child: FilledButton(
                       style: FilledButton.styleFrom(
+                        backgroundColor: enabled
+                            ? const Color(0xFFFF7043)
+                            : Colors.white.withValues(alpha: 0.1),
+                        foregroundColor: Colors.white,
                         padding: EdgeInsets.zero,
                         minimumSize: Size.zero,
                       ),
@@ -1252,7 +1361,7 @@ class _GameScreenState extends State<GameScreen>
                           ? () => _act('throw_trash', {'p_target': id})
                           : null,
                       child: btnText == null
-                          ? const Icon(Icons.delete_sweep, size: 18)
+                          ? const Icon(Icons.rocket_launch_rounded, size: 16)
                           : Text(btnText,
                           style: const TextStyle(
                               fontSize: 11, fontWeight: FontWeight.w700)),
@@ -1268,8 +1377,6 @@ class _GameScreenState extends State<GameScreen>
   }
 }
 
-/// Tombol aksi di bilah bawah.
-/// mode 0 = besar, 1 = sedang (HP), 2 = padat (layar pendek).
 class _ActionButton extends StatelessWidget {
   const _ActionButton({
     required this.mode,
@@ -1278,6 +1385,7 @@ class _ActionButton extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.busy = false,
   });
 
   final int mode;
@@ -1286,10 +1394,11 @@ class _ActionButton extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback? onTap;
+  final bool busy;
 
   @override
   Widget build(BuildContext context) {
-    final enabled = onTap != null;
+    final enabled = onTap != null || busy;
     final c = enabled ? color : Colors.blueGrey;
     final avatarR = mode == 0 ? 16.0 : (mode == 1 ? 13.0 : 14.0);
     final titleSize = mode == 0 ? 13.0 : 11.5;
@@ -1298,7 +1407,16 @@ class _ActionButton extends StatelessWidget {
     final avatar = CircleAvatar(
       radius: avatarR,
       backgroundColor: c,
-      child: Icon(icon, size: avatarR + 2, color: Colors.white),
+      child: busy
+          ? SizedBox(
+        width: avatarR,
+        height: avatarR,
+        child: const CircularProgressIndicator(
+          strokeWidth: 2,
+          color: Colors.white,
+        ),
+      )
+          : Icon(icon, size: avatarR + 2, color: Colors.white),
     );
     final texts = Column(
       mainAxisSize: MainAxisSize.min,
@@ -1323,17 +1441,18 @@ class _ActionButton extends StatelessWidget {
       ],
     );
 
-    return Opacity(
-      opacity: enabled ? 1 : 0.5,
+    return AnimatedOpacity(
+      duration: const Duration(milliseconds: 180),
+      opacity: enabled ? 1 : 0.45,
       child: Material(
-        color: c.withValues(alpha: 0.2),
+        color: c.withValues(alpha: 0.22),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
-          side: BorderSide(color: c.withValues(alpha: 0.5)),
+          side: BorderSide(color: c.withValues(alpha: 0.55)),
         ),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: onTap,
+          onTap: busy ? null : onTap,
           child: Padding(
             padding: EdgeInsets.symmetric(
                 horizontal: mode == 2 ? 8 : 4, vertical: mode == 2 ? 4 : 6),
