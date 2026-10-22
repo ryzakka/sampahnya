@@ -437,11 +437,16 @@ const double _fh = 50;
 // ---- Garis waktu sinematik (ms) - dipakai painter ini DAN cinematics.dart.
 // Sidak polisi: mobil masuk -> petugas turun -> pita dipasang -> stempel
 // "DISEGEL" -> (bila tidak disegel) petugas pergi.
-const int kPoliceDriveMs = 2400;
-const int kPoliceTapeStartMs = 3300;
+// Urutan baru: mobil masuk (0..2600) -> petugas turun & pengumuman megafon
+// (2600..4400) -> pita dibentang (4400..8000) -> stempel segel di pintu
+// (8000..9600) -> (bila tidak disegel) pita dibereskan & petugas pergi.
+const int kPoliceDriveMs = 2600;
+const int kPoliceTapeStartMs = 4400;
 const int kPoliceTapeMs = 3600;
-const int kPoliceTapeEndMs = kPoliceTapeStartMs + kPoliceTapeMs; // 6900
-const int kPoliceTotalMs = 9000;
+const int kPoliceTapeEndMs = kPoliceTapeStartMs + kPoliceTapeMs; // 8000
+const int kPoliceSealMs = 1600; // stempel segel + dampaknya
+const int kPoliceLeaveStartMs = kPoliceTapeEndMs + kPoliceSealMs + 600; // 10200
+const int kPoliceTotalMs = 11800;
 
 // Rumah tertimbun: longsoran sampah -> runtuh -> penghuni sedih + papan DIJUAL.
 const int kBuriedCollapseMs = 4600;
@@ -779,6 +784,15 @@ class KostPainter extends CustomPainter {
       final q = _c01((bAge - 1200) / 3400.0);
       shakeX += math.sin(bAge * 0.09) * 2.6 * q;
       shakeY += math.cos(bAge * 0.13) * 1.7 * q;
+    }
+    // Guncangan saat segel polisi dihantam ke pintu
+    final pAge = d.policeAgeMs;
+    if (pAge != null) {
+      final q = (pAge - (kPoliceTapeEndMs + 500)) / 650.0;
+      if (q > 0 && q < 1) {
+        shakeX += math.sin(q * 90) * 3.4 * (1 - q);
+        shakeY += math.cos(q * 70) * 2.4 * (1 - q);
+      }
     }
     // Napas kamera halus agar adegan terasa hidup
     if (!d.compact) {
@@ -1398,16 +1412,21 @@ class KostPainter extends CustomPainter {
     for (var idx = 0; idx < floors * 4; idx++) {
       final r = _cell(idx);
       if (idx >= d.rooms) {
-        _scaffold(canvas, r);
+        // Kamar belum dibangun: tetap ada rangka beton + ruang mentah di
+        // dalamnya, bukan kotak kosong di bawah atap yang melayang.
+        _emptyShell(canvas, r, idx, t);
         continue;
       }
       double scaleX = 1, scaleY = 1;
       double glow = 0;
       if (buildP != null && idx == newest) {
         if (buildP < 0.34) {
+          _emptyShell(canvas, r, idx, t);
           _scaffold(canvas, r);
           continue;
         }
+        // Modul kamar diturunkan crane ke dalam rangka yang sudah ada.
+        _emptyShell(canvas, r, idx, t);
         final local = _c01((buildP - 0.34) / 0.32);
         final pop = _easeOutBack(local);
         scaleY = pop;
@@ -1574,6 +1593,169 @@ class KostPainter extends CustomPainter {
       canvas.drawCircle(Offset(205, roofY - 27), 13, _p);
       _p.color = const Color(0xFFFF1744);
       canvas.drawCircle(Offset(205, roofY - 27), 4.5, _p);
+    }
+  }
+
+  /// Kamar yang belum dibangun: rangka beton (kolom + pelat lantai + pelat
+  /// plafon) dengan ruang mentah di dalamnya - plesteran belum jadi, bukaan
+  /// jendela tanpa kaca, tembok bata setengah jadi, dan perkakas tukang.
+  /// Hasilnya terbaca sebagai "lantai yang sedang dikerjakan", sehingga atap
+  /// tidak lagi terlihat melayang di atas kotak kosong.
+  void _emptyShell(Canvas canvas, Rect r, int idx, double t) {
+    final h = _hh(idx * 5 + 11);
+
+    // ---- dinding belakang: plester/beton mentah, gelap di bawah pelat atas
+    _p
+      ..style = PaintingStyle.fill
+      ..shader = const LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Color(0xFF5F5A54), Color(0xFF9E978B), Color(0xFFB3ACA0)],
+        stops: [0.0, 0.55, 1.0],
+      ).createShader(r);
+    canvas.drawRect(r, _p);
+    _p.shader = null;
+
+    // bercak plesteran yang belum rata
+    _p.color = Colors.white.withValues(alpha: 0.06);
+    canvas.drawRect(
+        Rect.fromLTWH(r.left + 6 + (h % 9), r.top + 14, 11, 9), _p);
+    _p.color = Colors.black.withValues(alpha: 0.07);
+    canvas.drawRect(
+        Rect.fromLTWH(r.right - 20 - (h % 7), r.top + 24, 9, 12), _p);
+
+    // ---- bukaan jendela: lubang gelap berbingkai kayu kasar (tanpa kaca)
+    final win = Rect.fromLTWH(r.left + 9, r.top + 9, r.width - 18, 26);
+    _p.color = const Color(0xFF1F242B).withValues(alpha: 0.92);
+    canvas.drawRect(win, _p);
+    _p.color = Colors.white.withValues(alpha: 0.05);
+    canvas.drawRect(Rect.fromLTWH(win.left, win.top, win.width, 5), _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.6
+      ..color = const Color(0xFF8D6E4B);
+    canvas.drawRect(win, _p);
+    // palang kayu penahan (bekisting)
+    canvas.drawLine(win.topLeft, win.bottomRight,
+        _p..color = const Color(0xFF8D6E4B).withValues(alpha: 0.55));
+    _p.style = PaintingStyle.fill;
+
+    // ---- tembok bata setengah jadi di bagian bawah
+    if (h % 3 != 0) {
+      final courses = 2 + h % 3; // 2..4 lapis
+      const bh = 4.2;
+      final wallTop = r.bottom - 3 - courses * bh;
+      final wall = Rect.fromLTRB(r.left + 3.5, wallTop, r.right - 3.5, r.bottom - 3);
+      _p.color = const Color(0xFFB4654A);
+      canvas.drawRect(wall, _p);
+      canvas.save();
+      canvas.clipRect(wall);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.7
+        ..color = const Color(0xFFE6DCCB).withValues(alpha: 0.85);
+      for (var c = 0; c <= courses; c++) {
+        final y = wall.bottom - c * bh;
+        canvas.drawLine(Offset(wall.left, y), Offset(wall.right, y), _p);
+        for (var x = wall.left + (c.isOdd ? 4.0 : 0.0); x < wall.right; x += 8) {
+          canvas.drawLine(Offset(x, y - bh), Offset(x, y), _p);
+        }
+      }
+      canvas.restore();
+      _p.style = PaintingStyle.fill;
+      // tiang pegangan tukang + adukan semen di atas tembok
+      _p.color = const Color(0xFF9E9E9E);
+      canvas.drawRect(Rect.fromLTWH(wall.left + 5 + (h % 12), wallTop - 2.2, 8, 2.2), _p);
+    }
+
+    // ---- perkakas tukang (berbeda tiap kamar)
+    final bx = r.left + 8 + (h % 20);
+    switch (h % 4) {
+      case 0: // tumpukan kantong semen
+        _p.color = const Color(0xFFD7CCC8);
+        canvas.drawRect(Rect.fromLTWH(bx, r.bottom - 8, 11, 5), _p);
+        canvas.drawRect(Rect.fromLTWH(bx + 1.5, r.bottom - 12.5, 9, 4.5), _p);
+        _p.color = const Color(0xFF8D6E63);
+        canvas.drawRect(Rect.fromLTWH(bx + 3, r.bottom - 6.5, 5, 1.4), _p);
+        break;
+      case 1: // ember adukan + sekop
+        _p.color = const Color(0xFFFB8C00);
+        canvas.drawRect(Rect.fromLTWH(bx, r.bottom - 9, 7, 6), _p);
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1
+          ..color = const Color(0xFF6D4C41);
+        canvas.drawLine(Offset(bx + 9, r.bottom - 3), Offset(bx + 14, r.bottom - 16), _p);
+        _p.style = PaintingStyle.fill;
+        break;
+      case 2: // tangga kayu bersandar
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = const Color(0xFFA1887F);
+        canvas.drawLine(Offset(bx, r.bottom - 3), Offset(bx + 6, r.top + 14), _p);
+        canvas.drawLine(Offset(bx + 6, r.bottom - 3), Offset(bx + 12, r.top + 14), _p);
+        for (var s = 0; s < 5; s++) {
+          final yy = r.bottom - 6 - s * 6.0;
+          canvas.drawLine(Offset(bx + 0.8 + s * 0.9, yy), Offset(bx + 6.8 + s * 0.9, yy), _p);
+        }
+        _p.style = PaintingStyle.fill;
+        break;
+      default: // lampu kerja menggantung, berkedip tipis
+        final fl = 0.75 + 0.25 * math.sin(t * 9 + idx);
+        final lx = r.center.dx;
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8
+          ..color = const Color(0xFF212121);
+        canvas.drawLine(Offset(lx, r.top + 3), Offset(lx, r.top + 12), _p);
+        _p
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFFFFE082).withValues(alpha: 0.18 * fl);
+        canvas.drawCircle(Offset(lx, r.top + 14), 13, _p);
+        _p.color = const Color(0xFFFFF59D).withValues(alpha: fl);
+        canvas.drawCircle(Offset(lx, r.top + 13.5), 2.4, _p);
+    }
+
+    // ---- pelat lantai (bawah) & pelat plafon (atas)
+    _p.color = const Color(0xFF6E6E6E);
+    canvas.drawRect(Rect.fromLTWH(r.left, r.bottom - 3, r.width, 3), _p);
+    _p.color = Colors.white.withValues(alpha: 0.18);
+    canvas.drawRect(Rect.fromLTWH(r.left, r.bottom - 3, r.width, 0.8), _p);
+    _p.color = const Color(0xFF7A7A7A);
+    canvas.drawRect(Rect.fromLTWH(r.left, r.top, r.width, 3.2), _p);
+    _p.color = Colors.black.withValues(alpha: 0.22);
+    canvas.drawRect(Rect.fromLTWH(r.left, r.top + 3.2, r.width, 2.4), _p);
+
+    // ---- kolom beton di kedua sisi (+ sengkang tulangan)
+    for (final cx in [r.left, r.right - 4.0]) {
+      _p.color = const Color(0xFFB5B2AB);
+      canvas.drawRect(Rect.fromLTWH(cx, r.top, 4, r.height), _p);
+      _p.color = Colors.black.withValues(alpha: 0.18);
+      canvas.drawRect(Rect.fromLTWH(cx + (cx == r.left ? 3.2 : 0), r.top, 0.8, r.height), _p);
+    }
+
+    // ---- pita peringatan di kamar yang berikutnya akan dibangun
+    if (idx == d.rooms && !d.eliminated) {
+      canvas.save();
+      canvas.clipRect(r.deflate(1));
+      canvas.translate(r.left, r.top + 36);
+      canvas.rotate(-0.12);
+      _p.color = const Color(0xFFFFD600);
+      canvas.drawRect(Rect.fromLTWH(-4, 0, r.width + 8, 4.2), _p);
+      _p.color = Colors.black87;
+      for (var sx = -4.0; sx < r.width + 8; sx += 8) {
+        canvas.drawPath(
+          Path()
+            ..moveTo(sx, 0)
+            ..lineTo(sx + 3.2, 0)
+            ..lineTo(sx + 1.2, 4.2)
+            ..lineTo(sx - 2, 4.2)
+            ..close(),
+          _p,
+        );
+      }
+      canvas.restore();
     }
   }
 
@@ -2077,26 +2259,258 @@ class KostPainter extends CustomPainter {
     canvas.drawRect(Rect.fromLTWH(x - 4, _gy + 1, 8, 2.4), _p);
   }
 
-  /// Petugas Satpol PP: seragam biru + topi.
+  static final TextPainter _sealText = TextPainter(
+    text: const TextSpan(
+      text: 'DISEGEL',
+      style: TextStyle(
+        color: Color(0xFFB71C1C),
+        fontSize: 4.6,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 0.4,
+      ),
+    ),
+    textDirection: TextDirection.ltr,
+  )..layout();
+
+  /// Petugas Satpol PP. [role]: 0 = biasa, 1 = komandan bermegafon,
+  /// 2 = pemeriksa dengan papan catatan & senter. Menghadap +x lalu dibalik
+  /// oleh [dir]. Detail: topi + lencana, rompi reflektif, ikat pinggang, sepatu.
   void _officer(Canvas canvas, Offset feet,
-      {double swing = 0, double alpha = 1, double dir = 1}) {
-    if (alpha <= 0.02) return;
-    _person(canvas, feet,
-        shirt: const Color(0xFF1E4FA3), swing: swing, alpha: alpha);
+      {double swing = 0,
+        double alpha = 1,
+        double dir = 1,
+        int role = 0,
+        double t = 0}) {
     final a = _c01(alpha);
+    if (a <= 0.02) return;
+    if (a < 1) {
+      canvas.saveLayer(
+        Rect.fromCenter(center: feet.translate(0, -14), width: 70, height: 60),
+        Paint()..color = Color.fromRGBO(0, 0, 0, a),
+      );
+    }
+    const navy = Color(0xFF1E4FA3);
+    const dark = Color(0xFF0D2547);
+    const skin = Color(0xFFE0AC84);
+    canvas.save();
+    canvas.translate(feet.dx, feet.dy);
+    canvas.scale(dir >= 0 ? 1.0 : -1.0, 1.0);
+
+    // bayangan
     _p
       ..style = PaintingStyle.fill
-      ..color = const Color(0xFF0D2547).withValues(alpha: a);
-    canvas.drawRect(Rect.fromLTWH(feet.dx - 3.8, feet.dy - 21.8, 7.6, 3.2), _p);
-    canvas.drawRect(
-      Rect.fromLTWH(feet.dx - 3.8 + (dir >= 0 ? 2.2 : -2.2), feet.dy - 19.2, 7.6, 1.2),
+      ..color = Colors.black.withValues(alpha: 0.2);
+    canvas.drawOval(Rect.fromCenter(center: const Offset(0, 0.5), width: 12, height: 2.6), _p);
+
+    // kaki + sepatu
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2.0
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF16233D);
+    canvas.drawLine(const Offset(0, -9), Offset(-swing, -0.8), _p);
+    canvas.drawLine(const Offset(0, -9), Offset(swing, -0.8), _p);
+    _p
+      ..strokeWidth = 2.4
+      ..color = Colors.black;
+    canvas.drawLine(Offset(-swing, -0.5), Offset(-swing + 1.4, -0.5), _p);
+    canvas.drawLine(Offset(swing, -0.5), Offset(swing + 1.4, -0.5), _p);
+
+    // lengan belakang (selalu mengayun / bertolak pinggang)
+    _p
+      ..strokeWidth = 1.9
+      ..color = navy;
+    if (role == 0) {
+      canvas.drawLine(const Offset(0, -16), Offset(-swing * 0.9, -10.5), _p);
+    } else {
+      canvas.drawLine(const Offset(0, -16), const Offset(-3.4, -11.5), _p); // tolak pinggang
+    }
+
+    // badan
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt
+      ..color = navy;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-3.7, -18, 7.4, 10), const Radius.circular(2.2)),
       _p,
     );
-    _p.color = const Color(0xFFFFD600).withValues(alpha: a);
-    canvas.drawCircle(Offset(feet.dx, feet.dy - 20.2), 0.9, _p);
+    // rompi reflektif + ikat pinggang + lencana
+    _p.color = const Color(0xFFFFD600).withValues(alpha: 0.9);
+    canvas.drawRect(const Rect.fromLTWH(-3.7, -14.4, 7.4, 1.1), _p);
+    _p.color = const Color(0xFF212121);
+    canvas.drawRect(const Rect.fromLTWH(-3.7, -10.2, 7.4, 1.4), _p);
+    _p.color = const Color(0xFFFFD54F);
+    canvas.drawRect(const Rect.fromLTWH(-0.6, -10.1, 1.5, 1.2), _p);
+    canvas.drawCircle(const Offset(1.9, -16.3), 0.9, _p);
+
+    // kepala + topi
+    _p.color = skin;
+    canvas.drawCircle(const Offset(0, -21.5), 3.3, _p);
+    _p.color = dark;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-3.9, -25.4, 7.8, 3.6), const Radius.circular(1.6)),
+      _p,
+    );
+    canvas.drawRect(const Rect.fromLTWH(0.8, -22.2, 5.2, 1.2), _p); // pet
+    _p.color = const Color(0xFFFFD600);
+    canvas.drawCircle(const Offset(0.6, -23.6), 0.8, _p);
+
+    // lengan depan menurut peran
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.9
+      ..strokeCap = StrokeCap.round
+      ..color = navy;
+    if (role == 0) {
+      canvas.drawLine(const Offset(0, -16), Offset(swing * 0.9, -10.5), _p);
+    } else if (role == 1) {
+      // megafon: lengan terangkat & sedikit bergerak mengikuti ucapan
+      final bob = math.sin(t * 9) * 0.7;
+      final hand = Offset(5.4, -19.0 + bob);
+      canvas.drawLine(const Offset(0, -16), hand, _p);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFFE0E0E0);
+      canvas.drawPath(
+        Path()
+          ..moveTo(hand.dx - 0.5, hand.dy - 1.4)
+          ..lineTo(hand.dx + 6.4, hand.dy - 3.4)
+          ..lineTo(hand.dx + 6.4, hand.dy + 2.4)
+          ..lineTo(hand.dx - 0.5, hand.dy + 1.4)
+          ..close(),
+        _p,
+      );
+      _p.color = const Color(0xFFE53935);
+      canvas.drawRect(Rect.fromLTWH(hand.dx + 5.2, hand.dy - 3.4, 1.2, 5.8), _p);
+      _p.color = skin;
+      canvas.drawCircle(hand, 1.2, _p);
+    } else {
+      // papan catatan di depan dada + senter di tangan belakang
+      canvas.drawLine(const Offset(0, -16), const Offset(4.2, -13.4), _p);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF6D4C41);
+      canvas.drawRect(const Rect.fromLTWH(3.4, -18.2, 5.4, 7), _p);
+      _p.color = const Color(0xFFFFF8E1);
+      canvas.drawRect(const Rect.fromLTWH(3.9, -17.5, 4.4, 5.6), _p);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.5
+        ..color = const Color(0xFF90A4AE);
+      for (var k = 0; k < 3; k++) {
+        canvas.drawLine(Offset(4.3, -16.4 + k * 1.7), Offset(7.9, -16.4 + k * 1.7), _p);
+      }
+      // pena menulis
+      final wr = math.sin(t * 14) * 0.9;
+      _p
+        ..strokeWidth = 0.9
+        ..color = const Color(0xFFD32F2F);
+      canvas.drawLine(Offset(6.4 + wr, -14.2), Offset(7.6 + wr, -13), _p);
+    }
+    canvas.restore();
+    if (a < 1) canvas.restore();
   }
 
-  void _policeCar(Canvas canvas, double cx, double cy, double t) {
+  /// Berkas sirine merah/biru berputar yang menyapu dinding rumah.
+  void _policeBeams(Canvas canvas, Offset src, double t, double k) {
+    if (k <= 0.02) return;
+    canvas.save();
+    canvas.clipRect(Rect.fromLTRB(_vl, _vt, _vr, _gy + 8));
+    for (var s = 0; s < 2; s++) {
+      final red = s == 0;
+      final ang = -0.78 + (red ? 1 : -1) * 0.62 * math.sin(t * 3.4);
+      const len = 190.0;
+      const w = 0.13;
+      final c = red ? const Color(0xFFFF1744) : const Color(0xFF2979FF);
+      final path = Path()
+        ..moveTo(src.dx, src.dy)
+        ..lineTo(src.dx + math.cos(ang - w) * len, src.dy + math.sin(ang - w) * len)
+        ..lineTo(src.dx + math.cos(ang + w) * len, src.dy + math.sin(ang + w) * len)
+        ..close();
+      _p
+        ..style = PaintingStyle.fill
+        ..shader = RadialGradient(
+          center: Alignment.center,
+          radius: 1.0,
+          colors: [c.withValues(alpha: 0.30 * k), c.withValues(alpha: 0)],
+        ).createShader(Rect.fromCircle(center: src, radius: len));
+      canvas.drawPath(path, _p);
+      _p.shader = null;
+    }
+    canvas.restore();
+  }
+
+  /// Gelombang suara dari megafon.
+  void _megaWaves(Canvas canvas, Offset tip, double dir, double t, double k) {
+    if (k <= 0.02) return;
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.3
+      ..strokeCap = StrokeCap.round;
+    for (var i = 0; i < 3; i++) {
+      final u = ((t * 1.7) + i / 3) % 1.0;
+      final r = 5 + u * 26;
+      _p.color = Colors.white.withValues(alpha: (1 - u) * 0.65 * k);
+      canvas.drawArc(
+        Rect.fromCircle(center: tip, radius: r),
+        dir >= 0 ? -0.62 : math.pi - 0.62,
+        1.24,
+        false,
+        _p,
+      );
+    }
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt;
+  }
+
+  /// Segel di pintu: pita silang merah + kertas "DISEGEL". [u] 0..1 = tahap
+  /// stempel (menghantam lalu memantul), [t] untuk kibaran kecil.
+  void _doorSeal(Canvas canvas, double u, double t) {
+    if (u <= 0 || d.compact) return;
+    const door = Rect.fromLTWH(195, 214, 12, 22);
+    final pop = _easeOutBack(u);
+    // pita silang
+    canvas.save();
+    canvas.clipRect(door.inflate(1.4));
+    for (final s in const [-1.0, 1.0]) {
+      canvas.save();
+      canvas.translate(door.center.dx, door.center.dy);
+      canvas.rotate(s * 0.95);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFFD32F2F).withValues(alpha: _c01(u * 3));
+      canvas.drawRect(Rect.fromLTWH(-16 * pop, -1.7, 32 * pop, 3.4), _p);
+      _p.color = Colors.white.withValues(alpha: 0.6 * _c01(u * 3));
+      canvas.drawRect(Rect.fromLTWH(-16 * pop, -0.4, 32 * pop, 0.8), _p);
+      canvas.restore();
+    }
+    canvas.restore();
+    // kertas segel
+    final sc = 0.2 + 0.8 * pop;
+    canvas.save();
+    canvas.translate(door.center.dx, door.center.dy - 2 + math.sin(t * 2.3) * 0.15);
+    canvas.rotate(-0.1);
+    canvas.scale(sc);
+    _p.color = const Color(0xFFFFF8E1);
+    canvas.drawRect(const Rect.fromLTWH(-9, -5.4, 18, 10.8), _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = const Color(0xFFB71C1C);
+    canvas.drawRect(const Rect.fromLTWH(-8, -4.4, 16, 8.8), _p);
+    _p.style = PaintingStyle.fill;
+    _sealText.paint(canvas, Offset(-_sealText.width / 2, -_sealText.height / 2 - 0.6));
+    _p.color = const Color(0xFFB71C1C);
+    canvas.drawRect(const Rect.fromLTWH(-6, 1.8, 12, 0.7), _p);
+    canvas.restore();
+  }
+
+  void _policeCar(Canvas canvas, double cx, double cy, double t,
+      {bool lights = true}) {
     _p
       ..style = PaintingStyle.fill
       ..color = Colors.black.withValues(alpha: 0.22);
@@ -2105,6 +2519,9 @@ class KostPainter extends CustomPainter {
     _p.color = const Color(0xFF263238);
     canvas.drawCircle(Offset(cx - 12, cy - 2), 3.8, _p);
     canvas.drawCircle(Offset(cx + 12, cy - 2), 3.8, _p);
+    _p.color = const Color(0xFFBDBDBD);
+    canvas.drawCircle(Offset(cx - 12, cy - 2), 1.4, _p);
+    canvas.drawCircle(Offset(cx + 12, cy - 2), 1.4, _p);
     _p.color = const Color(0xFFECEFF1);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
@@ -2113,6 +2530,16 @@ class KostPainter extends CustomPainter {
     );
     _p.color = const Color(0xFF1565C0);
     canvas.drawRect(Rect.fromLTWH(cx - 20, cy - 8, 40, 3), _p);
+    // pintu & tulisan samping
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.6
+      ..color = const Color(0xFF78909C);
+    canvas.drawLine(Offset(cx - 2, cy - 12), Offset(cx - 2, cy - 3.2), _p);
+    canvas.drawLine(Offset(cx + 8, cy - 12), Offset(cx + 8, cy - 3.2), _p);
+    _p.style = PaintingStyle.fill;
+    _p.color = Colors.white.withValues(alpha: 0.9);
+    canvas.drawRect(Rect.fromLTWH(cx - 17, cy - 7.4, 12, 1.6), _p);
     _p.color = const Color(0xFFECEFF1);
     canvas.drawPath(
       Path()
@@ -2135,23 +2562,34 @@ class KostPainter extends CustomPainter {
     );
     _p.color = const Color(0xFFFFF59D);
     canvas.drawCircle(Offset(cx + 19, cy - 9.5), 1.6, _p);
+    _p.color = const Color(0xFFEF5350);
+    canvas.drawRect(Rect.fromLTWH(cx - 20.5, cy - 9.5, 1.6, 2.6), _p);
 
-    // sirine berkedip merah / biru
-    final redOn = math.sin(t * 18) > 0;
+    // sirine berkedip merah / biru (strobo ganda)
+    final redOn = lights ? math.sin(t * 18) > 0 : false;
     final glow = redOn ? const Color(0xFFFF1744) : const Color(0xFF2979FF);
     final lc = Offset(cx + 1, cy - 21);
-    _p.shader = RadialGradient(
-      colors: [glow.withValues(alpha: 0.42), glow.withValues(alpha: 0)],
-    ).createShader(Rect.fromCircle(center: lc, radius: 34));
-    canvas.drawCircle(lc, 34, _p);
-    _p.shader = null;
+    if (lights) {
+      _p.shader = RadialGradient(
+        colors: [glow.withValues(alpha: 0.5), glow.withValues(alpha: 0)],
+      ).createShader(Rect.fromCircle(center: lc, radius: 38));
+      canvas.drawCircle(lc, 38, _p);
+      _p.shader = null;
+    }
     _p.color = redOn ? const Color(0xFFFF1744) : const Color(0xFF7F0D22);
     canvas.drawRect(Rect.fromLTWH(cx - 5, cy - 22.6, 5.4, 3.4), _p);
-    _p.color = redOn ? const Color(0xFF14316B) : const Color(0xFF2979FF);
+    _p.color = redOn || !lights ? const Color(0xFF14316B) : const Color(0xFF2979FF);
     canvas.drawRect(Rect.fromLTWH(cx + 0.4, cy - 22.6, 5.4, 3.4), _p);
   }
 
-  /// Sidak polisi: mobil masuk -> petugas turun -> pita dipasang -> segel.
+  /// Sidak polisi (versi dramatis):
+  ///   0 .. 2600     mobil meluncur, mengerem (jejak ban, debu, bodi menunduk),
+  ///                 berkas sirine berputar menyapu dinding
+  ///   2600 .. 4400  petugas turun; komandan berpidato lewat megafon, pemeriksa
+  ///                 menyorot tumpukan sampah dengan senter & mencatat
+  ///   4400 .. 8000  garis polisi dibentang satu per satu
+  ///   8000 .. 9600  pemeriksa menempel segel di pintu: hantaman, kilat, guncangan
+  ///   (bila tidak disegel) pita dibereskan, petugas pergi, mobil melaju.
   /// Saat [KostSceneData.policeAgeMs] null tetapi kost masih disegel, yang
   /// tampil adalah keadaan AKHIR animasi (sehingga serah-terimanya mulus).
   void _drawInspectAndSeal(Canvas canvas, double t) {
@@ -2162,44 +2600,105 @@ class KostPainter extends CustomPainter {
 
     final done = age == null;
     final a = age ?? 1000000;
-    // Tidak disegel -> setelah selesai petugas membereskan pita & pergi.
-    final leaveU = (!sealed && !done) ? _c01((a - 7800) / 1200.0) : 0.0;
+    final leaveU = (!sealed && !done)
+        ? _c01((a - kPoliceLeaveStartMs) / (kPoliceTotalMs - 200 - kPoliceLeaveStartMs))
+        : 0.0;
     final tapeA = 1 - leaveU;
     final tp = _c01((a - kPoliceTapeStartMs) / kPoliceTapeMs);
     const cy = 278.0;
+    final sealImpact = kPoliceTapeEndMs + 500;
+    final sealU = done ? 1.0 : _c01((a - sealImpact) / 420.0);
+    final dark = done
+        ? 1.0
+        : _c01((a - kPoliceTapeEndMs) / 900.0) * (1 - leaveU);
 
-    // ---- posisi mobil
+    // ---- posisi mobil + gaya mengerem
     var carX = 152.0;
     var driveU = 1.0;
+    var pitch = 0.0;
     if (a < kPoliceDriveMs) {
       driveU = a / kPoliceDriveMs;
-      carX = _lerp(-70, 152, 1 - math.pow(1 - driveU, 3).toDouble());
-    }
-    carX += leaveU * leaveU * 520;
-
-    // debu ban saat mobil mengerem
-    if (driveU < 1) {
-      for (var k = 0; k < 4; k++) {
-        _p
-          ..style = PaintingStyle.fill
-          ..color = const Color(0xFFBDBDBD)
-              .withValues(alpha: _c01((1 - driveU) * (0.28 - k * 0.05)));
-        canvas.drawCircle(
-            Offset(carX - 26 - k * 8, cy - 2 - k * 1.5), 2.5 + k * 1.2, _p);
+      carX = _lerp(-90, 152, 1 - math.pow(1 - driveU, 3).toDouble());
+      if (driveU > 0.7) {
+        pitch = math.sin(_c01((driveU - 0.7) / 0.3) * math.pi) * 0.045;
       }
     }
+    carX += leaveU * leaveU * 520;
+    final carHere = carX > -70 && carX < 470;
 
-    // kilau sirine menyapu dinding rumah
-    if (carX > 60 && leaveU < 0.6) {
-      final redOn = math.sin(t * 18) > 0;
+    // ---- sorot sirine di tanah + berkas yang menyapu dinding
+    final lightsOn = !done && leaveU < 0.9;
+    final redOn = math.sin(t * 18) > 0;
+    if (lightsOn && carHere) {
+      _p
+        ..style = PaintingStyle.fill
+        ..shader = RadialGradient(
+          colors: [
+            (redOn ? const Color(0xFFFF1744) : const Color(0xFF2979FF))
+                .withValues(alpha: 0.34),
+            (redOn ? const Color(0xFFFF1744) : const Color(0xFF2979FF))
+                .withValues(alpha: 0),
+          ],
+        ).createShader(
+            Rect.fromCenter(center: Offset(carX, cy + 2), width: 150, height: 34));
+      canvas.drawOval(
+          Rect.fromCenter(center: Offset(carX, cy + 2), width: 150, height: 34), _p);
+      _p.shader = null;
+      _policeBeams(canvas, Offset(carX + 1, cy - 21), t, _c01(1 - leaveU * 1.2));
+    }
+
+    // kilau sirine menyapu fasad rumah
+    if (carX > 40 && leaveU < 0.7 && !done) {
       _p
         ..style = PaintingStyle.fill
         ..color = (redOn ? const Color(0xFFFF1744) : const Color(0xFF2979FF))
-            .withValues(alpha: 0.07);
+            .withValues(alpha: 0.10);
       canvas.drawRect(
         Rect.fromLTWH(_bl - 10, _roofY - 6, 210, _gy - _roofY + 8),
         _p,
       );
+    }
+
+    // fasad meredup setelah disegel (rumah "dimatikan")
+    if (dark > 0.01) {
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF0B1220).withValues(alpha: 0.2 * dark);
+      canvas.drawRect(
+        Rect.fromLTWH(_bl - 8, _roofY - 24, 206, _gy - _roofY + 26),
+        _p,
+      );
+    }
+
+    // ---- jejak ban & debu saat mengerem
+    if (!done && a < kPoliceLeaveStartMs) {
+      final ta = _c01((driveU - 0.55) / 0.3) * 0.38;
+      if (ta > 0.01) {
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.4
+          ..strokeCap = StrokeCap.round
+          ..color = Colors.black.withValues(alpha: ta);
+        final x0 = _lerp(-90, 152, 1 - math.pow(1 - 0.55, 3).toDouble());
+        canvas.drawLine(Offset(x0, cy - 1.2), Offset(carX - 13, cy - 1.2), _p);
+        canvas.drawLine(Offset(x0, cy + 2.2), Offset(carX + 11, cy + 2.2), _p);
+        _p
+          ..style = PaintingStyle.fill
+          ..strokeCap = StrokeCap.butt;
+      }
+    }
+    if (driveU < 1) {
+      for (var k = 0; k < 7; k++) {
+        final ph = _c01((driveU - 0.5 - k * 0.02) / 0.5);
+        _p
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFFCFD8DC)
+              .withValues(alpha: _c01((1 - ph) * ph * 2.2) * 0.55);
+        canvas.drawCircle(
+            Offset(carX - 24 - k * 6 - ph * 10, cy - 2 - k * 1.8 - ph * 6),
+            2.4 + k * 1.0 + ph * 3,
+            _p);
+      }
     }
 
     // ---- garis polisi: tiang + 4 pita (dua mendatar + silang)
@@ -2213,69 +2712,173 @@ class KostPainter extends CustomPainter {
     _tapePost(canvas, 96, postA);
     _tapePost(canvas, 304, postA);
     for (var i = 0; i < 4; i++) {
+      // pita bergoyang halus ditiup angin setelah terpasang
       _tapeStrip(canvas, tapes[i].$1, tapes[i].$2, tp * 4 - i, tapeA);
     }
 
-    // ---- mobil (digambar setelah pita agar tidak tertutup)
-    if (carX > -60 && carX < 460) _policeCar(canvas, carX, cy, t);
+    // ---- segel di pintu
+    _doorSeal(canvas, sealU, t);
+
+    // ---- mobil (menunduk saat mengerem)
+    if (carHere) {
+      canvas.save();
+      canvas.translate(carX, cy);
+      canvas.rotate(pitch);
+      canvas.translate(-carX, -cy);
+      _policeCar(canvas, carX, cy, t, lights: lightsOn);
+      canvas.restore();
+    }
 
     // ---- petugas
     final offA = _c01(1 - leaveU * 3);
     final walk = math.sin(t * 16) * 3.2;
-    // Petugas B: pengawas dengan papan catatan, berdiri dekat mobil
-    if (a >= kPoliceDriveMs && offA > 0) {
-      final u = _c01((a - kPoliceDriveMs) / 700.0);
-      final e = _ease(u);
-      _officer(
-        canvas,
-        Offset(_lerp(158, 196, e), _lerp(274, 264, e)),
-        swing: u < 1 ? walk : 0,
-        alpha: offA,
-        dir: 1,
-      );
-    }
-    // Petugas A: turun dari mobil lalu membentangkan pita satu per satu
-    if (a >= kPoliceDriveMs && offA > 0) {
-      Offset feet;
-      var swing = 0.0;
-      var dir = -1.0;
-      if (a < kPoliceTapeStartMs) {
-        final u = _ease((a - kPoliceDriveMs) /
-            (kPoliceTapeStartMs - kPoliceDriveMs).toDouble());
-        feet = Offset(_lerp(146, 96, u), _lerp(274, 250, u));
-        swing = walk;
+    final emerge = (a - kPoliceDriveMs) / 700.0;
+
+    if (offA > 0 && (a >= kPoliceDriveMs || done)) {
+      // Pemeriksa (peran 2): turun, menyorot sampah, lalu menuju pintu
+      Offset f2;
+      var sw2 = 0.0;
+      var dir2 = 1.0;
+      if (done) {
+        f2 = const Offset(188, 254);
+      } else if (a < kPoliceDriveMs + 700) {
+        final u = _ease(_c01(emerge));
+        f2 = Offset(_lerp(160, 226, u), _lerp(274, 262, u));
+        sw2 = walk;
+        dir2 = 1.0;
+      } else if (a < kPoliceTapeStartMs) {
+        // menyorot tumpukan sampah kiri-kanan sambil mencatat
+        f2 = const Offset(226, 262);
+        dir2 = math.sin(t * 1.3) > 0 ? 1.0 : -1.0;
+      } else if (a < sealImpact - 600) {
+        final u = _ease((a - kPoliceTapeStartMs) / (sealImpact - 600 - kPoliceTapeStartMs));
+        f2 = Offset(_lerp(226, 188, u), _lerp(262, 254, u));
+        sw2 = u < 1 ? walk : 0;
+        dir2 = u < 1 ? -1.0 : 1.0;
+      } else {
+        f2 = const Offset(188, 254);
+      }
+      _officer(canvas, f2, swing: sw2, alpha: offA, dir: dir2, role: 2, t: t);
+
+      // senter: berkas ke tanah saat memeriksa (tidak di keadaan akhir)
+      if (!done && a >= kPoliceDriveMs + 700 && a < kPoliceTapeStartMs) {
+        final tip = f2.translate(dir2 * 7, -12.5);
+        final sweep = math.sin(t * 2.6);
+        final target = Offset(f2.dx + dir2 * (40 + 38 * sweep.abs()), 256);
+        _p
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFFFFF59D).withValues(alpha: 0.22 * offA);
+        canvas.drawPath(
+          Path()
+            ..moveTo(tip.dx, tip.dy)
+            ..lineTo(target.dx - 7, target.dy + 4)
+            ..lineTo(target.dx + 7, target.dy + 4)
+            ..close(),
+          _p,
+        );
+        _p.color = const Color(0xFFFFF59D).withValues(alpha: 0.35 * offA);
+        canvas.drawOval(
+            Rect.fromCenter(center: Offset(target.dx, target.dy + 3), width: 16, height: 4),
+            _p);
+      }
+
+      // Komandan (peran 1): pidato megafon lalu membentang pita
+      Offset f1;
+      var sw1 = 0.0;
+      var dir1 = 1.0;
+      var role1 = 1;
+      if (done) {
+        f1 = const Offset(98, 250);
+        role1 = 0;
+      } else if (a < kPoliceDriveMs + 700) {
+        final u = _ease(_c01(emerge));
+        f1 = Offset(_lerp(146, 118, u), _lerp(274, 264, u));
+        sw1 = walk;
+        dir1 = 1.0;
+      } else if (a < kPoliceTapeStartMs) {
+        f1 = const Offset(118, 264); // berdiri berpidato menghadap rumah
+        dir1 = 1.0;
       } else if (tp < 1) {
         final seg = math.min(3, (tp * 4).floor());
         final su = tp * 4 - seg;
         final tt = tapes[seg];
-        feet = Offset(_lerp(tt.$1.dx, tt.$2.dx, su), 250);
-        dir = tt.$2.dx >= tt.$1.dx ? 1.0 : -1.0;
-        swing = walk;
+        final fromX = seg == 0 ? 118.0 : tt.$1.dx;
+        f1 = Offset(_lerp(fromX, tt.$2.dx, _ease(su)), 250);
+        dir1 = tt.$2.dx >= tt.$1.dx ? 1.0 : -1.0;
+        sw1 = walk;
+        role1 = 0;
       } else {
-        feet = const Offset(98, 250);
+        f1 = const Offset(98, 250);
+        dir1 = 1.0;
+        role1 = 0;
       }
-      _officer(canvas, feet, swing: swing, alpha: offA, dir: dir);
+      _officer(canvas, f1, swing: sw1, alpha: offA, dir: dir1, role: role1, t: t);
+
+      // gelombang suara megafon
+      if (!done && a >= kPoliceDriveMs + 700 && a < kPoliceTapeStartMs) {
+        final k = _c01(math.min((a - kPoliceDriveMs - 700) / 250.0,
+            (kPoliceTapeStartMs - a) / 300.0));
+        _megaWaves(canvas, f1.translate(dir1 * 17, -19.2), dir1, t, k);
+      }
+    }
+
+    // ---- hantaman segel: kilat, cincin kejut, serpihan kertas
+    if (!done && a >= sealImpact && a < sealImpact + 700) {
+      final q = (a - sealImpact) / 700.0;
+      final c = const Offset(201, 224);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3.2 * (1 - q)
+        ..color = const Color(0xFFFFD600).withValues(alpha: (1 - q) * 0.9);
+      canvas.drawCircle(c, 6 + q * 46, _p);
+      _p
+        ..strokeWidth = 1.6 * (1 - q)
+        ..color = Colors.white.withValues(alpha: (1 - q) * 0.8);
+      canvas.drawCircle(c, 3 + q * 30, _p);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFFFFF8E1).withValues(alpha: (1 - q) * 0.9);
+      for (var k = 0; k < 9; k++) {
+        final ang = -math.pi + k * (math.pi * 2 / 9) + 0.3;
+        final dist = 8 + q * (22 + (k % 3) * 9);
+        canvas.save();
+        canvas.translate(c.dx + math.cos(ang) * dist, c.dy + math.sin(ang) * dist + q * q * 14);
+        canvas.rotate(q * 8 + k);
+        canvas.drawRect(const Rect.fromLTWH(-1.4, -0.9, 2.8, 1.8), _p);
+        canvas.restore();
+      }
+      if (q < 0.18) {
+        _p.color = Colors.white.withValues(alpha: (1 - q / 0.18) * 0.42);
+        canvas.drawRect(_view, _p);
+      }
     }
 
     // ---- teks
     const bannerPos = Offset(200, _gy - 56);
     if (!done) {
-      if (a >= 600 && a < 2900) {
-        final env = _c01(math.min((a - 600) / 300.0, (2900 - a) / 400.0));
+      if (a >= 500 && a < 2500) {
+        final env = _c01(math.min((a - 500) / 300.0, (2500 - a) / 400.0));
         _drawBannerText(canvas, 'SIDAK DINAS TIBA!', bannerPos,
             const Color(0xFFFF5252),
             scale: 1.15 + 0.1 * math.sin(t * 14), alpha: env);
       }
-      if (a >= kPoliceTapeEndMs && a < kPoliceTapeEndMs + 1200) {
-        final q = (a - kPoliceTapeEndMs) / 1200.0;
-        final env = _c01(math.min(q * 6, (1 - q) * 4));
+      if (a >= kPoliceDriveMs + 900 && a < kPoliceTapeStartMs) {
+        final env = _c01(math.min((a - kPoliceDriveMs - 900) / 300.0,
+            (kPoliceTapeStartMs - a) / 350.0));
+        _drawBannerText(canvas, 'HARAP KELUAR! KOST DISIDAK!', bannerPos,
+            const Color(0xFF80D8FF),
+            scale: 1.0 + 0.08 * math.sin(t * 16), alpha: env);
+      }
+      if (a >= sealImpact && a < sealImpact + 1300) {
+        final q = (a - sealImpact) / 1300.0;
+        final env = _c01(math.min(q * 8, (1 - q) * 3.5));
         _drawBannerText(canvas, 'DISEGEL!', bannerPos,
             const Color(0xFFFFD600),
-            scale: 0.8 + 0.55 * _easeOutBack(math.min(1.0, q * 3)),
+            scale: 0.8 + 0.75 * _easeOutBack(math.min(1.0, q * 4)),
             alpha: env);
       }
     }
-    if (sealed && (done || a >= kPoliceTapeEndMs + 1200)) {
+    if (sealed && (done || a >= sealImpact + 1300)) {
       _drawBannerText(
         canvas,
         'DISEGEL DINAS (${d.sealedLeft.ceil()}s)',

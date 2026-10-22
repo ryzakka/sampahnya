@@ -316,7 +316,12 @@ class CineDirector {
       if (i >= 0) {
         final t = (now - p.start).toDouble();
         final cxH = i * 400.0 + 205.0;
-        final sH = fitOne * (1 + 0.08 * _ease(t / 6500));
+        // dorong masuk pelan, lalu "hantam" kecil tepat saat segel menempel
+        final punchT = (t - (kPoliceTapeEndMs + 500)) / 500.0;
+        final punch = (punchT > 0 && punchT < 1)
+            ? math.sin(punchT * math.pi) * 0.06
+            : 0.0;
+        final sH = fitOne * (1 + 0.12 * _ease(t / 8000) + punch);
         var cx = _lerp(p.camCx0, cxH, _ease(t / 900));
         var s = math.exp(_lerp(math.log(p.camS0), math.log(sH), _ease(t / 900)));
         final w = _ease((t - (kPoliceTotalMs - 1100)) / 1100);
@@ -1291,7 +1296,8 @@ class CinematicTopLayer extends StatelessWidget {
 
   List<Widget> _policeWidgets(Size size, _Police p, int now) {
     final t = (now - p.start).toDouble();
-    final w = <Widget>[];
+    final barK = _ease(math.min(t / 700, (kPoliceTotalMs - t) / 700));
+    final w = <Widget>[_bars(size.height * 0.045 * barK)];
 
     final String l1;
     if (p.reflected) {
@@ -1301,10 +1307,14 @@ class CinematicTopLayer extends StatelessWidget {
     } else {
       l1 = 'Petugas Satpol PP tiba di kost ${p.name}…';
     }
+    const tapeA = kPoliceTapeStartMs - 200.0;
+    const tapeEnd = kPoliceTapeEndMs + 0.0;
     final lines = <(double, double, String)>[
-      (300.0, 3000.0, l1),
-      (3500.0, 6800.0, 'Garis polisi dipasang. Kost disegel!'),
-      if (p.amount > 0) (6900.0, 8300.0, 'Denda ${p.amount} koin dijatuhkan.'),
+      (300.0, kPoliceDriveMs + 1500.0, l1),
+      (tapeA, tapeEnd - 300, 'Garis polisi dipasang. Kost diperiksa…'),
+      (tapeEnd + 350, tapeEnd + 2000, 'Segel dipasang di pintu. Kost disegel!'),
+      if (p.amount > 0)
+        (tapeEnd + 2100, tapeEnd + 3600, 'Denda ${p.amount} koin dijatuhkan.'),
     ];
     for (final l in lines) {
       final a = _win(t, l.$1, l.$2);

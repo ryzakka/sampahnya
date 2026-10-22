@@ -485,7 +485,7 @@ class _LobbyHomeState extends State<LobbyHome>
               Icon(Icons.delete_sweep_rounded, size: 16, color: Colors.black87),
               SizedBox(width: 6),
               Text(
-                'v1.4.5 (2210:4)',
+                'v1.4.5 (2210:5)',
                 style: TextStyle(
                   color: Colors.black87,
                   fontSize: 11,
