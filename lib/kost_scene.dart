@@ -42,7 +42,10 @@ String emojiFromCode(int code) {
 }
 
 class KostFx {
-  KostFx(this.type, {this.amount = 0, this.peerId}) : startMs = sceneNowMs();
+  /// [delayMs] > 0 menunda efek (age negatif = belum tampil). Dipakai agar
+  /// dampak lemparan baru terasa setelah sampah benar-benar mendarat.
+  KostFx(this.type, {this.amount = 0, this.peerId, int delayMs = 0})
+      : startMs = sceneNowMs() + delayMs;
 
   final FxType type;
   final int startMs;
@@ -51,6 +54,28 @@ class KostFx {
   /// Lawan yang terlibat (penyerang / sasaran). Dipakai mode jalan untuk
   /// menentukan arah lemparan sampah antar rumah bertetangga.
   final String? peerId;
+
+  int get age => sceneNowMs() - startMs;
+}
+
+/// Lemparan sampah yang sedang terbang antar rumah (koordinat dunia jalan).
+/// Dibuat HANYA setelah jendela Tangkis selesai (tak ditangkis) atau saat
+/// ditangkis (pantulan kembali ke pelempar).
+class KostShot {
+  KostShot({
+    required this.fromId,
+    required this.toId,
+    required this.durMs,
+    this.reflected = false,
+    this.bags = 4,
+  }) : startMs = sceneNowMs();
+
+  final String fromId;
+  final String toId;
+  final int startMs;
+  final int durMs;
+  final bool reflected;
+  final int bags;
 
   int get age => sceneNowMs() - startMs;
 }
@@ -77,6 +102,9 @@ class KostSceneData {
     this.facingRight = true,
     this.isBounty = false,
     this.attackLeft = 0,
+    this.seed = 0,
+    this.charge = 0,
+    this.lights = 1.0,
   });
 
   final int rooms;
@@ -99,6 +127,15 @@ class KostSceneData {
   final bool facingRight;
   final bool isBounty; // "Juragan Teladan": target buruan bernilai bonus
   final double attackLeft; // detik tersisa jendela Tangkis (0 = tidak ada)
+  final int seed; // 0..999, pembeda ritme penghuni antar rumah
+
+  /// Rumah ini sedang MENYIAPKAN serangan (menunggu korban Tangkis):
+  /// 0 = tidak, 1 = lempar sampah, 2 = sidak dinas.
+  final int charge;
+
+  /// Batas terang jendela 0..1 (1 = normal, 0 = semua gelap). Dipakai lobi:
+  /// jendela menyala saat pemain menekan SIAP.
+  final double lights;
 
   /// Salinan dengan [compact] / [facingRight] diganti (dipakai mode jalan).
   KostSceneData withView({bool? compact, bool? facingRight}) => KostSceneData(
@@ -122,6 +159,9 @@ class KostSceneData {
     facingRight: facingRight ?? this.facingRight,
     isBounty: isBounty,
     attackLeft: attackLeft,
+    seed: seed,
+    charge: charge,
+    lights: lights,
   );
 }
 
@@ -265,6 +305,8 @@ Color _mix(Color a, Color b, double t) => Color.lerp(a, b, _c01(t))!;
 
 // ------------------------------------------------------------- painter
 
+typedef _Res = ({int k, double x, double y, double m, bool walking, double dir});
+
 class KostPainter extends CustomPainter {
   KostPainter(this.d, Listenable repaint, {this.insets = EdgeInsets.zero})
       : super(repaint: repaint);
@@ -362,10 +404,8 @@ class KostPainter extends CustomPainter {
 
   double get _litFactor {
     final r = d.trashRatio;
-    if (r >= 0.9) return 0.3;
-    if (r >= 0.75) return 0.6;
-    if (r >= 0.5) return 0.85;
-    return 1.0;
+    final base = r >= 0.9 ? 0.3 : (r >= 0.75 ? 0.6 : (r >= 0.5 ? 0.85 : 1.0));
+    return math.min(base, d.lights);
   }
 
   double? _fxProgress(FxType type, int durMs) {
@@ -480,6 +520,7 @@ class KostPainter extends CustomPainter {
     _drawFleeing(canvas, t);
     _drawDefense(canvas, t);
     _drawBags(canvas);
+    _drawResidents(canvas, t);
     _drawRats(canvas, t);
     _drawStinkAndFlies(canvas, t);
     _drawCrows(canvas, t);
@@ -640,6 +681,7 @@ class KostPainter extends CustomPainter {
     _drawFleeing(canvas, t);
     _drawDefense(canvas, t);
     _drawBags(canvas);
+    _drawResidents(canvas, t);
     _drawRats(canvas, t);
     _drawStinkAndFlies(canvas, t);
     _drawCrows(canvas, t);
@@ -648,6 +690,7 @@ class KostPainter extends CustomPainter {
     _drawFire(canvas, t);
     _drawCollapse(canvas);
     _drawCrane(canvas, t);
+    _drawWindup(canvas, t);
     _drawThrown(canvas, t);
     _drawParry(canvas, t);
     _drawConfetti(canvas, t);
@@ -1138,6 +1181,7 @@ class KostPainter extends CustomPainter {
     final buildP = _fxProgress(FxType.build, 2600);
     final tierP = _fxProgress(FxType.tier, 2400);
     final newest = d.rooms - 1;
+    _planResidents(t);
 
     _p
       ..style = PaintingStyle.fill
@@ -1393,7 +1437,7 @@ class KostPainter extends CustomPainter {
           : const Color(0xFF39465A);
     canvas.drawRect(win, _p);
 
-    if (lit && !d.compact && idx % 3 != 1) {
+    if (lit && !d.compact && idx % 3 != 1 && !_resOutRooms.contains(idx)) {
       canvas.save();
       canvas.clipRect(win);
       final cx = win.center.dx + math.sin(t * 1.3 + idx) * 5;
@@ -1810,7 +1854,7 @@ class KostPainter extends CustomPainter {
   }
 
   void _drawFleeing(Canvas canvas, double t) {
-    if (d.compact || d.eliminated || d.trashRatio < 0.75) return;
+    if (d.compact || d.eliminated || d.trashRatio < 0.9) return;
     for (var k = 0; k < 2; k++) {
       final prog = (t * 0.05 + k * 0.5) % 1.0;
       final x = 200 - prog * 300;
@@ -1837,6 +1881,405 @@ class KostPainter extends CustomPainter {
               .withValues(alpha: a);
       canvas.drawRect(Rect.fromLTWH(x - 11, y - 7, 8, 7), _p);
     }
+  }
+
+  // ------------------------------------------------------- penghuni kost
+  //
+  // Penghuni keluar-masuk lewat pintu depan sesuai kondisi kost:
+  //   sampah >=50% menutup hidung, >=75% marah-marah, >=90% demo ramai (papan),
+  //   polusi >=60% bermasker & batuk, >=85% masker gas, tertimbun duduk lesu.
+  // Jadwal murni fungsi waktu + seed rumah (tanpa state/timer), jadi tiap rumah
+  // punya ritme sendiri dan semua pemain melihat hal yang sama. Ekspresi hanya
+  // lewat ikon agar tetap terbaca saat kamera menjauh.
+
+  static const List<Color> _shirts = [
+    Color(0xFF42A5F5),
+    Color(0xFFEF5350),
+    Color(0xFF66BB6A),
+    Color(0xFFAB47BC),
+  ];
+  static const List<double> _spotX = [150.0, 252.0, 120.0, 284.0];
+  static const List<double> _spotY = [265.0, 268.0, 270.0, 264.0];
+  static const double _doorX = 201;
+  static final Map<String, TextPainter> _iconCache = <String, TextPainter>{};
+
+  List<_Res> _resOut = <_Res>[];
+  final Set<int> _resOutRooms = <int>{};
+  int _resMode = 0; // 0 tenang, 1 marah, 2 bau, 3 batuk, 4 tertimbun
+  int _resMask = 0; // 0 tanpa, 1 masker, 2 masker gas
+  bool _resSign = false;
+
+  TextPainter _icon(String e) => _iconCache.putIfAbsent(
+    e,
+        () => TextPainter(
+      text: TextSpan(text: e, style: const TextStyle(fontSize: 10.5)),
+      textDirection: TextDirection.ltr,
+    )..layout(),
+  );
+
+  /// Kamar asal penghuni ke-k (siluet jendelanya hilang saat dia di luar).
+  int _resRoom(int k) {
+    const base = [0, 2, 3, 5];
+    return d.rooms > 0 ? base[k % base.length] % d.rooms : 0;
+  }
+
+  /// Jadwal keluar-masuk penghuni ke-k pada waktu t; null = sedang di dalam.
+  _Res? _resSchedule(int k, double t, double frac) {
+    final h = _hh(d.seed * 31 + k * 17 + 5);
+    final len = 15.0 + (h % 7);
+    final ph = (t + (h % 997) / 997 * len) % len;
+    final dur = math.max(len * frac, 3.4);
+    if (ph >= dur) return null;
+    const w = 1.3;
+    final outbound = ph < dur / 2;
+    var m = 1.0;
+    var walking = false;
+    if (ph < w) {
+      m = _ease(ph / w);
+      walking = true;
+    } else if (ph > dur - w) {
+      m = _ease((dur - ph) / w);
+      walking = true;
+    }
+    final sx = _spotX[k % _spotX.length];
+    final sy = _spotY[k % _spotY.length];
+    final toward = sx >= _doorX ? 1.0 : -1.0;
+    return (
+    k: k,
+    x: _lerp(_doorX, sx, m),
+    y: _lerp(238, sy, m),
+    m: m,
+    walking: walking,
+    dir: walking && !outbound ? -toward : toward,
+    );
+  }
+
+  void _planResidents(double t) {
+    _resOut = <_Res>[];
+    _resOutRooms.clear();
+    _resMode = 0;
+    _resSign = false;
+    if (d.compact) return;
+
+    final r = d.eliminated ? 1.0 : d.trashRatio;
+    final p = _c01(d.pollution / 100);
+    _resMask = p >= 0.85 ? 2 : (p >= 0.6 ? 1 : 0);
+
+    var n = 0;
+    var frac = 0.0;
+    if (d.eliminated) {
+      _resMode = 4;
+      return;
+    } else if (r >= 0.75) {
+      _resMode = 1;
+      n = r >= 0.9 ? 4 : 2;
+      frac = r >= 0.9 ? 0.78 : 0.45;
+      _resSign = r >= 0.9;
+    } else if (r >= 0.5) {
+      _resMode = 2;
+      n = d.rooms >= 6 ? 2 : 1;
+      frac = 0.3;
+    } else if (p >= 0.6) {
+      _resMode = 3;
+      n = 1;
+      frac = p >= 0.85 ? 0.14 : 0.24;
+    } else {
+      return;
+    }
+    if (p >= 0.85 && _resMode != 3) frac *= 0.7; // udara beracun: cepat masuk
+    n = math.min(n, math.max(1, (d.rooms / 2).ceil()));
+    for (var k = 0; k < n; k++) {
+      final s = _resSchedule(k, t, frac);
+      if (s == null) continue;
+      _resOut.add(s);
+      _resOutRooms.add(_resRoom(k));
+    }
+  }
+
+  void _drawResidents(Canvas canvas, double t) {
+    if (d.compact) return;
+
+    if (_resMode == 4) {
+      _drawDoor(canvas, 0);
+      const xs = [128.0, 160.0, 262.0];
+      for (var k = 0; k < 3; k++) {
+        final dir = k == 2 ? -1.0 : 1.0;
+        _sitter(canvas, xs[k], 271, k, t, _shirts[(k + 1) % _shirts.length], dir);
+        _resIcon(canvas, xs[k], 271 - 25, '😭', t, k);
+      }
+      return;
+    }
+
+    var open = 0.0;
+    for (final s in _resOut) {
+      open = math.max(open, _c01(1 - s.m / 0.4));
+    }
+    _drawDoor(canvas, open);
+
+    final hit = _fxProgress(FxType.incoming, 1600) != null;
+    for (final s in _resOut) {
+      final k = s.k;
+      final pose = s.walking ? 0 : _resMode == 1 ? 1 : (_resMode == 2 ? 2 : 3);
+      final dir = (!s.walking && _resMode == 1 && hit)
+          ? (d.facingRight ? 1.0 : -1.0)
+          : s.dir;
+      final sign = _resSign && k.isOdd;
+      _resident(
+        canvas,
+        s.x,
+        s.y,
+        shirt: _shirts[_hh(_resRoom(k) + 3) % _shirts.length],
+        pose: pose,
+        dir: dir,
+        t: t,
+        k: k,
+        walking: s.walking,
+        mask: _resMask,
+        alpha: _c01(s.m * 5),
+        sign: sign,
+      );
+      if (!s.walking) {
+        final String e;
+        if (_resMode == 1) {
+          e = ((t * 0.8 + k * 0.7) % 2 < 1) ? '💢' : '😡';
+        } else if (_resMode == 2) {
+          e = '🤢';
+        } else {
+          e = math.sin(t * 2.2 + k) > 0.5 ? '🤧' : '😷';
+        }
+        _resIcon(canvas, s.x, s.y - (sign ? 36 : 27), e, t, k);
+      }
+    }
+  }
+
+  void _drawDoor(Canvas canvas, double open) {
+    if (d.compact) return;
+    const door = Rect.fromLTWH(195, 214, 12, 22);
+    _p
+      ..style = PaintingStyle.fill
+      ..color = _mix(const Color(0xFF2B1F18), const Color(0xFFFFC860), open * 0.6);
+    canvas.drawRect(door, _p);
+    _p.color = const Color(0xFF6D4C41);
+    canvas.drawRect(
+      Rect.fromLTWH(door.left, door.top, door.width * (1 - 0.75 * open), door.height),
+      _p,
+    );
+    if (open < 0.3) {
+      _p.color = const Color(0xFFFFCA28);
+      canvas.drawCircle(Offset(door.right - 2.5, door.top + 12), 0.9, _p);
+    }
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = const Color(0xFF3E2723);
+    canvas.drawRect(door, _p);
+    _p.style = PaintingStyle.fill;
+  }
+
+  /// Gelembung ikon kecil di atas kepala penghuni.
+  void _resIcon(
+      Canvas canvas, double x, double y, String e, double t, int k) {
+    final tp = _icon(e);
+    final pop = 0.9 + 0.14 * math.sin(t * 6 + k * 2);
+    canvas.save();
+    canvas.translate(x, y + math.sin(t * 3 + k) * 0.8);
+    canvas.scale(pop);
+    _p
+      ..style = PaintingStyle.fill
+      ..color = Colors.white.withValues(alpha: 0.92);
+    canvas.drawCircle(Offset.zero, 7.2, _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.9
+      ..color = const Color(0xFF546E7A);
+    canvas.drawCircle(Offset.zero, 7.2, _p);
+    _p.style = PaintingStyle.fill;
+    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+    canvas.restore();
+  }
+
+  void _resident(
+      Canvas canvas,
+      double x,
+      double y, {
+        required Color shirt,
+        required int pose, // 0 jalan, 1 marah, 2 tutup hidung, 3 batuk
+        required double dir,
+        required double t,
+        required int k,
+        required bool walking,
+        required int mask,
+        double alpha = 1,
+        bool sign = false,
+      }) {
+    final a = _c01(alpha);
+    if (a <= 0.02) return;
+    if (a < 1) {
+      canvas.saveLayer(
+        Rect.fromCenter(center: Offset(x, y - 14), width: 60, height: 60),
+        Paint()..color = Color.fromRGBO(0, 0, 0, a),
+      );
+    }
+    final ph = t * (walking ? 10 : 7) + k * 1.7;
+    final cough = !walking && pose == 3 && math.sin(t * 2.2 + k) > 0.5;
+    final hop = (!walking && pose == 1) ? -math.sin(ph).abs() * 2.6 : 0.0;
+    var lean = 0.0;
+    if (cough) lean = 0.32;
+    if (walking && mask == 2) lean = 0.16;
+    final sw = walking ? math.sin(ph) * 3.0 : 0.0;
+    const skin = Color(0xFFE0AC84);
+
+    canvas.save();
+    canvas.translate(x, y + hop);
+    canvas.scale(dir, 1);
+    canvas.rotate(lean);
+
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF37474F);
+    canvas.drawLine(const Offset(0, -6), Offset(-sw, 0), _p);
+    canvas.drawLine(const Offset(0, -6), Offset(sw, 0), _p);
+
+    _p.color = shirt;
+    Offset? fist;
+    if (walking) {
+      canvas.drawLine(const Offset(0, -12), Offset(sw * 0.9, -7.5), _p);
+      canvas.drawLine(const Offset(0, -12), Offset(-sw * 0.9, -7.5), _p);
+    } else if (pose == 1) {
+      final e = Offset(5, -19 + math.sin(ph * 1.3) * 2.2);
+      canvas.drawLine(const Offset(0, -12), e, _p);
+      canvas.drawLine(const Offset(0, -12), const Offset(-4, -8), _p);
+      fist = e;
+    } else if (pose == 2) {
+      canvas.drawLine(
+          const Offset(0, -12), Offset(-4.5, -9 + math.sin(ph * 1.2) * 1.5), _p);
+    } else {
+      canvas.drawLine(const Offset(0, -12), const Offset(-3.5, -7), _p);
+    }
+
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt
+      ..color = shirt;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-3.2, -14, 6.4, 9), const Radius.circular(2)),
+      _p,
+    );
+    _p.color = skin;
+    canvas.drawCircle(const Offset(0, -17.5), 3.2, _p);
+
+    if (mask == 1) {
+      _p.color = const Color(0xFFE3F2FD);
+      canvas.drawRect(const Rect.fromLTWH(-0.4, -17.4, 3.7, 2.3), _p);
+    } else if (mask == 2) {
+      _p.color = const Color(0xFF33691E);
+      canvas.drawRect(const Rect.fromLTWH(-0.6, -17.8, 4.0, 3.0), _p);
+      _p.color = const Color(0xFF455A64);
+      canvas.drawCircle(const Offset(3.6, -16.3), 1.5, _p);
+    }
+
+    if (!walking && pose == 1) {
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.9
+        ..color = const Color(0xFFB71C1C);
+      canvas.drawLine(const Offset(0.4, -19.8), const Offset(2.8, -18.9), _p);
+      _p.style = PaintingStyle.fill;
+    }
+
+    if (!walking && (pose == 2 || pose == 3)) {
+      // tangan menutup hidung / mulut
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.8
+        ..strokeCap = StrokeCap.round
+        ..color = shirt;
+      canvas.drawLine(const Offset(0, -12), const Offset(2.6, -16.2), _p);
+      _p
+        ..style = PaintingStyle.fill
+        ..strokeCap = StrokeCap.butt
+        ..color = skin;
+      canvas.drawCircle(const Offset(3.1, -16.4), 1.3, _p);
+    }
+
+    if (fist != null) {
+      _p.color = skin;
+      canvas.drawCircle(fist, 1.4, _p);
+      if (sign) {
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.2
+          ..color = const Color(0xFF8D6E63);
+        canvas.drawLine(fist, fist + const Offset(0.6, -8), _p);
+        final board = Rect.fromLTWH(fist.dx - 3.2, fist.dy - 15, 8, 7);
+        _p
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFFFFF8E1);
+        canvas.drawRect(board, _p);
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.8
+          ..color = const Color(0xFFD32F2F);
+        canvas.drawRect(board, _p);
+        _p
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFFD32F2F);
+        canvas.drawRect(Rect.fromLTWH(fist.dx + 0.2, fist.dy - 14, 1.2, 3.4), _p);
+        canvas.drawCircle(Offset(fist.dx + 0.8, fist.dy - 9.3), 0.7, _p);
+      }
+    }
+
+    if (cough) {
+      for (var i = 0; i < 3; i++) {
+        _p.color = const Color(0xFFBDBDBD).withValues(alpha: 0.75 - i * 0.2);
+        canvas.drawCircle(
+            Offset(6.5 + i * 3.4, -16.5 - i * 1.3), 1.1 + i * 0.4, _p);
+      }
+    }
+    canvas.restore();
+    if (a < 1) canvas.restore();
+  }
+
+  /// Penghuni duduk lesu di samping kopernya (kost tertimbun).
+  void _sitter(Canvas canvas, double x, double y, int k, double t, Color shirt,
+      double dir) {
+    canvas.save();
+    canvas.translate(x, y + math.sin(t * 14 + k) * 0.4); // terisak
+    canvas.scale(dir, 1);
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFF8D6E63);
+    canvas.drawRect(const Rect.fromLTWH(-15, -9, 9, 8), _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1
+      ..color = const Color(0xFF4E342E);
+    canvas.drawLine(const Offset(-12.5, -9), const Offset(-12.5, -11), _p);
+    canvas.drawLine(const Offset(-10.5, -9), const Offset(-10.5, -11), _p);
+    canvas.drawLine(const Offset(-12.5, -11), const Offset(-10.5, -11), _p);
+
+    _p
+      ..strokeWidth = 1.8
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF37474F);
+    canvas.drawLine(const Offset(0, -3), const Offset(7, -4.5), _p);
+    canvas.drawLine(const Offset(7, -4.5), const Offset(7.5, 0), _p);
+    _p.color = shirt;
+    canvas.drawLine(const Offset(0, -8), const Offset(5, -6), _p);
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt;
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(
+          const Rect.fromLTWH(-3, -11, 6, 8.5), const Radius.circular(2)),
+      _p,
+    );
+    _p.color = const Color(0xFFE0AC84);
+    canvas.drawCircle(const Offset(1.2, -14.2), 3.2, _p);
+    canvas.restore();
   }
 
   // ------------------------------------------------------- pertahanan
@@ -2741,42 +3184,17 @@ class KostPainter extends CustomPainter {
     for (final f in d.fx) {
       final age = f.age.toDouble();
       if (f.type == FxType.incoming) {
-        final from = Offset(right ? 440 : -40, 24);
+        // Terbang antar rumah digambar KostStreetPainter (koordinat dunia).
+        // Di sini hanya dampak saat sampah mendarat (age ~850 ms setelah mulai).
         final to = Offset(right ? 350 : 50, 238);
         for (var j = 0; j < 5; j++) {
-          final local = (age - j * 160) / 850;
-          if (local < 0 || local > 1.5) continue;
-          if (local <= 1) {
-            final x = _lerp(from.dx, to.dx, local) + (j - 2) * 6;
-            final y =
-                _lerp(from.dy, to.dy, local) - math.sin(local * math.pi) * 70;
-
-            for (var tr = 1; tr <= 3; tr++) {
-              final tl = (local - tr * 0.04).clamp(0.0, 1.0);
-              final tx = _lerp(from.dx, to.dx, tl) + (j - 2) * 6;
-              final ty =
-                  _lerp(from.dy, to.dy, tl) - math.sin(tl * math.pi) * 70;
-              _p
-                ..style = PaintingStyle.fill
-                ..color =
-                const Color(0xFF78909C).withValues(alpha: 0.25 / tr);
-              canvas.drawCircle(Offset(tx, ty), 4.5 - tr, _p);
-            }
-
-            canvas.save();
-            canvas.translate(x, y);
-            canvas.rotate(local * 11);
-            _bag(canvas, Offset.zero, 500 + j, scale: 1.15);
-            canvas.restore();
-          } else {
-            final q = (local - 1) / 0.5;
-            final cx = to.dx + (j - 2) * 8;
-            _p
-              ..style = PaintingStyle.fill
-              ..color =
-              const Color(0xFF8D6E63).withValues(alpha: (1 - q) * 0.65);
-            canvas.drawCircle(Offset(cx, 244), 7 + q * 14, _p);
-          }
+          final q = (age - 850 - j * 60) / 700;
+          if (q <= 0 || q >= 1) continue;
+          final cx = to.dx + (j - 2) * 8;
+          _p
+            ..style = PaintingStyle.fill
+            ..color = const Color(0xFF8D6E63).withValues(alpha: (1 - q) * 0.65);
+          canvas.drawCircle(Offset(cx, 244), 7 + q * 14, _p);
         }
         if (!d.compact && age > 750 && age < 1650) {
           final q = (age - 750) / 900;
@@ -2798,31 +3216,17 @@ class KostPainter extends CustomPainter {
           );
         }
       } else if (f.type == FxType.outgoing) {
+        // Momen pelepasan: kilatan di titik lempar. Kantongnya sendiri terbang
+        // lewat KostStreetPainter sesuai jarak ke rumah tujuan.
         final from = Offset(right ? 250 : 150, _roofY - 24);
-        final to = Offset(right ? 440 : -40, _roofY - 95);
-
-        if (age < 400) {
+        if (age >= 0 && age < 400) {
           final fq = 1 - age / 400;
           _p
             ..style = PaintingStyle.fill
             ..color = const Color(0xFFFFAB00).withValues(alpha: fq * 0.7);
           canvas.drawCircle(from, 14 * fq, _p);
         }
-
-        for (var j = 0; j < 4; j++) {
-          final local = (age - j * 130) / 1000;
-          if (local < 0 || local > 1) continue;
-          final x = _lerp(from.dx, to.dx, local);
-          final y =
-              _lerp(from.dy, to.dy, local) - math.sin(local * math.pi) * 58;
-          canvas.save();
-          canvas.translate(x, y);
-          canvas.rotate(local * 9);
-          _bag(canvas, Offset.zero, 700 + j, scale: 1.05);
-          canvas.restore();
-        }
-
-        if (age < 1100) {
+        if (age >= 0 && age < 1100) {
           final q = age / 1100;
           _drawBannerText(
             canvas,
@@ -2834,6 +3238,42 @@ class KostPainter extends CustomPainter {
           );
         }
       }
+    }
+  }
+
+  // ------------------------------- persiapan serangan (menunggu Tangkis)
+
+  /// Penyerang mengangkat kantong / menyalakan sirene di titik lempar selama
+  /// korban masih punya jendela Tangkis. Animasi lempar baru jalan sesudahnya.
+  void _drawWindup(Canvas canvas, double t) {
+    if (d.charge == 0 || d.eliminated) return;
+    final right = d.facingRight;
+    final o = Offset(right ? 250 : 150, _roofY - 24);
+    final pulse = 0.5 + 0.5 * math.sin(t * 9);
+
+    if (d.charge == 1) {
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFFFFAB00).withValues(alpha: 0.16 + 0.16 * pulse);
+      canvas.drawCircle(o, 16 + 4 * pulse, _p);
+      canvas.save();
+      canvas.translate(o.dx, o.dy - 3 - pulse * 2);
+      canvas.rotate(math.sin(t * 7) * 0.25);
+      _bag(canvas, Offset.zero, 777, scale: 1.25 + 0.1 * pulse);
+      canvas.restore();
+      _drawBannerText(canvas, 'SIAP MELEMPAR…', Offset(o.dx, o.dy - 30),
+          const Color(0xFFFFCC80));
+    } else {
+      final on = math.sin(t * 14) > 0;
+      final c = on ? const Color(0xFFFF1744) : const Color(0xFF2979FF);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = c.withValues(alpha: 0.3);
+      canvas.drawCircle(o, 15 + 3 * pulse, _p);
+      _p.color = c;
+      canvas.drawCircle(o, 4.5, _p);
+      _drawBannerText(canvas, 'SIDAK DIKIRIM…', Offset(o.dx, o.dy - 28),
+          const Color(0xFFFF8A80));
     }
   }
 
@@ -3673,10 +4113,18 @@ class KostStreet extends StatelessWidget {
     required this.backdrop,
     required this.camera,
     required this.repaint,
+    this.ids = const <String>[],
+    this.shots = const <KostShot>[],
     this.insets = EdgeInsets.zero,
   });
 
   final List<KostSceneData> houses;
+
+  /// id pemain per rumah (urutan sama dengan [houses]) untuk memetakan [shots].
+  final List<String> ids;
+
+  /// Lemparan yang sedang terbang antar rumah.
+  final List<KostShot> shots;
 
   /// Data untuk latar bersama (polusi, kabut, event dunia).
   final KostSceneData backdrop;
@@ -3693,6 +4141,8 @@ class KostStreet extends StatelessWidget {
           backdrop,
           camera,
           repaint,
+          ids: ids,
+          shots: shots,
           insets: insets,
         ),
         size: Size.infinite,
@@ -3707,6 +4157,8 @@ class KostStreetPainter extends CustomPainter {
       this.backdrop,
       this.camera,
       Listenable repaint, {
+        this.ids = const <String>[],
+        this.shots = const <KostShot>[],
         this.insets = EdgeInsets.zero,
       })  : _repaint = repaint,
         super(repaint: repaint);
@@ -3716,6 +4168,74 @@ class KostStreetPainter extends CustomPainter {
   final KostStreetCamera camera;
   final EdgeInsets insets;
   final Listenable _repaint;
+  final List<String> ids;
+  final List<KostShot> shots;
+
+  double _roofOf(int i) {
+    final floors = math.min(3, math.max(1, (houses[i].rooms / 4).ceil()));
+    return _gy - floors * _fh;
+  }
+
+  /// Gambar kantong sampah terbang dari rumah [a] ke rumah [b]. Lambungan
+  /// dan durasi mengikuti jarak, jadi lemparan antar rumah jauh melengkung
+  /// lebih tinggi & lebih lama.
+  void _paintShots(Canvas canvas, double fxScale, Rect view) {
+    for (final sh in shots) {
+      final a = ids.indexOf(sh.fromId);
+      final b = ids.indexOf(sh.toId);
+      if (a < 0 || b < 0 || a == b) continue;
+      final age = sh.age.toDouble();
+      if (age < 0) continue;
+      final dist = (a - b).abs();
+      final toRight = b > a;
+      final from = Offset(a * _w + (toRight ? 250.0 : 150.0), _roofOf(a) - 24);
+      final to = Offset(b * _w + (toRight ? 50.0 : 350.0), 238.0);
+      final peak = 64.0 + 38.0 * dist;
+      final stagger = 80.0;
+      final flight = math.max(400.0, sh.durMs - stagger * (sh.bags - 1));
+      final bagScale = 1.15 * math.min(fxScale, 2.2);
+      final painter = KostPainter(
+        const KostSceneData(
+            rooms: 0, maxRooms: 12, defense: 0, trashRatio: 0, pollution: 0),
+        _repaint,
+      );
+
+      Offset at(double q, int j) {
+        final x = _lerp(from.dx, to.dx, q) + (j - 1.5) * 3;
+        final y = _lerp(from.dy, to.dy, q) - 4 * peak * q * (1 - q);
+        return Offset(x, y);
+      }
+
+      for (var j = 0; j < sh.bags; j++) {
+        final q = (age - j * stagger) / flight;
+        if (q < 0 || q > 1) continue;
+        // jejak asap
+        for (var tr = 1; tr <= 4; tr++) {
+          final tq = (q - tr * 0.035).clamp(0.0, 1.0);
+          final pt = at(tq, j);
+          painter._p
+            ..style = PaintingStyle.fill
+            ..color = (sh.reflected
+                ? const Color(0xFF40C4FF)
+                : const Color(0xFF78909C))
+                .withValues(alpha: 0.3 / tr);
+          canvas.drawCircle(pt, (5.0 - tr) * math.min(fxScale, 2.0), painter._p);
+        }
+        final pos = at(q, j);
+        if (sh.reflected) {
+          painter._p
+            ..style = PaintingStyle.fill
+            ..color = const Color(0xFF40C4FF).withValues(alpha: 0.28);
+          canvas.drawCircle(pos, 10 * math.min(fxScale, 2.0), painter._p);
+        }
+        canvas.save();
+        canvas.translate(pos.dx, pos.dy);
+        canvas.rotate(q * 11 + j);
+        painter._bag(canvas, Offset.zero, 500 + j, scale: bagScale);
+        canvas.restore();
+      }
+    }
+  }
 
   @override
   bool shouldRepaint(covariant KostStreetPainter oldDelegate) => true;
@@ -3765,6 +4285,9 @@ class KostStreetPainter extends CustomPainter {
       kp.paintStreetHouse(canvas, Rect.fromLTRB(0, vt, _w, vb), t);
       canvas.restore();
     }
+
+    // 2b) lemparan sampah terbang antar rumah (koordinat dunia)
+    _paintShots(canvas, fxScale, view);
 
     // 3) hujan / abu / kabut / vinyet, sekali untuk seluruh layar
     KostPainter(backdrop, _repaint).paintStreetAtmosphere(

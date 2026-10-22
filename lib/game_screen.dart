@@ -80,6 +80,8 @@ class _GameScreenState extends State<GameScreen>
   final Map<String, int> _prevTier = {};
 
   final Map<String, List<KostFx>> _fx = {};
+  final List<KostShot> _shots = []; // lemparan yang sedang terbang antar rumah
+  double _atkTotal = 0; // total jendela Tangkis serangan masuk (untuk cincin)
   final Map<String, double> _haulTotal = {};
   int _lastEventMs = -100000;
   int _lastEmojiSentMs = -10000;
@@ -121,6 +123,7 @@ class _GameScreenState extends State<GameScreen>
       for (final l in _fx.values) {
         l.removeWhere((f) => now - f.startMs > 6000);
       }
+      _shots.removeWhere((sh) => sh.age > sh.durMs + 400);
       // Jendela Tangkis habis -> minta server menyelesaikan serangan segera
       // (tanpa menunggu tick 4 detik), supaya dampak terasa tepat waktu.
       for (final s in _states.values) {
@@ -262,17 +265,17 @@ class _GameScreenState extends State<GameScreen>
         _ensureFx(actor, FxType.tier, amount: amt);
         break;
       case 'throw_launch':
-      // sampah meninggalkan kost pelempar; belum mendarat (jendela Tangkis)
-        _ensureFx(actor, FxType.outgoing, amount: amt, peer: target);
+      // Jendela Tangkis dibuka. Animasi lempar BELUM jalan: korban melihat
+      // cincin Tangkis, penyerang hanya bersiap (wind-up dari player_state).
         break;
       case 'throw':
-      // mendarat di korban
-        _ensureFx(target, FxType.incoming, amount: amt, peer: actor);
+      // Tak ditangkis -> sekarang baru dilempar, terbang ke korban.
+        _launchShot(actor, target, amount: amt, reflected: false);
         break;
       case 'parry':
-      // actor = penangkis, target = pelempar yang kena pantulan
+      // actor = penangkis, target = pelempar: sampah dipantulkan balik.
         _ensureFx(actor, FxType.parry, amount: amt);
-        _ensureFx(target, FxType.incoming, amount: amt, peer: actor);
+        _launchShot(actor, target, amount: amt, reflected: true);
         break;
       case 'inspect':
         _ensureFx(target, FxType.inspect, amount: amt);
@@ -295,6 +298,33 @@ class _GameScreenState extends State<GameScreen>
       default:
         break;
     }
+  }
+
+  /// Mulai lemparan sampah dari rumah [from] ke rumah [to]. Durasi terbang &
+  /// lambungan mengikuti jarak (jumlah rumah di antara keduanya); dampak di
+  /// rumah tujuan ditunda agar pas saat sampah mendarat.
+  void _launchShot(String? from, String? to,
+      {required double amount, required bool reflected}) {
+    if (from == null || to == null) return;
+    final order = _order;
+    final a = order.indexOf(from);
+    final b = order.indexOf(to);
+    final dist = (a < 0 || b < 0) ? 1 : max(1, (a - b).abs());
+    final dur = min(2600, 1100 + 380 * (dist - 1));
+    _shots.add(KostShot(
+      fromId: from,
+      toId: to,
+      durMs: dur,
+      reflected: reflected,
+    ));
+    _ensureFx(from, FxType.outgoing, amount: amount, peer: to);
+    final list = _fx[to] ??= <KostFx>[];
+    list.add(KostFx(
+      FxType.incoming,
+      amount: amount,
+      peerId: from,
+      delayMs: dur - 970,
+    ));
   }
 
   Future<void> _sendEmoji(int code) async {
@@ -699,6 +729,17 @@ class _GameScreenState extends State<GameScreen>
     return (1 - left / total).clamp(0.0, 1.0).toDouble();
   }
 
+  /// 0 = tidak, 1 = bersiap melempar, 2 = bersiap sidak (menunggu korban Tangkis).
+  int _chargeFor(String id) {
+    for (final s in _states.values) {
+      if (s['pending_attack_from']?.toString() == id &&
+          _remaining(s['pending_attack_until']) > 0) {
+        return s['pending_attack_type'] == 'inspect' ? 2 : 1;
+      }
+    }
+    return 0;
+  }
+
   KostSceneData _sceneData(String id, Map<String, dynamic> s,
       {required bool compact, bool? facingRight}) {
     final live = _live(s);
@@ -724,6 +765,9 @@ class _GameScreenState extends State<GameScreen>
       facingRight: facingRight ?? !compact,
       isBounty: id == _bountyId,
       attackLeft: _remaining(s['pending_attack_until']),
+      charge: _chargeFor(id),
+      // 0..999, stabil di semua perangkat (tanpa hashCode bawaan Dart)
+      seed: id.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
     );
   }
 
@@ -765,6 +809,14 @@ class _GameScreenState extends State<GameScreen>
   /// Arah lemparan: rumah menghadap ke tetangga yang sedang terlibat serangan.
   bool _facingRightFor(String id, List<String> order) {
     final mine = order.indexOf(id);
+    // Sedang menyiapkan serangan: hadap ke korban yang punya jendela Tangkis.
+    for (final s in _states.values) {
+      if (s['pending_attack_from']?.toString() == id &&
+          _remaining(s['pending_attack_until']) > 0) {
+        final other = order.indexOf(s['player_id'].toString());
+        if (other >= 0 && mine >= 0 && other != mine) return other > mine;
+      }
+    }
     final list = _fx[id];
     if (list == null || mine < 0) return true;
     for (var i = list.length - 1; i >= 0; i--) {
@@ -829,6 +881,7 @@ class _GameScreenState extends State<GameScreen>
     final myAttackLeft = (me != null && alive && !finished)
         ? _remaining(me['pending_attack_until'])
         : 0.0;
+    if (myAttackLeft <= 0) _atkTotal = 0;
 
     // Semua rumah (termasuk milik sendiri) berderet bertetangga di satu jalan.
     final order = _order;
@@ -938,6 +991,8 @@ class _GameScreenState extends State<GameScreen>
                     },
                     child: KostStreet(
                       houses: houses,
+                      ids: order,
+                      shots: _shots,
                       backdrop: backdrop,
                       camera: _cam,
                       repaint: _anim,
@@ -981,15 +1036,20 @@ class _GameScreenState extends State<GameScreen>
                   animation: _anim,
                   builder: (context, _) => Stack(
                     clipBehavior: Clip.none,
-                    children: _houseTags(
-                      order,
-                      stage,
-                      screen,
-                      canAct,
-                      me,
-                      focusId,
-                      topInset,
-                    ),
+                    children: [
+                      ..._houseTags(
+                        order,
+                        stage,
+                        screen,
+                        canAct,
+                        me,
+                        focusId,
+                        topInset,
+                      ),
+                      if (myAttackLeft > 0 && me != null)
+                        _parryRing(me, myAttackLeft, order, stage, focusId,
+                            topInset),
+                    ],
                   ),
                 ),
               ),
@@ -1037,15 +1097,6 @@ class _GameScreenState extends State<GameScreen>
                 ),
               ],
 
-              // 6b) Tombol TANGKIS (muncul saat ada serangan masuk ke kita)
-              if (myAttackLeft > 0)
-                Positioned(
-                  left: 12 + pad.left,
-                  right: 12 + pad.right,
-                  bottom: bottomInset + 44,
-                  child: Center(child: _tangkisButton(me!, myAttackLeft)),
-                ),
-
               // 7) Layar Selesai
               if (finished)
                 Positioned.fill(
@@ -1091,60 +1142,149 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _tangkisButton(Map<String, dynamic> me, double left) {
+  /// Cincin TANGKIS di atas rumah korban. Muncul begitu penyerang menekan
+  /// serang; mengikuti kamera. Animasi lempar baru jalan setelah cincin ini
+  /// diketuk atau waktunya habis.
+  Widget _parryRing(
+      Map<String, dynamic> me,
+      double left,
+      List<String> order,
+      Rect stage,
+      String? focusId,
+      double topInset,
+      ) {
+    final i = order.indexOf(_me);
+    if (i < 0) return const SizedBox.shrink();
+    const d = 84.0;
+    const boxW = 150.0;
+    const boxH = d + 40 + 26;
+
+    final sc = _cam.scale;
+    final o = _cam.origin(stage);
+    final rooms = _num(_states[_me]!['rooms_count']).toInt();
+    final floors = min(3, max(1, (rooms / 4).ceil()));
+    final roofY = o.dy + (236.0 - floors * 50.0) * sc;
+    final rawCx = o.dx + (i * kStreetSlotW + kStreetSlotW / 2) * sc;
+    final cx = rawCx
+        .clamp(stage.left + boxW / 2 + 6, stage.right - boxW / 2 - 6)
+        .toDouble();
+    final tagRoom = focusId == _me ? 0.0 : 58.0;
+    var top = roofY - 34 * sc - tagRoom - boxH + 10;
+    top = max(top, topInset + 4);
+    top = min(top, stage.bottom - boxH - 70);
+
     final cd = _remaining(me['parry_cooldown_until']);
     final ready = cd == 0 && !_tangkisBusy;
     final isInspect = me['pending_attack_type'] == 'inspect';
     final from = _name(me['pending_attack_from']);
-    final pulse = 0.5 + 0.5 * sin(sceneNowMs() / 90);
+    _atkTotal = max(_atkTotal, left);
+    final frac = _atkTotal <= 0 ? 0.0 : (left / _atkTotal).clamp(0.0, 1.0);
+    final t = sceneNowMs() / 1000.0;
+    final pulse = 0.5 + 0.5 * sin(t * 9);
+    final ripple = (t * 1.5) % 1.0;
     final base = ready ? const Color(0xFFE53935) : Colors.blueGrey.shade700;
 
-    return Material(
-      color: base,
-      elevation: 10,
-      shadowColor: Colors.black,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: ready ? _tangkis : null,
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 230, minHeight: 64),
-          padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: ready ? 0.5 + 0.5 * pulse : 0.2),
-              width: 2.5,
-            ),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(ready ? Icons.security : Icons.hourglass_bottom,
-                  color: Colors.white, size: 30),
-              const SizedBox(width: 12),
-              Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    ready ? 'TANGKIS!' : 'Tangkis isi ulang ${cd.ceil()}s',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.5,
+    return Positioned(
+      left: cx - boxW / 2,
+      top: top,
+      width: boxW,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: d + 40,
+            height: d + 40,
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                if (ready)
+                  IgnorePointer(
+                    child: Container(
+                      width: d + ripple * 36,
+                      height: d + ripple * 36,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: const Color(0xFFFF5252)
+                              .withValues(alpha: (1 - ripple) * 0.7),
+                          width: 3,
+                        ),
+                      ),
                     ),
                   ),
-                  Text(
-                    '${isInspect ? 'Sidak' : 'Lemparan'} dari $from · ${left.toStringAsFixed(1)} dtk',
-                    style: const TextStyle(color: Colors.white70, fontSize: 11.5),
+                Transform.scale(
+                  scale: ready ? 1 + 0.06 * pulse : 1,
+                  child: Material(
+                    color: base,
+                    elevation: 10,
+                    shadowColor: Colors.black,
+                    shape: const CircleBorder(),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: ready ? _tangkis : null,
+                      child: SizedBox(
+                        width: d,
+                        height: d,
+                        child: Stack(
+                          alignment: Alignment.center,
+                          children: [
+                            SizedBox(
+                              width: d - 8,
+                              height: d - 8,
+                              child: CircularProgressIndicator(
+                                value: frac,
+                                strokeWidth: 5,
+                                color: Colors.white
+                                    .withValues(alpha: ready ? 0.9 : 0.4),
+                                backgroundColor:
+                                Colors.white.withValues(alpha: 0.18),
+                              ),
+                            ),
+                            Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  ready ? Icons.security : Icons.hourglass_bottom,
+                                  color: Colors.white,
+                                  size: 28,
+                                ),
+                                Text(
+                                  ready ? 'TANGKIS' : '${cd.ceil()}s',
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w900,
+                                    letterSpacing: 1,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
-                ],
-              ),
-            ],
+                ),
+              ],
+            ),
           ),
-        ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+            decoration: BoxDecoration(
+              color: _ink.withValues(alpha: 0.88),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: const Color(0xFFFF5252).withValues(alpha: 0.6),
+              ),
+            ),
+            child: Text(
+              '${isInspect ? 'Sidak' : 'Lemparan'} dari $from · ${left.toStringAsFixed(1)} dtk',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white, fontSize: 10.5),
+            ),
+          ),
+        ],
       ),
     );
   }

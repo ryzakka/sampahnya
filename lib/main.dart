@@ -734,13 +734,21 @@ class RoomLobby extends StatefulWidget {
   State<RoomLobby> createState() => _RoomLobbyState();
 }
 
-class _RoomLobbyState extends State<RoomLobby> {
-  static const _avatarColors = [
-    Color(0xFFFFB74D),
-    Color(0xFF81C784),
-    Color(0xFFE57373),
-    Color(0xFF64B5F6),
+class _RoomLobbyState extends State<RoomLobby>
+    with SingleTickerProviderStateMixin {
+  // Sama dengan warna dinding di game agar rumah terlihat konsisten.
+  static const _walls = [
+    Color(0xFFF0DFB8),
+    Color(0xFFCFE6D6),
+    Color(0xFFF4CFC4),
+    Color(0xFFD1DCF2),
   ];
+
+  late final AnimationController _anim;
+  final KostStreetCamera _cam = KostStreetCamera();
+  final Map<String, List<KostFx>> _fx = {};
+  final Map<String, bool> _prevReady = {};
+  bool _playersLoaded = false;
 
   SupabaseClient get _db => Supabase.instance.client;
   List<Map<String, dynamic>> _players = [];
@@ -754,6 +762,15 @@ class _RoomLobbyState extends State<RoomLobby> {
   @override
   void initState() {
     super.initState();
+    _anim = AnimationController(vsync: this, duration: const Duration(seconds: 1))
+      ..repeat();
+    _anim.addListener(() {
+      _cam.step();
+      final now = sceneNowMs();
+      for (final l in _fx.values) {
+        l.removeWhere((f) => now - f.startMs > 5000);
+      }
+    });
     _refreshPlayers();
     _refreshRoom();
     _channel = _db
@@ -792,8 +809,26 @@ class _RoomLobbyState extends State<RoomLobby> {
           .order('player_name');
 
       if (!mounted) return;
+      final list = List<Map<String, dynamic>>.from(data);
+      // Reaksi visual: 😎 saat ada yang bergabung, 👏 saat seseorang SIAP.
+      final ids = <String>{};
+      for (final p in list) {
+        final pid = p['player_id'].toString();
+        final ready = p['is_ready'] == true;
+        ids.add(pid);
+        if (_playersLoaded) {
+          if (!_prevReady.containsKey(pid)) {
+            _addFx(pid, 2);
+          } else if (ready && _prevReady[pid] == false) {
+            _addFx(pid, 8);
+          }
+        }
+        _prevReady[pid] = ready;
+      }
+      _prevReady.removeWhere((k, _) => !ids.contains(k));
+      _playersLoaded = true;
       setState(() {
-        _players = List<Map<String, dynamic>>.from(data);
+        _players = list;
         _loading = false;
       });
     } catch (e) {
@@ -804,6 +839,15 @@ class _RoomLobbyState extends State<RoomLobby> {
       });
     }
   }
+
+  void _addFx(String pid, int emojiCode) {
+    (_fx[pid] ??= <KostFx>[])
+        .add(KostFx(FxType.emoji, amount: emojiCode.toDouble()));
+  }
+
+  /// Urutan rumah di jalan: diurutkan berdasarkan id (sama dengan layar game).
+  List<Map<String, dynamic>> get _ordered => [..._players]..sort((a, b) =>
+      a['player_id'].toString().compareTo(b['player_id'].toString()));
 
   Future<void> _refreshRoom() async {
     try {
@@ -895,6 +939,7 @@ class _RoomLobbyState extends State<RoomLobby> {
 
   @override
   void dispose() {
+    _anim.dispose();
     if (_channel != null) {
       _db.removeChannel(_channel!);
     }
@@ -1018,22 +1063,12 @@ class _RoomLobbyState extends State<RoomLobby> {
                       _buildRoomCodeBanner(),
                       const SizedBox(height: 18),
 
-                      // Kisi 4 Slot Pemain
+                      // Jalan kost: satu rumah per pemain yang bergabung.
+                      // Jendela menyala saat pemain menekan SIAP.
                       Expanded(
                         child: _loading
                             ? const Center(child: CircularProgressIndicator())
-                            : GridView.builder(
-                          gridDelegate:
-                          const SliverGridDelegateWithMaxCrossAxisExtent(
-                            maxCrossAxisExtent: 290,
-                            mainAxisExtent: 126,
-                            crossAxisSpacing: 12,
-                            mainAxisSpacing: 12,
-                          ),
-                          itemCount: 4,
-                          itemBuilder: (context, index) =>
-                              _buildPlayerSlot(index, userId),
-                        ),
+                            : _buildStreet(userId),
                       ),
 
                       if (_error != null) ...[
@@ -1230,185 +1265,188 @@ class _RoomLobbyState extends State<RoomLobby> {
     );
   }
 
-  Widget _buildPlayerSlot(int index, String? currentUserId) {
-    if (index >= _players.length) {
-      return Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: 0.04),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.12),
-            style: BorderStyle.solid,
-          ),
-        ),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 24,
-              backgroundColor: Colors.white.withValues(alpha: 0.07),
-              child: const Icon(
-                Icons.person_add_alt_1_rounded,
-                color: Colors.white38,
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Kavling Kosong #${index + 1}',
-                    style: const TextStyle(
-                      color: Colors.white54,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Menunggu pemain bergabung…',
-                    style: TextStyle(color: Colors.white38, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+  KostSceneData _houseFor(Map<String, dynamic> p, int i) {
+    final pid = p['player_id'].toString();
+    final ready = p['is_ready'] == true;
+    return KostSceneData(
+      rooms: 4,
+      maxRooms: 12,
+      defense: ready ? 1 : 0,
+      wasteLevel: 1,
+      trashRatio: 0,
+      pollution: 4,
+      wall: _walls[i % _walls.length],
+      fx: _fx[pid] ?? const <KostFx>[],
+      seed: pid.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
+      // SIAP -> jendela menyala; belum siap -> gelap.
+      lights: ready ? 1.0 : 0.0,
+    );
+  }
+
+  Widget _buildStreet(String? userId) {
+    final list = _ordered;
+    final n = list.length;
+    if (n == 0) {
+      return const Center(
+        child: Text('Menunggu pemain…', style: TextStyle(color: Colors.white70)),
       );
     }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(22),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.16),
+            width: 1.5,
+          ),
+        ),
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final size = Size(c.maxWidth, c.maxHeight);
+            const insets = EdgeInsets.only(top: 52);
+            final stage = _cam.stageFor(size, insets);
+            final fit = min(
+              stage.width * 0.96 / (n * kStreetSlotW),
+              stage.height / kStreetSlotH,
+            );
+            _cam.setTarget(n * kStreetSlotW / 2, min(fit, 1.15));
 
-    final player = _players[index];
-    final pid = player['player_id']?.toString();
-    final isMe = pid == currentUserId;
-    final isSlotHost = _hostId != null && pid == _hostId;
-    final isReady = player['is_ready'] == true;
-    final color = _avatarColors[index % _avatarColors.length];
+            final houses = [
+              for (var i = 0; i < n; i++) _houseFor(list[i], i),
+            ];
+            final backdrop = KostSceneData(
+              rooms: 0,
+              maxRooms: 12,
+              defense: 0,
+              trashRatio: 0,
+              pollution: 4,
+            );
+            final ids = [for (final p in list) p['player_id'].toString()];
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      padding: const EdgeInsets.all(16),
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: KostStreet(
+                    houses: houses,
+                    backdrop: backdrop,
+                    camera: _cam,
+                    repaint: _anim,
+                    ids: ids,
+                    insets: insets,
+                  ),
+                ),
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: AnimatedBuilder(
+                      animation: _anim,
+                      builder: (context, _) => Stack(
+                        clipBehavior: Clip.none,
+                        children: _nameTags(list, stage, userId),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Kartu nama + status SIAP di atas atap tiap rumah, mengikuti kamera.
+  List<Widget> _nameTags(
+      List<Map<String, dynamic>> list, Rect stage, String? userId) {
+    final s = _cam.scale;
+    final o = _cam.origin(stage);
+    final out = <Widget>[];
+    for (var i = 0; i < list.length; i++) {
+      final p = list[i];
+      final pid = p['player_id'].toString();
+      final cx = o.dx + (i * kStreetSlotW + kStreetSlotW / 2) * s;
+      final roofY = o.dy + (236.0 - 50.0) * s;
+      final w = (kStreetSlotW * s - 6).clamp(84.0, 190.0).toDouble();
+      final top = max(4.0, roofY - 47 * s - 54);
+      out.add(Positioned(
+        left: cx - w / 2,
+        top: top,
+        width: w,
+        child: _nameTag(p, pid == userId, pid == _hostId),
+      ));
+    }
+    return out;
+  }
+
+  Widget _nameTag(Map<String, dynamic> p, bool isMe, bool isHost) {
+    final ready = p['is_ready'] == true;
+    final accent = ready ? const Color(0xFF81C784) : Colors.amber.shade300;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
       decoration: BoxDecoration(
-        color: isReady
-            ? const Color(0xFF1B3B28).withValues(alpha: 0.88)
-            : const Color(0xFF16241C).withValues(alpha: 0.82),
-        borderRadius: BorderRadius.circular(20),
+        color: const Color(0xFF12221A).withValues(alpha: 0.9),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(
-          color: isReady
+          color: ready
               ? const Color(0xFF66BB6A)
               : (isMe
-              ? const Color(0xFFFFCA28).withValues(alpha: 0.6)
-              : Colors.white.withValues(alpha: 0.15)),
-          width: isReady || isMe ? 2 : 1,
+              ? const Color(0xFFFFCA28).withValues(alpha: 0.7)
+              : Colors.white.withValues(alpha: 0.18)),
+          width: ready || isMe ? 1.8 : 1,
         ),
         boxShadow: [
-          if (isReady)
+          if (ready)
             BoxShadow(
-              color: const Color(0xFF4CAF50).withValues(alpha: 0.25),
-              blurRadius: 14,
+              color: const Color(0xFF4CAF50).withValues(alpha: 0.35),
+              blurRadius: 12,
             ),
         ],
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Stack(
-            clipBehavior: Clip.none,
+          Row(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              CircleAvatar(
-                radius: 25,
-                backgroundColor: color.withValues(alpha: 0.25),
-                child: Icon(Icons.home_work_rounded, color: color, size: 26),
-              ),
-              if (isSlotHost)
-                Positioned(
-                  right: -4,
-                  top: -4,
-                  child: Container(
-                    padding: const EdgeInsets.all(4),
-                    decoration: const BoxDecoration(
-                      color: Color(0xFFFFCA28),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.workspace_premium_rounded,
-                      size: 13,
-                      color: Colors.black87,
-                    ),
+              if (isHost)
+                const Padding(
+                  padding: EdgeInsets.only(right: 4),
+                  child: Icon(Icons.workspace_premium_rounded,
+                      size: 13, color: Color(0xFFFFCA28)),
+                ),
+              Flexible(
+                child: Text(
+                  '${p['player_name'] ?? 'Pemain'}${isMe ? ' (Anda)' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: isMe ? const Color(0xFFFFCA28) : Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
+              ),
             ],
           ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Flexible(
-                      child: Text(
-                        player['player_name']?.toString() ?? 'Pemain',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                    ),
-                    if (isMe) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFFFCA28).withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: const Text(
-                          'ANDA',
-                          style: TextStyle(
-                            color: Color(0xFFFFCA28),
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ],
+          const SizedBox(height: 2),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                ready ? Icons.lightbulb_rounded : Icons.lightbulb_outline,
+                size: 12,
+                color: accent,
+              ),
+              const SizedBox(width: 3),
+              Text(
+                ready ? 'SIAP' : 'Belum siap',
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
                 ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Icon(
-                      isReady
-                          ? Icons.verified_rounded
-                          : Icons.hourglass_top_rounded,
-                      size: 15,
-                      color: isReady
-                          ? const Color(0xFF81C784)
-                          : Colors.amber.shade300,
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      isReady ? 'SIAP BERTANDING' : ' sedang bersiap…',
-                      style: TextStyle(
-                        color: isReady
-                            ? const Color(0xFF81C784)
-                            : Colors.amber.shade200,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ],
       ),
