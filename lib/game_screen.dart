@@ -5,6 +5,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'cinematics.dart';
 import 'kost_scene.dart';
 
 class GameScreen extends StatefulWidget {
@@ -31,6 +32,9 @@ class _GameScreenState extends State<GameScreen>
     Color(0xFFD1DCF2),
   ];
   static const _ink = Color(0xFF14201A);
+
+  /// Tinggi kartu sasaran yang ditempel di atas layar saat zoom ke rumah lawan.
+  static const _dockH = 52.0;
 
   static const _wasteNames = [
     'Tanpa Fasilitas',
@@ -106,6 +110,17 @@ class _GameScreenState extends State<GameScreen>
   String? _activeRpc;
   bool _loaded = false;
 
+  // --- sinematik (intro, rumah tertimbun, sidak polisi) ---
+  final CineDirector _cine = CineDirector();
+  bool _introChecked = false;
+  // tata letak kamera terakhir (dipakai listener per-frame sutradara)
+  Rect _lastStage = Rect.zero;
+  List<String> _lastOrder = const <String>[];
+  double _lastFitOne = 1;
+  double _lastFitAll = 1;
+  double _lastTgtCx = 200;
+  double _lastTgtScale = 1;
+
   @override
   void initState() {
     super.initState();
@@ -114,6 +129,7 @@ class _GameScreenState extends State<GameScreen>
       ..repeat();
     // Kamera jalan bergerak halus menuju targetnya di setiap frame.
     _anim.addListener(_cam.step);
+    _anim.addListener(_cineStep);
     _subscribe();
     _loadAll();
     _tickServer();
@@ -233,6 +249,62 @@ class _GameScreenState extends State<GameScreen>
         .subscribe();
   }
 
+  // ------------------------------------------------------------ sinematik
+
+  /// Listener per-frame: menjalankan jadwal sutradara & mengatur kamera
+  /// sinematik secara halus (60 fps, bukan per-rebuild 20 Hz).
+  void _cineStep() {
+    final now = sceneNowMs();
+    final ended = _cine.tick(now);
+    if (_lastOrder.isNotEmpty && _lastStage != Rect.zero) {
+      final ov = _cine.camera(
+        now: now,
+        order: _lastOrder,
+        fitOne: _lastFitOne,
+        fitAll: _lastFitAll,
+        tgtCx: _lastTgtCx,
+        tgtScale: _lastTgtScale,
+      );
+      if (ov != null) {
+        _cam.setTarget(ov.cx, ov.scale);
+        _cam.cx = ov.cx;
+        _cam.scale = ov.scale;
+      }
+    }
+    if (ended && mounted) setState(() {});
+  }
+
+  /// Intro hanya diputar di awal pertandingan (bukan saat masuk ulang di
+  /// tengah permainan atau setelah selesai).
+  void _maybePlayIntro() {
+    if (_introChecked) return;
+    _introChecked = true;
+    if (_room['status'] == 'finished') return;
+    if (_room['started_at'] != null && _elapsedSec > 40) return;
+    final order = _order;
+    if (order.isEmpty) return;
+    _cine.playIntro(
+      order: order,
+      names: {for (final id in order) id: _names[id] ?? 'Pemain'},
+      myId: _states.containsKey(_me) ? _me : null,
+    );
+  }
+
+  void _playPolice(String? targetId, String? actorId, int amount,
+      {required bool reflected}) {
+    if (targetId == null) return;
+    _cine.playPolice(
+      targetId: targetId,
+      targetName: _names[targetId] ?? 'Pemain',
+      reflected: reflected,
+      actorName: _names[actorId] ?? 'Pemain',
+      amount: amount,
+      iAmTarget: targetId == _me,
+      camCx: _cam.cx,
+      camScale: _cam.scale,
+    );
+  }
+
   void _ensureFx(String? id, FxType t, {double amount = 0, String? peer}) {
     if (id == null) return;
     final list = _fx[id] ??= <KostFx>[];
@@ -270,19 +342,32 @@ class _GameScreenState extends State<GameScreen>
         break;
       case 'throw':
       // Tak ditangkis -> sekarang baru dilempar, terbang ke korban.
-        _launchShot(actor, target, amount: amt, reflected: false);
+        _launchShot(actor, target, amount: amt);
         break;
       case 'parry':
       // actor = penangkis, target = pelempar: sampah dipantulkan balik.
-        _ensureFx(actor, FxType.parry, amount: amt);
-        _launchShot(actor, target, amount: amt, reflected: true);
+      // Alur: pelempar melempar -> kena perisai penangkis -> memantul balik.
+        _launchShot(target, actor, amount: amt, bounce: true);
+        break;
+      case 'inspect_launch':
+      // Penyerang "menelepon polisi": kartu telepon tampil selama jendela
+      // Tangkis (tidak menghalangi tombol Tangkis).
+        _cine.playCall(
+          actorName: _names[actor] ?? 'Pemain',
+          targetName: _names[target] ?? 'Pemain',
+          iAmActor: actor == _me,
+          iAmTarget: target == _me,
+        );
         break;
       case 'inspect':
         _ensureFx(target, FxType.inspect, amount: amt);
+        _playPolice(target, actor, amt.round(), reflected: false);
         break;
       case 'parry_inspect':
+      // actor = penangkis, target = penyerang: polisi malah mendatangi penyerang
         _ensureFx(actor, FxType.parry, amount: amt);
         _ensureFx(target, FxType.inspect, amount: amt);
+        _playPolice(target, actor, amt.round(), reflected: true);
         break;
       case 'hijack':
       // amount 1 = sisi pembajak (kabur bawa truk), 2 = sisi korban (disergap)
@@ -293,7 +378,23 @@ class _GameScreenState extends State<GameScreen>
         _ensureFx(actor, FxType.emoji, amount: amt);
         break;
       case 'eliminated':
-        _ensureFx(target, FxType.collapse, amount: amt);
+        if (target != null &&
+            _cine.playBuried(
+              id: target,
+              name: _names[target] ?? 'Pemain',
+              isMe: target == _me,
+              camCx: _cam.cx,
+              camScale: _cam.scale,
+            )) {
+          // debu runtuh baru muncul tepat di puncak adegan
+          (_fx[target] ??= <KostFx>[]).add(KostFx(
+            FxType.collapse,
+            amount: amt,
+            delayMs: kBuriedCollapseMs,
+          ));
+        } else {
+          _ensureFx(target, FxType.collapse, amount: amt);
+        }
         break;
       default:
         break;
@@ -304,27 +405,43 @@ class _GameScreenState extends State<GameScreen>
   /// lambungan mengikuti jarak (jumlah rumah di antara keduanya); dampak di
   /// rumah tujuan ditunda agar pas saat sampah mendarat.
   void _launchShot(String? from, String? to,
-      {required double amount, required bool reflected}) {
+      {required double amount, bool bounce = false}) {
     if (from == null || to == null) return;
     final order = _order;
     final a = order.indexOf(from);
     final b = order.indexOf(to);
     final dist = (a < 0 || b < 0) ? 1 : max(1, (a - b).abs());
-    final dur = min(2600, 1100 + 380 * (dist - 1));
-    _shots.add(KostShot(
-      fromId: from,
-      toId: to,
-      durMs: dur,
-      reflected: reflected,
-    ));
+    final base = min(2600, 1100 + 380 * (dist - 1));
+    // Pantulan = dua ruas lintasan (pergi + balik), jadi durasinya lebih panjang.
+    final dur = bounce ? (base * 1.6).round() : base;
+    _shots.add(KostShot(fromId: from, toId: to, durMs: dur, bounce: bounce));
     _ensureFx(from, FxType.outgoing, amount: amount, peer: to);
-    final list = _fx[to] ??= <KostFx>[];
-    list.add(KostFx(
-      FxType.incoming,
-      amount: amount,
-      peerId: from,
-      delayMs: dur - 970,
-    ));
+
+    // Kantong ke-j mendarat/menyentuh di (dur - 240) + 80j - ... ; dampak
+    // dijadwalkan agar pas dengan itu (lihat KostStreetPainter._paintShots).
+    final flight = dur - 240;
+    if (bounce) {
+      // kantong pertama menyentuh perisai di pertengahan lintasan
+      (_fx[to] ??= <KostFx>[]).add(KostFx(
+        FxType.parry,
+        amount: amount,
+        delayMs: max(0, flight ~/ 2 - 60),
+      ));
+      // lalu mendarat di pelempar
+      (_fx[from] ??= <KostFx>[]).add(KostFx(
+        FxType.incoming,
+        amount: amount,
+        peerId: to,
+        delayMs: max(0, flight - 730),
+      ));
+    } else {
+      (_fx[to] ??= <KostFx>[]).add(KostFx(
+        FxType.incoming,
+        amount: amount,
+        peerId: from,
+        delayMs: max(0, flight - 730),
+      ));
+    }
   }
 
   Future<void> _sendEmoji(int code) async {
@@ -388,6 +505,7 @@ class _GameScreenState extends State<GameScreen>
         }
         _loaded = true;
       });
+      _maybePlayIntro();
     } catch (e) {
       _toast('Gagal memuat: $e');
     }
@@ -729,15 +847,17 @@ class _GameScreenState extends State<GameScreen>
     return (1 - left / total).clamp(0.0, 1.0).toDouble();
   }
 
-  /// 0 = tidak, 1 = bersiap melempar, 2 = bersiap sidak (menunggu korban Tangkis).
-  int _chargeFor(String id) {
+  /// (jenis, sisa detik) persiapan serangan rumah [id]:
+  /// jenis 0 = tidak, 1 = bersiap melempar, 2 = bersiap sidak.
+  (int, double) _chargeInfo(String id) {
     for (final s in _states.values) {
-      if (s['pending_attack_from']?.toString() == id &&
-          _remaining(s['pending_attack_until']) > 0) {
-        return s['pending_attack_type'] == 'inspect' ? 2 : 1;
+      if (s['pending_attack_from']?.toString() != id) continue;
+      final left = _remaining(s['pending_attack_until']);
+      if (left > 0) {
+        return (s['pending_attack_type'] == 'inspect' ? 2 : 1, left);
       }
     }
-    return 0;
+    return (0, 0.0);
   }
 
   KostSceneData _sceneData(String id, Map<String, dynamic> s,
@@ -765,7 +885,8 @@ class _GameScreenState extends State<GameScreen>
       facingRight: facingRight ?? !compact,
       isBounty: id == _bountyId,
       attackLeft: _remaining(s['pending_attack_until']),
-      charge: _chargeFor(id),
+      charge: _chargeInfo(id).$1,
+      chargeLeft: _chargeInfo(id).$2,
       // 0..999, stabil di semua perangkat (tanpa hashCode bawaan Dart)
       seed: id.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
     );
@@ -877,7 +998,8 @@ class _GameScreenState extends State<GameScreen>
     final me = _states[_me];
     final finished = _room['status'] == 'finished';
     final alive = me != null && me['eliminated_at'] == null;
-    final canAct = alive && !finished && _activeRpc == null;
+    final canAct =
+        alive && !finished && _activeRpc == null && !_cine.blocksInput;
     final myAttackLeft = (me != null && alive && !finished)
         ? _remaining(me['pending_attack_until'])
         : 0.0;
@@ -889,6 +1011,9 @@ class _GameScreenState extends State<GameScreen>
     final focusId =
     (_focusId != null && _states.containsKey(_focusId)) ? _focusId : null;
     final focusState = focusId == null ? null : _states[focusId];
+    // Zoom ke rumah LAWAN: kartu sasaran ditempel di atas layar (bukan di atas
+    // atap) supaya tidak menutupi efek/emoji rumah itu.
+    final dockedShown = focusId != null && focusId != _me && focusState != null;
     // HUD & tag status menampilkan data pemain sendiri (penonton: rumah yang di-zoom).
     final tagState = me ?? focusState ?? (n > 0 ? _states[order.first] : null);
 
@@ -920,23 +1045,57 @@ class _GameScreenState extends State<GameScreen>
             stage.height / kStreetSlotH,
           );
           final fi = focusId == null ? -1 : order.indexOf(focusId);
-          _cam.setTarget(
-            fi >= 0
-                ? fi * kStreetSlotW + kStreetSlotW / 2
-                : count * kStreetSlotW / 2,
-            fi >= 0 ? fitOne : min(fitAll, fitOne),
-          );
+          var camCx = fi >= 0
+              ? fi * kStreetSlotW + kStreetSlotW / 2
+              : count * kStreetSlotW / 2;
+          var camScale = fi >= 0 ? fitOne : min(fitAll, fitOne);
+          // Lemparan yang melibatkan rumah yang sedang di-zoom: kamera melebar
+          // sebentar agar pelempar & sasaran terlihat, lalu kembali sendiri.
+          if (fi >= 0) {
+            var lo = fi, hi = fi;
+            for (final sh in _shots) {
+              if (sh.age > sh.durMs + 250) continue;
+              final ia = order.indexOf(sh.fromId);
+              final ib = order.indexOf(sh.toId);
+              if (ia < 0 || ib < 0 || (ia != fi && ib != fi)) continue;
+              lo = min(lo, min(ia, ib));
+              hi = max(hi, max(ia, ib));
+            }
+            if (hi > lo) {
+              camCx = (lo + hi + 1) * kStreetSlotW / 2;
+              camScale = min(
+                fitOne,
+                min(
+                  stage.width * 0.96 / ((hi - lo + 1) * kStreetSlotW),
+                  stage.height / kStreetSlotH,
+                ),
+              );
+            }
+          }
+          _lastStage = stage;
+          _lastOrder = order;
+          _lastFitOne = fitOne;
+          _lastFitAll = min(fitAll, fitOne);
+          _lastTgtCx = camCx;
+          _lastTgtScale = camScale;
+          // Saat sinematik, kamera digerakkan listener per-frame (_cineStep).
+          if (!_cine.takesCamera) _cam.setTarget(camCx, camScale);
 
           final houses = <KostSceneData>[
-            for (final id in order)
-              _sceneData(
-                id,
-                _states[id]!,
-                compact: false,
-                facingRight: _facingRightFor(id, order),
+            for (var hi = 0; hi < order.length; hi++)
+              _cine.adjustHouse(
+                order[hi],
+                _sceneData(
+                  order[hi],
+                  _states[order[hi]]!,
+                  compact: false,
+                  facingRight: _facingRightFor(order[hi], order),
+                ),
+                hi,
+                order.length,
               ),
           ];
-          final backdrop = KostSceneData(
+          final backdrop = _cine.adjustBackdrop(KostSceneData(
             rooms: 0,
             maxRooms: _maxRooms,
             defense: 0,
@@ -944,7 +1103,7 @@ class _GameScreenState extends State<GameScreen>
             pollution: _pollution,
             worldEvent: _activeWorldEvent,
             smog: _remaining(_room['smog_until']) > 0,
-          );
+          ));
 
           final focusOut =
               focusState != null && focusState['eliminated_at'] != null;
@@ -1003,7 +1162,7 @@ class _GameScreenState extends State<GameScreen>
               ),
 
               // 2) Stempel tertimbun untuk rumah yang sedang di-zoom
-              if (focusOut)
+              if (focusOut && !_cine.holdFinish)
                 Positioned(
                   left: pad.left,
                   right: pad.right,
@@ -1012,93 +1171,130 @@ class _GameScreenState extends State<GameScreen>
                   child: IgnorePointer(child: Center(child: _stamp())),
                 ),
 
-              // 3) HUD Atas
-              Positioned(
-                top: pad.top + 8,
-                left: 12 + pad.left,
-                right: 12 + pad.right,
-                child: _hud(wide, short, tagState),
-              ),
-
-              // 4) Tag Status & World Event
-              Positioned(
-                left: 12 + pad.left,
-                top: topInset,
-                child: IgnorePointer(
-                  child: _statusTags(tagState, me == null),
+              // 2b) Sinematik (di bawah HUD): pewarnaan, hujan, sirine, kartu telepon
+              Positioned.fill(
+                child: CinematicWorldLayer(
+                  director: _cine,
+                  repaint: _anim,
+                  stage: stage,
                 ),
               ),
 
-              // 5) Kartu nama + sabotase menempel di atas atap tiap rumah.
-              //    Dibangun ulang tiap frame agar mengikuti kamera saat zoom.
+              // 2c) HUD, tag, tombol & bilah aksi: memudar saat sinematik
               Positioned.fill(
-                child: AnimatedBuilder(
-                  animation: _anim,
-                  builder: (context, _) => Stack(
+                child: CineHudFade(
+                  director: _cine,
+                  repaint: _anim,
+                  child: Stack(
                     clipBehavior: Clip.none,
                     children: [
-                      ..._houseTags(
-                        order,
-                        stage,
-                        screen,
-                        canAct,
-                        me,
-                        focusId,
-                        topInset,
+                      // 3) HUD Atas
+                      Positioned(
+                        top: pad.top + 8,
+                        left: 12 + pad.left,
+                        right: 12 + pad.right,
+                        child: _hud(wide, short, tagState),
                       ),
-                      if (myAttackLeft > 0 && me != null)
-                        _parryRing(me, myAttackLeft, order, stage, focusId,
-                            topInset),
+
+                      // 4) Tag Status & World Event
+                      Positioned(
+                        left: 12 + pad.left,
+                        top: topInset + (dockedShown ? _dockH + 12 : 0),
+                        child: IgnorePointer(
+                          child: ConstrainedBox(
+                            constraints: BoxConstraints(
+                              maxWidth: min(c.maxWidth * 0.74, 340.0),
+                            ),
+                            child: _statusTags(tagState, me == null),
+                          ),
+                        ),
+                      ),
+
+                      // 5) Kartu nama + sabotase menempel di atas atap tiap rumah.
+                      //    Dibangun ulang tiap frame agar mengikuti kamera saat zoom.
+                      Positioned.fill(
+                        child: AnimatedBuilder(
+                          animation: _anim,
+                          builder: (context, _) => Stack(
+                            clipBehavior: Clip.none,
+                            children: [
+                              ..._houseTags(
+                                order,
+                                stage,
+                                screen,
+                                canAct,
+                                me,
+                                focusId,
+                                topInset,
+                              ),
+                              if (myAttackLeft > 0 && me != null)
+                                _parryRing(me, myAttackLeft, order, stage, focusId,
+                                    topInset, dockedShown),
+                            ],
+                          ),
+                        ),
+                      ),
+
+                      // 5b) Kontrol zoom: Rumahku / Semua tetangga / geser rumah
+                      if (n > 0)
+                        Positioned(
+                          right: 12 + pad.right,
+                          top: topInset + max(8.0, (stage.height - 180) / 2),
+                          child: _zoomPanel(
+                            hasHome: me != null,
+                            focusId: focusId,
+                            count: n,
+                          ),
+                        ),
+
+                      // 6) Pemilih Emoji Reaksi + Kabar Singkat + Bilah Aksi
+                      if (hasBar) ...[
+                        Positioned(
+                          left: 12 + pad.left,
+                          right: 12 + pad.right,
+                          bottom: bottomInset - 2,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (_emojiBarOpen)
+                                Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: _emojiPickerBar(),
+                                ),
+                              IgnorePointer(child: Center(child: _eventToast())),
+                            ],
+                          ),
+                        ),
+                        Positioned(
+                          left: 12 + pad.left,
+                          right: 12 + pad.right,
+                          bottom: pad.bottom + 8,
+                          child: Center(
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 820),
+                              child: _actionBar(me, canAct, wide: wide, short: short),
+                            ),
+                          ),
+                        ),
+                      ],
+
                     ],
                   ),
                 ),
               ),
 
-              // 5b) Kontrol zoom: Rumahku / Semua tetangga / geser rumah
-              if (n > 0)
-                Positioned(
-                  right: 12 + pad.right,
-                  top: topInset + max(8.0, (stage.height - 180) / 2),
-                  child: _zoomPanel(
-                    hasHome: me != null,
-                    focusId: focusId,
-                    count: n,
-                  ),
+              // 6b) Sinematik (di atas HUD): letterbox, narasi, judul, lewati
+              Positioned.fill(
+                child: CinematicTopLayer(
+                  director: _cine,
+                  repaint: _anim,
+                  stage: stage,
+                  onSkip: _cine.skipIntro,
                 ),
+              ),
 
-              // 6) Pemilih Emoji Reaksi + Kabar Singkat + Bilah Aksi
-              if (hasBar) ...[
-                Positioned(
-                  left: 12 + pad.left,
-                  right: 12 + pad.right,
-                  bottom: bottomInset - 2,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_emojiBarOpen)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: _emojiPickerBar(),
-                        ),
-                      IgnorePointer(child: Center(child: _eventToast())),
-                    ],
-                  ),
-                ),
-                Positioned(
-                  left: 12 + pad.left,
-                  right: 12 + pad.right,
-                  bottom: pad.bottom + 8,
-                  child: Center(
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 820),
-                      child: _actionBar(me, canAct, wide: wide, short: short),
-                    ),
-                  ),
-                ),
-              ],
-
-              // 7) Layar Selesai
-              if (finished)
+              // 7) Layar Selesai (ditahan sampai adegan tertimbun selesai)
+              if (finished && !_cine.holdFinish)
                 Positioned.fill(
                   child: Container(
                     color: Colors.black.withValues(alpha: 0.65),
@@ -1152,6 +1348,7 @@ class _GameScreenState extends State<GameScreen>
       Rect stage,
       String? focusId,
       double topInset,
+      bool docked,
       ) {
     final i = order.indexOf(_me);
     if (i < 0) return const SizedBox.shrink();
@@ -1170,7 +1367,9 @@ class _GameScreenState extends State<GameScreen>
         .toDouble();
     final tagRoom = focusId == _me ? 0.0 : 58.0;
     var top = roofY - 34 * sc - tagRoom - boxH + 10;
-    top = max(top, topInset + 4);
+    // Ada emoji di rumah sendiri: naikkan cincin agar tidak saling menimpa.
+    if (kostActiveEmoji(_fx[_me]) != null) top -= kEmojiBoxH + 4;
+    top = max(top, topInset + (docked ? _dockH + 12 : 4));
     top = min(top, stage.bottom - boxH - 70);
 
     final cd = _remaining(me['parry_cooldown_until']);
@@ -1554,17 +1753,22 @@ class _GameScreenState extends State<GameScreen>
       children: [
         Icon(icon, size: 14, color: Colors.white),
         const SizedBox(width: 5),
-        Text(text,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700)),
+        Flexible(
+          child: Text(text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700)),
+        ),
       ],
     ),
   );
 
   Widget _statusTags(Map<String, dynamic>? s, bool spectator) {
     final tags = <Widget>[];
+    Widget? timerTag;
     if (spectator) {
       tags.add(_tag(Icons.visibility, 'Mode penonton', Colors.blueGrey));
     }
@@ -1572,7 +1776,7 @@ class _GameScreenState extends State<GameScreen>
       final el = _elapsedSec;
       final pr = _pressure;
       final next = 120 - (el % 120);
-      tags.add(_tag(
+      timerTag = (_tag(
         Icons.timer,
         pr > 1.0
             ? '${_clock(el)} · TEKANAN SAMPAH ×${pr.toStringAsFixed(1)} (naik lagi ${_clock(next)})'
@@ -1652,6 +1856,15 @@ class _GameScreenState extends State<GameScreen>
     if (p >= 30) {
       final (label, color) = _pollutionLevel(p);
       tags.add(_tag(Icons.cloud, label, color));
+    }
+    // Penghitung waktu paling tidak mendesak: taruh paling akhir, lalu batasi
+    // jumlah tag agar tidak menutupi pemandangan.
+    if (timerTag != null) tags.add(timerTag);
+    const maxTags = 4;
+    if (tags.length > maxTags) {
+      final extra = tags.length - (maxTags - 1);
+      tags.removeRange(maxTags - 1, tags.length);
+      tags.add(_tag(Icons.more_horiz, '+$extra info lain', Colors.blueGrey.shade700));
     }
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: tags);
   }
@@ -2022,13 +2235,11 @@ class _GameScreenState extends State<GameScreen>
     final s = _cam.scale;
     final o = _cam.origin(stage);
     final out = <Widget>[];
+    Widget? docked;
     for (var i = 0; i < order.length; i++) {
       final id = order[i];
       final st = _states[id];
       if (st == null) continue;
-
-      // Saat sudah zoom ke rumah sendiri, HUD sudah cukup: tidak perlu kartu.
-      if (id == _me && id == focusId) continue;
 
       final houseW = kStreetSlotW * s;
       final cx = o.dx + (i * kStreetSlotW + kStreetSlotW / 2) * s;
@@ -2038,19 +2249,61 @@ class _GameScreenState extends State<GameScreen>
       final rooms = _num(st['rooms_count']).toInt();
       final floors = min(3, max(1, (rooms / 4).ceil()));
       final roofY = o.dy + (236.0 - floors * 50.0) * s;
+      final emoji = kostActiveEmoji(_fx[id]);
+      final focused = id == focusId;
+
+      if (focused) {
+        final dockedRival = id != _me;
+        // Rumah yang di-zoom: kartu sasaran (lawan) ditempel di atas layar.
+        if (dockedRival) {
+          final w = min(stage.width - 24, 372.0);
+          docked = Positioned(
+            left: stage.left + (stage.width - w) / 2,
+            top: topInset + 6,
+            width: w,
+            child: _houseTag(id, st, w, canAct, me,
+                focused: true, docked: true),
+          );
+        }
+        // Emoji tampil di atas atap sebagai widget (tidak tertutup apa pun).
+        if (emoji != null) {
+          final minBottom = topInset +
+              kEmojiBoxH +
+              (dockedRival ? _dockH + 12 : 4);
+          final bottom = max(roofY - 50 * s - 4, minBottom);
+          out.add(Positioned(
+            left: cx - 34,
+            bottom: screen.height - bottom,
+            width: 68,
+            child: IgnorePointer(child: KostEmojiBubble(fx: emoji)),
+          ));
+        }
+        continue;
+      }
+
       final w = (houseW - 8).clamp(88.0, 236.0).toDouble();
-      // sedikit di atas atap agar tidak menutupi mahkota buronan
-      final bottom = max(topInset + 70.0, roofY - 34 * s - 6);
+      // Kartu + emoji ditumpuk dalam satu kolom: emoji selalu tepat di atas
+      // kartu sehingga tidak pernah tertimpa.
+      final bubbleH = emoji != null ? kEmojiBoxH : 0.0;
+      final bottom = max(topInset + 70.0 + bubbleH, roofY - 34 * s - 6);
 
       out.add(
         Positioned(
           left: cx - w / 2,
           bottom: screen.height - bottom,
           width: w,
-          child: _houseTag(id, st, w, canAct, me, focused: id == focusId),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (emoji != null)
+                IgnorePointer(child: KostEmojiBubble(fx: emoji)),
+              _houseTag(id, st, w, canAct, me, focused: false),
+            ],
+          ),
         ),
       );
     }
+    if (docked != null) out.add(docked);
     return out;
   }
 
@@ -2061,6 +2314,7 @@ class _GameScreenState extends State<GameScreen>
       bool canAct,
       Map<String, dynamic>? me, {
         required bool focused,
+        bool docked = false,
       }) {
     final isMe = id == _me;
     final live = _live(s);
@@ -2116,6 +2370,60 @@ class _GameScreenState extends State<GameScreen>
         ),
       ),
     );
+
+    if (docked) {
+      return Material(
+        elevation: 6,
+        color: const Color(0xFF1A2820).withValues(alpha: 0.95),
+        borderRadius: BorderRadius.circular(14),
+        clipBehavior: Clip.antiAlias,
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(10, 6, 8, 6),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: const Color(0xFFFFCA28).withValues(alpha: 0.7),
+              width: 1.6,
+            ),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    header,
+                    const SizedBox(height: 4),
+                    _meter(live.trash, cap, _trashColor(ratio), height: 5),
+                  ],
+                ),
+              ),
+              if (!isMe) ...[
+                const SizedBox(width: 10),
+                SizedBox(
+                  width: 156,
+                  child: out
+                      ? Center(
+                    child: Text(
+                      'TERTIMBUN',
+                      style: TextStyle(
+                        color: Colors.red.shade300,
+                        fontSize: 11,
+                        letterSpacing: 1.2,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  )
+                      : _sabotageRow(id, s, me, canAct, ratio,
+                      vertical: false),
+                ),
+              ],
+            ],
+          ),
+        ),
+      );
+    }
 
     return Material(
       elevation: 5,

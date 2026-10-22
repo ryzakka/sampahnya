@@ -485,7 +485,7 @@ class _LobbyHomeState extends State<LobbyHome>
               Icon(Icons.delete_sweep_rounded, size: 16, color: Colors.black87),
               SizedBox(width: 6),
               Text(
-                'v1.4.5 (2210:3)',
+                'v1.4.5 (2210:4)',
                 style: TextStyle(
                   color: Colors.black87,
                   fontSize: 11,
@@ -749,6 +749,8 @@ class _RoomLobbyState extends State<RoomLobby>
   final Map<String, List<KostFx>> _fx = {};
   final Map<String, bool> _prevReady = {};
   bool _playersLoaded = false;
+  final Map<String, double> _lightLv = {}; // 0..1 per pemain, menyala bertahap
+  int _lastLightMs = sceneNowMs();
 
   SupabaseClient get _db => Supabase.instance.client;
   List<Map<String, dynamic>> _players = [];
@@ -767,6 +769,16 @@ class _RoomLobbyState extends State<RoomLobby>
     _anim.addListener(() {
       _cam.step();
       final now = sceneNowMs();
+      // Jendela menyala/redup bertahap (bukan seketika) saat SIAP berubah.
+      final dt = min(0.1, max(0, now - _lastLightMs) / 1000.0);
+      _lastLightMs = now;
+      final k = 1 - exp(-dt * 2.2);
+      for (final p in _players) {
+        final pid = p['player_id'].toString();
+        final target = p['is_ready'] == true ? 1.0 : 0.0;
+        final cur = _lightLv[pid] ?? 0.0;
+        _lightLv[pid] = cur + (target - cur) * k;
+      }
       for (final l in _fx.values) {
         l.removeWhere((f) => now - f.startMs > 5000);
       }
@@ -1279,7 +1291,7 @@ class _RoomLobbyState extends State<RoomLobby>
       fx: _fx[pid] ?? const <KostFx>[],
       seed: pid.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
       // SIAP -> jendela menyala; belum siap -> gelap.
-      lights: ready ? 1.0 : 0.0,
+      lights: _lightLv[pid] ?? (ready ? 1.0 : 0.0),
     );
   }
 
@@ -1312,9 +1324,6 @@ class _RoomLobbyState extends State<RoomLobby>
             );
             _cam.setTarget(n * kStreetSlotW / 2, min(fit, 1.15));
 
-            final houses = [
-              for (var i = 0; i < n; i++) _houseFor(list[i], i),
-            ];
             final backdrop = KostSceneData(
               rooms: 0,
               maxRooms: 12,
@@ -1327,13 +1336,19 @@ class _RoomLobbyState extends State<RoomLobby>
             return Stack(
               children: [
                 Positioned.fill(
-                  child: KostStreet(
-                    houses: houses,
-                    backdrop: backdrop,
-                    camera: _cam,
-                    repaint: _anim,
-                    ids: ids,
-                    insets: insets,
+                  // dibangun ulang tiap frame agar cahaya jendela & efek halus
+                  child: AnimatedBuilder(
+                    animation: _anim,
+                    builder: (context, _) => KostStreet(
+                      houses: [
+                        for (var i = 0; i < n; i++) _houseFor(list[i], i),
+                      ],
+                      backdrop: backdrop,
+                      camera: _cam,
+                      repaint: _anim,
+                      ids: ids,
+                      insets: insets,
+                    ),
                   ),
                 ),
                 Positioned.fill(
@@ -1367,12 +1382,20 @@ class _RoomLobbyState extends State<RoomLobby>
       final cx = o.dx + (i * kStreetSlotW + kStreetSlotW / 2) * s;
       final roofY = o.dy + (236.0 - 50.0) * s;
       final w = (kStreetSlotW * s - 6).clamp(84.0, 190.0).toDouble();
-      final top = max(4.0, roofY - 47 * s - 54);
+      final emoji = kostActiveEmoji(_fx[pid]);
+      final top = max(
+          4.0, roofY - 47 * s - 54 - (emoji != null ? kEmojiBoxH : 0.0));
       out.add(Positioned(
         left: cx - w / 2,
         top: top,
         width: w,
-        child: _nameTag(p, pid == userId, pid == _hostId),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (emoji != null) KostEmojiBubble(fx: emoji),
+            _nameTag(p, pid == userId, pid == _hostId),
+          ],
+        ),
       ));
     }
     return out;
