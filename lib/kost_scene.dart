@@ -42,11 +42,15 @@ String emojiFromCode(int code) {
 }
 
 class KostFx {
-  KostFx(this.type, {this.amount = 0}) : startMs = sceneNowMs();
+  KostFx(this.type, {this.amount = 0, this.peerId}) : startMs = sceneNowMs();
 
   final FxType type;
   final int startMs;
   final double amount;
+
+  /// Lawan yang terlibat (penyerang / sasaran). Dipakai mode jalan untuk
+  /// menentukan arah lemparan sampah antar rumah bertetangga.
+  final String? peerId;
 
   int get age => sceneNowMs() - startMs;
 }
@@ -95,6 +99,30 @@ class KostSceneData {
   final bool facingRight;
   final bool isBounty; // "Juragan Teladan": target buruan bernilai bonus
   final double attackLeft; // detik tersisa jendela Tangkis (0 = tidak ada)
+
+  /// Salinan dengan [compact] / [facingRight] diganti (dipakai mode jalan).
+  KostSceneData withView({bool? compact, bool? facingRight}) => KostSceneData(
+    rooms: rooms,
+    maxRooms: maxRooms,
+    defense: defense,
+    trashRatio: trashRatio,
+    pollution: pollution,
+    wasteLevel: wasteLevel,
+    kostTier: kostTier,
+    worldEvent: worldEvent,
+    sealedLeft: sealedLeft,
+    eliminated: eliminated,
+    protectedLeft: protectedLeft,
+    haulProgress: haulProgress,
+    burnPenalty: burnPenalty,
+    smog: smog,
+    fx: fx,
+    wall: wall,
+    compact: compact ?? this.compact,
+    facingRight: facingRight ?? this.facingRight,
+    isBounty: isBounty,
+    attackLeft: attackLeft,
+  );
 }
 
 class KostStage extends StatelessWidget {
@@ -247,6 +275,14 @@ class KostPainter extends CustomPainter {
 
   double _vl = 0, _vr = _w, _vt = 0, _vb = _h;
   Rect get _view => Rect.fromLTRB(_vl, _vt, _vr, _vb);
+
+  // --- khusus mode jalan (beberapa rumah berderet dalam satu kamera) ---
+  // Pada mode normal semua bernilai default sehingga perilaku lama tidak berubah.
+  bool _street = false;
+  double _streetW = _w; // lebar total dunia (jumlah rumah x 400)
+  int _streetCars = 3;
+  double _sunX = 334;
+  double _fxScale = 1.0; // pembesar partikel cuaca saat kamera menjauh
 
   static final TextPainter _signReg = _makeSign('KOST', Colors.white);
   static final TextPainter _signExc =
@@ -424,6 +460,53 @@ class KostPainter extends CustomPainter {
     canvas.translate(ox, oy);
     canvas.scale(s);
 
+    final sh = _shakeOffset(t);
+    if (sh != Offset.zero) {
+      canvas.translate(sh.dx, sh.dy);
+    }
+
+    final p = _c01(d.pollution / 100);
+    _drawSky(canvas, t, p);
+    _drawHills(canvas, p);
+    _drawSkyline(canvas, p);
+    _drawTrees(canvas, t, p);
+    _drawGodRays(canvas, t, p);
+    _drawGround(canvas, t, p);
+    _drawWorldEventBack(canvas, t);
+    _drawCars(canvas, t);
+    _drawBuilding(canvas, t);
+    _drawBountyCrown(canvas, t);
+    _drawWasteFacility(canvas, t);
+    _drawFleeing(canvas, t);
+    _drawDefense(canvas, t);
+    _drawBags(canvas);
+    _drawRats(canvas, t);
+    _drawStinkAndFlies(canvas, t);
+    _drawCrows(canvas, t);
+    _drawTruck(canvas, t);
+    _drawInspectAndSeal(canvas, t);
+    _drawFire(canvas, t);
+    _drawCollapse(canvas);
+    _drawCrane(canvas, t);
+    _drawThrown(canvas, t);
+    _drawParry(canvas, t);
+    _drawWorldEventFront(canvas, t);
+    _drawAsh(canvas, t, p);
+    _drawHaze(canvas, p);
+    _drawConfetti(canvas, t);
+    _drawVignette(canvas, t, p);
+    _drawEmojiReactions(canvas, t);
+    _drawCinematic(canvas, t);
+
+    _drawStateFrames(canvas, t);
+
+    canvas.restore();
+  }
+
+  // --------------------------------------------- guncangan & bingkai status
+
+  /// Guncangan kamera per rumah (dibangun, tier naik, kena lemparan, dibajak...).
+  Offset _shakeOffset(double t) {
     final collapseShake = _fxProgress(FxType.collapse, 1500);
     final buildP = _fxProgress(FxType.build, 2600);
     final incomingP = _fxProgress(FxType.incoming, 1600);
@@ -462,43 +545,11 @@ class KostPainter extends CustomPainter {
       shakeX += math.sin(t * 0.55) * 0.8;
       shakeY += math.cos(t * 0.42) * 0.5;
     }
-    if (shakeX != 0 || shakeY != 0) {
-      canvas.translate(shakeX, shakeY);
-    }
+    return Offset(shakeX, shakeY);
+  }
 
-    final p = _c01(d.pollution / 100);
-    _drawSky(canvas, t, p);
-    _drawHills(canvas, p);
-    _drawSkyline(canvas, p);
-    _drawTrees(canvas, t, p);
-    _drawGodRays(canvas, t, p);
-    _drawGround(canvas, t, p);
-    _drawWorldEventBack(canvas, t);
-    _drawCars(canvas, t);
-    _drawBuilding(canvas, t);
-    _drawBountyCrown(canvas, t);
-    _drawWasteFacility(canvas, t);
-    _drawFleeing(canvas, t);
-    _drawDefense(canvas, t);
-    _drawBags(canvas);
-    _drawRats(canvas, t);
-    _drawStinkAndFlies(canvas, t);
-    _drawCrows(canvas, t);
-    _drawTruck(canvas, t);
-    _drawInspectAndSeal(canvas, t);
-    _drawFire(canvas, t);
-    _drawCollapse(canvas);
-    _drawCrane(canvas, t);
-    _drawThrown(canvas, t);
-    _drawParry(canvas, t);
-    _drawWorldEventFront(canvas, t);
-    _drawAsh(canvas, t, p);
-    _drawHaze(canvas, p);
-    _drawConfetti(canvas, t);
-    _drawVignette(canvas, t, p);
-    _drawEmojiReactions(canvas, t);
-    _drawCinematic(canvas, t);
-
+  /// Bingkai peringatan: serangan masuk, kritis, dan penggelapan saat tertimbun.
+  void _drawStateFrames(Canvas canvas, double t) {
     // Peringatan serangan masuk: bingkai merah berdenyut cepat (jendela Tangkis)
     if (d.attackLeft > 0 && !d.eliminated) {
       final pulse = 0.5 + 0.5 * math.sin(t * 20);
@@ -533,8 +584,126 @@ class KostPainter extends CustomPainter {
         ..color = const Color(0xFF1E1E1E).withValues(alpha: 0.4);
       canvas.drawRect(_view, _p);
     }
+  }
 
+  // ============================================================ MODE JALAN
+  //
+  // Beberapa rumah berderet dalam SATU adegan. Instance painter dipakai per
+  // lapisan oleh [KostStreetPainter]; setiap rumah menempati slot lebar 400
+  // pada koordinat dunia (rumah ke-i mulai di x = i * 400).
+
+  void _setView(Rect v) {
+    _vl = v.left;
+    _vr = v.right;
+    _vt = v.top;
+    _vb = v.bottom;
+  }
+
+  /// Langit, bukit, pepohonan, tanah & mobil: digambar SEKALI untuk semua rumah.
+  void paintStreetBackdrop(
+      Canvas canvas,
+      Rect view,
+      double t, {
+        required double worldW,
+        required int cars,
+        required double fxScale,
+      }) {
+    _street = true;
+    _streetW = worldW;
+    _streetCars = cars;
+    _fxScale = fxScale;
+    _sunX = view.left + view.width * 0.82;
+    _setView(view);
+    final p = _c01(d.pollution / 100);
+    _drawSky(canvas, t, p);
+    _drawHills(canvas, p);
+    _drawSkyline(canvas, p);
+    _drawTrees(canvas, t, p);
+    _drawGodRays(canvas, t, p);
+    _drawGround(canvas, t, p);
+    _drawCars(canvas, t);
+  }
+
+  /// Satu rumah beserta seluruh aksinya (koordinat lokal 0..400).
+  void paintStreetHouse(Canvas canvas, Rect view, double t) {
+    _street = true;
+    _setView(view);
+    final sh = _shakeOffset(t);
+    canvas.save();
+    if (sh != Offset.zero) {
+      canvas.translate(sh.dx, sh.dy);
+    }
+    _drawWorldEventBack(canvas, t);
+    _drawBuilding(canvas, t);
+    _drawBountyCrown(canvas, t);
+    _drawWasteFacility(canvas, t);
+    _drawFleeing(canvas, t);
+    _drawDefense(canvas, t);
+    _drawBags(canvas);
+    _drawRats(canvas, t);
+    _drawStinkAndFlies(canvas, t);
+    _drawCrows(canvas, t);
+    _drawTruck(canvas, t);
+    _drawInspectAndSeal(canvas, t);
+    _drawFire(canvas, t);
+    _drawCollapse(canvas);
+    _drawCrane(canvas, t);
+    _drawThrown(canvas, t);
+    _drawParry(canvas, t);
+    _drawConfetti(canvas, t);
     canvas.restore();
+  }
+
+  /// Hujan/banjir, abu, kabut & vinyet: sekali untuk seluruh layar.
+  void paintStreetAtmosphere(
+      Canvas canvas,
+      Rect view,
+      double t, {
+        required double worldW,
+        required double fxScale,
+      }) {
+    _street = true;
+    _streetW = worldW;
+    _fxScale = fxScale;
+    _setView(view);
+    final p = _c01(d.pollution / 100);
+    _drawWorldEventFront(canvas, t);
+    _drawAsh(canvas, t, p);
+    _drawHaze(canvas, p);
+
+    final a = 0.28 + p * 0.2;
+    _p
+      ..style = PaintingStyle.fill
+      ..shader = RadialGradient(
+        radius: 0.9,
+        colors: [
+          Colors.black.withValues(alpha: 0),
+          Colors.black.withValues(alpha: _c01(a)),
+        ],
+        stops: const [0.55, 1.0],
+      ).createShader(_view);
+    canvas.drawRect(_view, _p);
+    _p.shader = null;
+  }
+
+  /// Emoji, sorotan, bingkai peringatan & semburan api milik satu rumah.
+  void paintStreetOverlay(Canvas canvas, Rect view, double t) {
+    _street = true;
+    _setView(view);
+    final burnP = _fxProgress(FxType.burn, 4500);
+    if (burnP != null) {
+      final env = burnP < 0.12
+          ? burnP / 0.12
+          : (burnP > 0.8 ? (1 - burnP) / 0.2 : 1.0);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFFFF6D00)
+            .withValues(alpha: _c01(0.12 * env * (0.7 + 0.3 * math.sin(t * 12))));
+      canvas.drawRect(_view, _p);
+    }
+    _drawEmojiReactions(canvas, t);
+    _drawCinematic(canvas, t);
+    _drawStateFrames(canvas, t);
   }
 
   // ----------------------------------------------------------- langit
@@ -563,7 +732,7 @@ class KostPainter extends CustomPainter {
 
     final sunA =
     ((1 - p * 1.1) * (isRain ? 0.2 : 1.0)).clamp(0.1, 1.0).toDouble();
-    const sun = Offset(334, 46);
+    final sun = Offset(_sunX, 46);
     _p.color = const Color(0xFFFFF176).withValues(alpha: 0.28 * sunA);
     canvas.drawCircle(sun, 38, _p);
     if (sunA > 0.35 && !d.compact) {
@@ -589,16 +758,21 @@ class KostPainter extends CustomPainter {
     _p.color = const Color(0xFFFFD54F).withValues(alpha: sunA);
     canvas.drawCircle(sun, 16, _p);
 
-    final span = _vr - _vl;
+    // Mode jalan: awan & burung bergerak di koordinat dunia (bukan layar) agar
+    // tidak "meluncur" ketika kamera bergeser atau di-zoom.
+    final span = _street ? _streetW + 400 : _vr - _vl;
+    final spanStart = _street ? -200.0 : _vl;
     final cloudColor = _mix(
       Colors.white,
       const Color(0xFF54595E),
       _c01(p * 1.15 + (isRain ? 0.55 : 0)),
     );
-    final nClouds = d.compact ? 3 : 6;
+    final nClouds =
+    _street ? (6 * span / 450).ceil() : (d.compact ? 3 : 6);
     for (var i = 0; i < nClouds; i++) {
-      final x = ((t * (3 + i * 1.4) + i * 170) % (span + 160)) + _vl - 80;
-      final y = 30.0 + (i % 3) * 24 + (i ~/ 3) * 9;
+      final x =
+          ((t * (3 + (i % 6) * 1.4) + i * 170) % (span + 160)) + spanStart - 80;
+      final y = 30.0 + (i % 3) * 24 + ((i ~/ 3) % 2) * 9;
       final s = 0.7 + (i % 3) * 0.22;
       _p.color = cloudColor.withValues(alpha: 0.93);
       canvas.drawCircle(Offset(x, y), 13 * s, _p);
@@ -619,9 +793,12 @@ class KostPainter extends CustomPainter {
         ..strokeWidth = 1.4
         ..strokeCap = StrokeCap.round
         ..color = const Color(0xFF37474F);
-      for (var k = 0; k < 4; k++) {
-        final x = ((t * (16 + k * 5) + k * 140) % (span + 120)) + _vl - 60;
-        final y = 62.0 + k * 15 + math.sin(t * 2 + k) * 4;
+      final nBirds = _street ? math.min(16, (4 * span / 450).ceil()) : 4;
+      for (var k = 0; k < nBirds; k++) {
+        final x = ((t * (16 + (k % 4) * 5) + k * 140) % (span + 120)) +
+            spanStart -
+            60;
+        final y = 62.0 + (k % 4) * 15 + math.sin(t * 2 + k) * 4;
         final flap = math.sin(t * 9 + k * 1.3) * 3.2;
         canvas.drawLine(Offset(x - 6, y - flap), Offset(x, y), _p);
         canvas.drawLine(Offset(x, y), Offset(x + 6, y - flap), _p);
@@ -641,8 +818,9 @@ class KostPainter extends CustomPainter {
       final base = _gy - (layer == 0 ? 54 : 36);
       final amp = layer == 0 ? 20.0 : 13.0;
       final fq = layer == 0 ? 0.014 : 0.022;
-      final path = Path()..moveTo(_vl, _gy);
-      for (var x = _vl; x <= _vr + 12; x += 12) {
+      final hx0 = (_vl / 12).floor() * 12.0;
+      final path = Path()..moveTo(hx0, _gy);
+      for (var x = hx0; x <= _vr + 12; x += 12) {
         path.lineTo(
             x,
             base -
@@ -694,7 +872,7 @@ class KostPainter extends CustomPainter {
     for (var k = start; k < end; k++) {
       final h = _hh(k + 77);
       final x = k * 90.0 + 20 + (h % 30);
-      if (x > -14 && x < 414) continue;
+      if (x > -14 && x < _streetW + 14) continue;
       final sway = math.sin(t * 1.2 + k) * 1.6 * (1 - p);
       _p
         ..style = PaintingStyle.fill
@@ -712,7 +890,7 @@ class KostPainter extends CustomPainter {
     final le = (_vr / 180).ceil() + 1;
     for (var k = ls; k < le; k++) {
       final x = k * 180.0 + 62;
-      if (x > -14 && x < 414) continue;
+      if (x > -14 && x < _streetW + 14) continue;
       _p.color = const Color(0xFF546E7A);
       canvas.drawRect(Rect.fromLTWH(x - 1.5, _gy - 44, 3, 48), _p);
       canvas.drawRect(Rect.fromLTWH(x - 1.5, _gy - 46, 12, 3), _p);
@@ -820,7 +998,7 @@ class KostPainter extends CustomPainter {
       }
 
       _p
-        ..strokeWidth = 1.1
+        ..strokeWidth = 1.1 * _fxScale
         ..color = const Color(0xFFE3F2FD).withValues(alpha: 0.55);
       final nDrops = d.compact ? 18 : 55;
       final spanX = _vr - _vl;
@@ -829,11 +1007,18 @@ class KostPainter extends CustomPainter {
         final h = _hh(i + 200);
         final dx = _vl + ((h % 1000) / 1000 * spanX - t * 60) % spanX;
         final dy = _vt + ((t * 260 + h % 500) % spanY);
-        canvas.drawLine(Offset(dx, dy), Offset(dx - 4, dy + 11), _p);
+        canvas.drawLine(Offset(dx, dy),
+            Offset(dx - 4 * _fxScale, dy + 11 * _fxScale), _p);
       }
       _p.style = PaintingStyle.fill;
     } else if (ev == 'hauler_strike') {
-      for (final bx in const [135.0, 265.0]) {
+      final nHouses = math.max(1, (_streetW / _w).round());
+      for (final bx in [
+        for (var hi = 0; hi < nHouses; hi++) ...[
+          hi * _w + 135.0,
+          hi * _w + 265.0,
+        ],
+      ]) {
         _p
           ..style = PaintingStyle.fill
           ..color = const Color(0xFFFF6F00);
@@ -856,12 +1041,28 @@ class KostPainter extends CustomPainter {
             _vt + ((t * 14 + h % 300) % spanY) + math.sin(t * 3 + i) * 5;
         _p.color = const Color(0xFF69F0AE).withValues(alpha: 0.7);
         canvas.drawOval(
-            Rect.fromCenter(center: Offset(x, y), width: 5, height: 3), _p);
+            Rect.fromCenter(
+                center: Offset(x, y),
+                width: 5 * _fxScale,
+                height: 3 * _fxScale),
+            _p);
       }
     }
   }
 
   void _drawCars(Canvas canvas, double t) {
+    if (_street) {
+      // Jalan panjang: mobil melaju di koordinat dunia sepanjang seluruh deret rumah.
+      final span = _streetW + 700;
+      for (var k = 0; k < _streetCars; k++) {
+        final right = k % 2 == 0;
+        final speed = 36.0 + (k % 3) * 11;
+        final x = (t * speed + k * (span / _streetCars)) % span;
+        final cx = right ? -350 + x : _streetW + 350 - x;
+        _car(canvas, cx, right ? 296 : 281, k, right);
+      }
+      return;
+    }
     final span = _vr - _vl + 220;
     final n = d.compact ? 1 : 3;
     for (var k = 0; k < n; k++) {
@@ -3226,7 +3427,7 @@ class KostPainter extends CustomPainter {
     if (d.compact || p > 0.45 || d.eliminated || d.worldEvent == 'rain_flood') {
       return;
     }
-    const sun = Offset(334, 46);
+    final sun = Offset(_sunX, 46);
     final fade = 1 - p / 0.45;
     _p
       ..style = PaintingStyle.fill
@@ -3384,7 +3585,7 @@ class KostPainter extends CustomPainter {
       final h = _hh(i + 50);
       final x = _vl + (h % 1000) / 1000 * spanX + math.sin(t + i) * 6;
       final y = _vt + ((t * (14 + h % 18) + h % 300) % spanY);
-      canvas.drawCircle(Offset(x, y), 0.9 + (h % 3) * 0.4, _p);
+      canvas.drawCircle(Offset(x, y), (0.9 + (h % 3) * 0.4) * _fxScale, _p);
     }
   }
 
@@ -3395,5 +3596,193 @@ class KostPainter extends CustomPainter {
       ..style = PaintingStyle.fill
       ..color = const Color(0xFF6B5E4C).withValues(alpha: a.clamp(0.0, 0.7));
     canvas.drawRect(_view, _p);
+  }
+}
+// ====================================================================
+//  MODE JALAN: beberapa kost berderet bertetangga + kamera zoom
+// ====================================================================
+
+/// Lebar satu slot rumah pada koordinat dunia (rumah ke-i mulai di i * 400).
+const double kStreetSlotW = _w;
+
+/// Tinggi dunia satu adegan.
+const double kStreetSlotH = _h;
+
+/// Kamera jalan: titik dunia di tengah panggung ([cx]) dan skala (px / unit).
+/// Bergerak halus menuju target sehingga zoom antar rumah terasa mulus.
+class KostStreetCamera {
+  double cx = _w / 2;
+  double scale = 1;
+  double _tCx = _w / 2;
+  double _tScale = 1;
+  bool _ready = false;
+  int _lastMs = sceneNowMs();
+
+  double get targetCx => _tCx;
+  double get targetScale => _tScale;
+
+  /// Atur tujuan kamera. Panggilan pertama langsung "loncat" (tanpa animasi).
+  void setTarget(double cx, double scale) {
+    _tCx = cx;
+    _tScale = scale;
+    if (!_ready) {
+      this.cx = cx;
+      this.scale = scale;
+      _ready = true;
+    }
+  }
+
+  /// Dipanggil tiap frame (mis. dari listener AnimationController).
+  void step() {
+    final now = sceneNowMs();
+    final dt = math.min(0.1, math.max(0, now - _lastMs) / 1000.0);
+    _lastMs = now;
+    final k = 1 - math.exp(-dt * 8.0);
+    cx += (_tCx - cx) * k;
+    scale = math.exp(
+      math.log(scale) + (math.log(_tScale) - math.log(scale)) * k,
+    );
+    if ((_tCx - cx).abs() < 0.05) cx = _tCx;
+    if ((scale / _tScale - 1).abs() < 0.0008) scale = _tScale;
+  }
+
+  Rect stageFor(Size size, EdgeInsets insets) => Rect.fromLTRB(
+    insets.left,
+    insets.top,
+    math.max(insets.left + 40, size.width - insets.right),
+    math.max(insets.top + 40, size.height - insets.bottom),
+  );
+
+  /// Titik layar untuk koordinat dunia (0, 0).
+  Offset origin(Rect stage) =>
+      Offset(stage.center.dx - cx * scale, stage.bottom - _h * scale);
+
+  /// Indeks rumah di bawah koordinat layar [screenX] (null bila di luar deret).
+  int? houseAt(double screenX, Rect stage, int count) {
+    final wx = cx + (screenX - stage.center.dx) / scale;
+    final i = (wx / _w).floor();
+    return (i < 0 || i >= count) ? null : i;
+  }
+}
+
+/// Deret kost: [houses] digambar berdampingan di satu jalan yang sama.
+class KostStreet extends StatelessWidget {
+  const KostStreet({
+    super.key,
+    required this.houses,
+    required this.backdrop,
+    required this.camera,
+    required this.repaint,
+    this.insets = EdgeInsets.zero,
+  });
+
+  final List<KostSceneData> houses;
+
+  /// Data untuk latar bersama (polusi, kabut, event dunia).
+  final KostSceneData backdrop;
+  final KostStreetCamera camera;
+  final Listenable repaint;
+  final EdgeInsets insets;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox.expand(
+      child: CustomPaint(
+        painter: KostStreetPainter(
+          houses,
+          backdrop,
+          camera,
+          repaint,
+          insets: insets,
+        ),
+        size: Size.infinite,
+      ),
+    );
+  }
+}
+
+class KostStreetPainter extends CustomPainter {
+  KostStreetPainter(
+      this.houses,
+      this.backdrop,
+      this.camera,
+      Listenable repaint, {
+        this.insets = EdgeInsets.zero,
+      })  : _repaint = repaint,
+        super(repaint: repaint);
+
+  final List<KostSceneData> houses;
+  final KostSceneData backdrop;
+  final KostStreetCamera camera;
+  final EdgeInsets insets;
+  final Listenable _repaint;
+
+  @override
+  bool shouldRepaint(covariant KostStreetPainter oldDelegate) => true;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty || houses.isEmpty) return;
+    final t = sceneNowMs() / 1000.0;
+
+    final stage = camera.stageFor(size, insets);
+    final s = camera.scale;
+    final o = camera.origin(stage);
+    final vl = -o.dx / s - 24;
+    final vr = (size.width - o.dx) / s + 24;
+    final vt = -o.dy / s - 24;
+    final vb = (size.height - o.dy) / s + 24;
+    final view = Rect.fromLTRB(vl, vt, vr, vb);
+    final worldW = houses.length * _w;
+    final fxScale = math.max(1.0, 0.8 / s);
+    // Saat kamera jauh, detail halus dimatikan agar tetap ringan.
+    final compact = s < 0.42;
+
+    canvas.save();
+    canvas.clipRect(Offset.zero & size);
+    canvas.translate(o.dx, o.dy);
+    canvas.scale(s);
+
+    // 1) latar bersama: langit, bukit, pohon, tanah, mobil
+    KostPainter(backdrop, _repaint).paintStreetBackdrop(
+      canvas,
+      view,
+      t,
+      worldW: worldW,
+      cars: 2 + houses.length,
+      fxScale: fxScale,
+    );
+
+    // 2) rumah-rumah berderet
+    final painters = <int, KostPainter>{};
+    for (var i = 0; i < houses.length; i++) {
+      final x0 = i * _w;
+      if (x0 + _w + 140 < vl || x0 - 140 > vr) continue; // di luar layar
+      final kp = KostPainter(houses[i].withView(compact: compact), _repaint);
+      painters[i] = kp;
+      canvas.save();
+      canvas.translate(x0, 0);
+      kp.paintStreetHouse(canvas, Rect.fromLTRB(0, vt, _w, vb), t);
+      canvas.restore();
+    }
+
+    // 3) hujan / abu / kabut / vinyet, sekali untuk seluruh layar
+    KostPainter(backdrop, _repaint).paintStreetAtmosphere(
+      canvas,
+      view,
+      t,
+      worldW: worldW,
+      fxScale: fxScale,
+    );
+
+    // 4) emoji, sorotan & bingkai peringatan tiap rumah
+    for (final e in painters.entries) {
+      canvas.save();
+      canvas.translate(e.key * _w, 0);
+      e.value.paintStreetOverlay(canvas, Rect.fromLTRB(0, vt, _w, vb), t);
+      canvas.restore();
+    }
+
+    canvas.restore();
   }
 }

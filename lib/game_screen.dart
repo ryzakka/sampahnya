@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -87,6 +88,14 @@ class _GameScreenState extends State<GameScreen>
   // kunci "pemilik|waktu" serangan tertunda yang sudah memicu tick penyelesaian
   final Set<String> _tickedPending = {};
 
+  // --- jalan (kost berderet) & kamera zoom ---
+  final KostStreetCamera _cam = KostStreetCamera();
+  String? _focusId; // rumah yang di-zoom; null = lihat semua tetangga
+  bool _focusInit = false;
+  double _pinch = 1.0;
+  Offset _pinchFocal = Offset.zero;
+  int _lastWheelMs = -10000;
+
   Duration _offset = Duration.zero;
   RealtimeChannel? _channel;
   Timer? _uiTimer;
@@ -101,6 +110,8 @@ class _GameScreenState extends State<GameScreen>
     _anim =
     AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..repeat();
+    // Kamera jalan bergerak halus menuju targetnya di setiap frame.
+    _anim.addListener(_cam.step);
     _subscribe();
     _loadAll();
     _tickServer();
@@ -219,13 +230,13 @@ class _GameScreenState extends State<GameScreen>
         .subscribe();
   }
 
-  void _ensureFx(String? id, FxType t, {double amount = 0}) {
+  void _ensureFx(String? id, FxType t, {double amount = 0, String? peer}) {
     if (id == null) return;
     final list = _fx[id] ??= <KostFx>[];
     final hasRecent =
     list.any((f) => f.type == t && f.amount == amount && f.age < 650);
     if (!hasRecent) {
-      list.add(KostFx(t, amount: amount));
+      list.add(KostFx(t, amount: amount, peerId: peer));
     }
   }
 
@@ -252,16 +263,16 @@ class _GameScreenState extends State<GameScreen>
         break;
       case 'throw_launch':
       // sampah meninggalkan kost pelempar; belum mendarat (jendela Tangkis)
-        _ensureFx(actor, FxType.outgoing, amount: amt);
+        _ensureFx(actor, FxType.outgoing, amount: amt, peer: target);
         break;
       case 'throw':
       // mendarat di korban
-        _ensureFx(target, FxType.incoming, amount: amt);
+        _ensureFx(target, FxType.incoming, amount: amt, peer: actor);
         break;
       case 'parry':
       // actor = penangkis, target = pelempar yang kena pantulan
         _ensureFx(actor, FxType.parry, amount: amt);
-        _ensureFx(target, FxType.incoming, amount: amt);
+        _ensureFx(target, FxType.incoming, amount: amt, peer: actor);
         break;
       case 'inspect':
         _ensureFx(target, FxType.inspect, amount: amt);
@@ -339,6 +350,11 @@ class _GameScreenState extends State<GameScreen>
         }
         if (_events.isEmpty) {
           _events.addAll(ev.map((e) => Map<String, dynamic>.from(e)));
+        }
+        if (!_focusInit) {
+          _focusInit = true;
+          // Pemain langsung zoom ke rumahnya; penonton melihat semua tetangga.
+          _focusId = _states.containsKey(_me) ? _me : null;
         }
         _loaded = true;
       });
@@ -684,7 +700,7 @@ class _GameScreenState extends State<GameScreen>
   }
 
   KostSceneData _sceneData(String id, Map<String, dynamic> s,
-      {required bool compact}) {
+      {required bool compact, bool? facingRight}) {
     final live = _live(s);
     final cap = max(1.0, _num(s['trash_capacity']));
     return KostSceneData(
@@ -705,7 +721,7 @@ class _GameScreenState extends State<GameScreen>
       fx: _fx[id] ?? const <KostFx>[],
       wall: _wallFor(id),
       compact: compact,
-      facingRight: !compact,
+      facingRight: facingRight ?? !compact,
       isBounty: id == _bountyId,
       attackLeft: _remaining(s['pending_attack_until']),
     );
@@ -722,6 +738,63 @@ class _GameScreenState extends State<GameScreen>
           backgroundColor: color.withValues(alpha: 0.18),
         ),
       );
+
+  // ------------------------------------------------- jalan & kamera zoom
+
+  /// Urutan rumah dari kiri ke kanan. Diurutkan berdasarkan id pemain sehingga
+  /// semua pemain melihat tetangga yang sama di posisi yang sama.
+  List<String> get _order => _states.keys.toList()..sort();
+
+  void _zoomHome() =>
+      setState(() => _focusId = _states.containsKey(_me) ? _me : null);
+
+  void _zoomAll() => setState(() => _focusId = null);
+
+  void _zoomTo(String id) => setState(() => _focusId = id);
+
+  void _stepFocus(int dir) {
+    final order = _order;
+    if (order.isEmpty) return;
+    final cur = _focusId == null ? -1 : order.indexOf(_focusId!);
+    final next = cur < 0
+        ? (dir > 0 ? 0 : order.length - 1)
+        : (cur + dir).clamp(0, order.length - 1).toInt();
+    setState(() => _focusId = order[next]);
+  }
+
+  /// Arah lemparan: rumah menghadap ke tetangga yang sedang terlibat serangan.
+  bool _facingRightFor(String id, List<String> order) {
+    final mine = order.indexOf(id);
+    final list = _fx[id];
+    if (list == null || mine < 0) return true;
+    for (var i = list.length - 1; i >= 0; i--) {
+      final f = list[i];
+      if ((f.type == FxType.outgoing || f.type == FxType.incoming) &&
+          f.peerId != null) {
+        final other = order.indexOf(f.peerId!);
+        if (other >= 0 && other != mine) return other > mine;
+      }
+    }
+    return true;
+  }
+
+  void _onWheel(
+      PointerSignalEvent e, Rect stage, List<String> order, String? focusId) {
+    if (e is! PointerScrollEvent) return;
+    final now = sceneNowMs();
+    if (now - _lastWheelMs < 320) return;
+    _lastWheelMs = now;
+    if (e.scrollDelta.dy > 0) {
+      _zoomAll();
+    } else if (e.scrollDelta.dy < 0 && focusId == null) {
+      final i = _cam.houseAt(e.localPosition.dx, stage, order.length);
+      if (i != null) {
+        _zoomTo(order[i]);
+      } else {
+        _zoomHome();
+      }
+    }
+  }
 
   // ---------------------------------------------------------------- UI
 
@@ -753,15 +826,18 @@ class _GameScreenState extends State<GameScreen>
     final finished = _room['status'] == 'finished';
     final alive = me != null && me['eliminated_at'] == null;
     final canAct = alive && !finished && _activeRpc == null;
-    final myAttackLeft =
-    (me != null && alive && !finished) ? _remaining(me['pending_attack_until']) : 0.0;
-    final others = _states.entries.where((e) => e.key != _me).toList()
-      ..sort((a, b) => _name(a.key).compareTo(_name(b.key)));
+    final myAttackLeft = (me != null && alive && !finished)
+        ? _remaining(me['pending_attack_until'])
+        : 0.0;
 
-    final String? mainId =
-    me != null ? _me : (others.isNotEmpty ? others.first.key : null);
-    final mainState = mainId == null ? null : _states[mainId];
-    final rivals = me != null ? others : others.skip(1).toList();
+    // Semua rumah (termasuk milik sendiri) berderet bertetangga di satu jalan.
+    final order = _order;
+    final n = order.length;
+    final focusId =
+    (_focusId != null && _states.containsKey(_focusId)) ? _focusId : null;
+    final focusState = focusId == null ? null : _states[focusId];
+    // HUD & tag status menampilkan data pemain sendiri (penonton: rumah yang di-zoom).
+    final tagState = me ?? focusState ?? (n > 0 ? _states[order.first] : null);
 
     return Scaffold(
       backgroundColor: const Color(0xFF1B2A22),
@@ -773,41 +849,109 @@ class _GameScreenState extends State<GameScreen>
 
           final hudH = wide ? (short ? 52.0 : 64.0) : 104.0;
           final barH = wide ? (short ? 64.0 : 94.0) : 132.0;
-          final rightW = rivals.length > 1
-              ? (c.maxWidth * 0.32).clamp(280.0, 390.0).toDouble()
-              : (c.maxWidth * 0.24).clamp(220.0, 280.0).toDouble();
-          final stripH = (!wide && rivals.isNotEmpty) ? 156.0 : 0.0;
           final hasBar = me != null;
 
-          final topInset =
-              pad.top + 8 + hudH + 8 + (stripH > 0 ? stripH + 8 : 0);
+          final topInset = pad.top + 8 + hudH + 8;
           final bottomInset = (hasBar ? barH + 8 : 0.0) + pad.bottom + 8;
-          final rightInset = (wide && rivals.isNotEmpty) ? rightW + 24 : 0.0;
+          final insets =
+          EdgeInsets.fromLTRB(pad.left, topInset, pad.right, bottomInset);
+          final screen = Size(c.maxWidth, c.maxHeight);
+          final stage = _cam.stageFor(screen, insets);
 
-          final out = mainState != null && mainState['eliminated_at'] != null;
+          // --- tujuan kamera: zoom ke satu rumah, atau muat semua tetangga ---
+          final count = max(1, n);
+          final fitOne =
+          min(stage.width / kStreetSlotW, stage.height / kStreetSlotH);
+          final fitAll = min(
+            stage.width * 0.96 / (count * kStreetSlotW),
+            stage.height / kStreetSlotH,
+          );
+          final fi = focusId == null ? -1 : order.indexOf(focusId);
+          _cam.setTarget(
+            fi >= 0
+                ? fi * kStreetSlotW + kStreetSlotW / 2
+                : count * kStreetSlotW / 2,
+            fi >= 0 ? fitOne : min(fitAll, fitOne),
+          );
+
+          final houses = <KostSceneData>[
+            for (final id in order)
+              _sceneData(
+                id,
+                _states[id]!,
+                compact: false,
+                facingRight: _facingRightFor(id, order),
+              ),
+          ];
+          final backdrop = KostSceneData(
+            rooms: 0,
+            maxRooms: _maxRooms,
+            defense: 0,
+            trashRatio: 0,
+            pollution: _pollution,
+            worldEvent: _activeWorldEvent,
+            smog: _remaining(_room['smog_until']) > 0,
+          );
+
+          final focusOut =
+              focusState != null && focusState['eliminated_at'] != null;
 
           return Stack(
             children: [
-              // 1) Adegan utama
+              // 1) Jalan: seluruh kost berderet. Ketuk rumah = zoom, cubit/scroll = zoom.
               Positioned.fill(
-                child: mainState == null
+                child: n == 0
                     ? const Center(
                   child: Text('Menunggu pemain…',
                       style: TextStyle(color: Colors.white70)),
                 )
-                    : KostStage(
-                  data: _sceneData(mainId!, mainState, compact: false),
-                  repaint: _anim,
-                  insets: EdgeInsets.fromLTRB(
-                      pad.left, topInset, rightInset, bottomInset),
+                    : Listener(
+                  onPointerSignal: (e) =>
+                      _onWheel(e, stage, order, focusId),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (d) {
+                      final i = _cam.houseAt(d.localPosition.dx, stage, n);
+                      if (i != null && order[i] != focusId) {
+                        _zoomTo(order[i]);
+                      }
+                    },
+                    onScaleStart: (_) => _pinch = 1.0,
+                    onScaleUpdate: (d) {
+                      if (d.pointerCount >= 2) {
+                        _pinch = d.scale;
+                        _pinchFocal = d.localFocalPoint;
+                      }
+                    },
+                    onScaleEnd: (_) {
+                      if (_pinch < 0.8) {
+                        _zoomAll();
+                      } else if (_pinch > 1.25 && focusId == null) {
+                        final i = _cam.houseAt(_pinchFocal.dx, stage, n);
+                        if (i != null) {
+                          _zoomTo(order[i]);
+                        } else {
+                          _zoomHome();
+                        }
+                      }
+                      _pinch = 1.0;
+                    },
+                    child: KostStreet(
+                      houses: houses,
+                      backdrop: backdrop,
+                      camera: _cam,
+                      repaint: _anim,
+                      insets: insets,
+                    ),
+                  ),
                 ),
               ),
 
-              // 2) Stempel tertimbun
-              if (out)
+              // 2) Stempel tertimbun untuk rumah yang sedang di-zoom
+              if (focusOut)
                 Positioned(
-                  left: 0,
-                  right: rightInset,
+                  left: pad.left,
+                  right: pad.right,
                   top: topInset,
                   bottom: bottomInset,
                   child: IgnorePointer(child: Center(child: _stamp())),
@@ -818,7 +962,7 @@ class _GameScreenState extends State<GameScreen>
                 top: pad.top + 8,
                 left: 12 + pad.left,
                 right: 12 + pad.right,
-                child: _hud(wide, short, mainState),
+                child: _hud(wide, short, tagState),
               ),
 
               // 4) Tag Status & World Event
@@ -826,38 +970,39 @@ class _GameScreenState extends State<GameScreen>
                 left: 12 + pad.left,
                 top: topInset,
                 child: IgnorePointer(
-                  child: _statusTags(mainState, me == null),
+                  child: _statusTags(tagState, me == null),
                 ),
               ),
 
-              // 5) Panel Lawan
-              if (wide && rivals.isNotEmpty)
+              // 5) Kartu nama + sabotase menempel di atas atap tiap rumah.
+              //    Dibangun ulang tiap frame agar mengikuti kamera saat zoom.
+              Positioned.fill(
+                child: AnimatedBuilder(
+                  animation: _anim,
+                  builder: (context, _) => Stack(
+                    clipBehavior: Clip.none,
+                    children: _houseTags(
+                      order,
+                      stage,
+                      screen,
+                      canAct,
+                      me,
+                      focusId,
+                      topInset,
+                    ),
+                  ),
+                ),
+              ),
+
+              // 5b) Kontrol zoom: Rumahku / Semua tetangga / geser rumah
+              if (n > 0)
                 Positioned(
                   right: 12 + pad.right,
-                  top: pad.top + 8 + hudH + 10,
-                  bottom: pad.bottom + 12,
-                  width: rightW,
-                  child: _rivalPanel(rivals, canAct, me, rightW),
-                ),
-              if (!wide && rivals.isNotEmpty)
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  top: pad.top + 8 + hudH + 8,
-                  height: stripH,
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: EdgeInsets.symmetric(horizontal: 12 + pad.left),
-                    itemCount: rivals.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 10),
-                    itemBuilder: (_, i) => Align(
-                      alignment: Alignment.topCenter,
-                      child: SizedBox(
-                        width: 152,
-                        child: _rivalCard(
-                            rivals[i].key, rivals[i].value, canAct, me),
-                      ),
-                    ),
+                  top: topInset + max(8.0, (stage.height - 180) / 2),
+                  child: _zoomPanel(
+                    hasHome: me != null,
+                    focusId: focusId,
+                    count: n,
                   ),
                 ),
 
@@ -865,7 +1010,7 @@ class _GameScreenState extends State<GameScreen>
               if (hasBar) ...[
                 Positioned(
                   left: 12 + pad.left,
-                  right: (wide ? rightInset : 12) + pad.right,
+                  right: 12 + pad.right,
                   bottom: bottomInset - 2,
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -881,7 +1026,7 @@ class _GameScreenState extends State<GameScreen>
                 ),
                 Positioned(
                   left: 12 + pad.left,
-                  right: (wide ? rightInset : 12) + pad.right,
+                  right: 12 + pad.right,
                   bottom: pad.bottom + 8,
                   child: Center(
                     child: ConstrainedBox(
@@ -896,7 +1041,7 @@ class _GameScreenState extends State<GameScreen>
               if (myAttackLeft > 0)
                 Positioned(
                   left: 12 + pad.left,
-                  right: (wide ? rightInset : 12) + pad.right,
+                  right: 12 + pad.right,
                   bottom: bottomInset + 44,
                   child: Center(child: _tangkisButton(me!, myAttackLeft)),
                 ),
@@ -1721,58 +1866,172 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  // ------------------------------------------------ lawan & 3 tombol sabotase
+  // ------------------------------- kartu rumah (nama + 3 tombol sabotase)
 
-  Widget _rivalPanel(
-      List<MapEntry<String, Map<String, dynamic>>> rivals,
+  /// Kartu di atas atap tiap rumah yang terlihat. Posisinya dihitung dari kamera
+  /// yang sedang berjalan sehingga ikut bergerak mulus saat zoom.
+  List<Widget> _houseTags(
+      List<String> order,
+      Rect stage,
+      Size screen,
       bool canAct,
       Map<String, dynamic>? me,
-      double w,
+      String? focusId,
+      double topInset,
       ) {
-    final cols = rivals.length > 1 ? 2 : 1;
-    const gap = 8.0;
-    final cw = (w - gap * (cols - 1)) / cols;
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(left: 4, bottom: 6),
-            child: Text(
-              'Kost Lawan (Sabotase)',
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                shadows: [Shadow(blurRadius: 4, color: Colors.black54)],
+    final s = _cam.scale;
+    final o = _cam.origin(stage);
+    final out = <Widget>[];
+    for (var i = 0; i < order.length; i++) {
+      final id = order[i];
+      final st = _states[id];
+      if (st == null) continue;
+
+      // Saat sudah zoom ke rumah sendiri, HUD sudah cukup: tidak perlu kartu.
+      if (id == _me && id == focusId) continue;
+
+      final houseW = kStreetSlotW * s;
+      final cx = o.dx + (i * kStreetSlotW + kStreetSlotW / 2) * s;
+      // hanya rumah yang bagian tengahnya terlihat di layar
+      if (cx < stage.left + 24 || cx > stage.right - 24) continue;
+
+      final rooms = _num(st['rooms_count']).toInt();
+      final floors = min(3, max(1, (rooms / 4).ceil()));
+      final roofY = o.dy + (236.0 - floors * 50.0) * s;
+      final w = (houseW - 8).clamp(88.0, 236.0).toDouble();
+      // sedikit di atas atap agar tidak menutupi mahkota buronan
+      final bottom = max(topInset + 70.0, roofY - 34 * s - 6);
+
+      out.add(
+        Positioned(
+          left: cx - w / 2,
+          bottom: screen.height - bottom,
+          width: w,
+          child: _houseTag(id, st, w, canAct, me, focused: id == focusId),
+        ),
+      );
+    }
+    return out;
+  }
+
+  Widget _houseTag(
+      String id,
+      Map<String, dynamic> s,
+      double w,
+      bool canAct,
+      Map<String, dynamic>? me, {
+        required bool focused,
+      }) {
+    final isMe = id == _me;
+    final live = _live(s);
+    final cap = max(1.0, _num(s['trash_capacity']));
+    final ratio = live.trash / cap;
+    final out = s['eliminated_at'] != null;
+    final wl = _num(s['waste_level']).toInt();
+    final rooms = _num(s['rooms_count']).toInt();
+    final isBounty = id == _bountyId;
+    final revenge = _hasRevenge(me, id);
+    final narrow = w < 130;
+
+    final header = InkWell(
+      onTap: focused ? null : () => _zoomTo(id),
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: _wallFor(id),
+                shape: BoxShape.circle,
               ),
             ),
-          ),
-          Wrap(
-            spacing: gap,
-            runSpacing: gap,
-            children: [
-              for (final e in rivals)
-                SizedBox(
-                  width: cw,
-                  child: _rivalCard(e.key, e.value, canAct, me),
+            const SizedBox(width: 5),
+            Flexible(
+              child: Text(
+                '${isBounty ? '👑 ' : ''}${revenge ? '🔥 ' : ''}${_name(id)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isMe ? const Color(0xFFFFCA28) : Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
                 ),
+              ),
+            ),
+            if (!narrow) ...[
+              const SizedBox(width: 6),
+              Text(
+                '🏠$rooms ♻️$wl',
+                style: const TextStyle(
+                  color: Colors.white70,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ],
+          ],
+        ),
+      ),
+    );
+
+    return Material(
+      elevation: 5,
+      color: const Color(0xFF1A2820).withValues(alpha: 0.92),
+      borderRadius: BorderRadius.circular(12),
+      clipBehavior: Clip.antiAlias,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(6, 4, 6, 6),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: focused
+                ? const Color(0xFFFFCA28).withValues(alpha: 0.7)
+                : Colors.white.withValues(alpha: 0.14),
+            width: focused ? 1.6 : 1,
           ),
-        ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            header,
+            const SizedBox(height: 3),
+            _meter(live.trash, cap, _trashColor(ratio), height: 4),
+            if (!isMe) ...[
+              const SizedBox(height: 5),
+              if (out)
+                Center(
+                  child: Text(
+                    'TERTIMBUN',
+                    style: TextStyle(
+                      color: Colors.red.shade300,
+                      fontSize: 11,
+                      letterSpacing: 1.2,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                )
+              else
+                _sabotageRow(id, s, me, canAct, ratio, vertical: narrow),
+            ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _rivalCard(
+  /// Tiga tombol sabotase ke satu lawan: Lempar Sampah, Sidak Dinas, Bajak Truk.
+  Widget _sabotageRow(
       String id,
       Map<String, dynamic> s,
-      bool canAct,
       Map<String, dynamic>? me,
-      ) {
-    final live = _live(s);
-    final cap = max(1.0, _num(s['trash_capacity']));
-    final ratio = live.trash / cap;
+      bool canAct,
+      double ratio, {
+        required bool vertical,
+      }) {
     final out = s['eliminated_at'] != null;
     final prot = _remaining(s['protected_until']);
     final rivalWl = _num(s['waste_level']).toInt();
@@ -1819,154 +2078,118 @@ class _GameScreenState extends State<GameScreen>
         mine != null &&
         mine.money >= hijackCost;
 
-    return Material(
-      elevation: 5,
-      color: const Color(0xFF1A2820),
-      borderRadius: BorderRadius.circular(14),
-      clipBehavior: Clip.antiAlias,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Stack(
-            children: [
-              AspectRatio(
-                aspectRatio: 4 / 3,
-                child: KostStage(
-                  data: _sceneData(id, s, compact: true),
-                  repaint: _anim,
-                ),
-              ),
-              Positioned(
-                left: 6,
-                top: 6,
-                right: 6,
-                child: Row(
-                  children: [
-                    Flexible(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.6),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Container(
-                              width: 8,
-                              height: 8,
-                              decoration: BoxDecoration(
-                                color: _wallFor(id),
-                                shape: BoxShape.circle,
-                              ),
-                            ),
-                            const SizedBox(width: 5),
-                            Flexible(
-                              child: Text(
-                                '${isBounty ? '👑 ' : ''}${revenge ? '🔥 ' : ''}${_name(id)}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.55),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Text(
-                        '🏠${_num(s['rooms_count']).toInt()} ♻️$rivalWl',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: _meter(live.trash, cap, _trashColor(ratio), height: 5),
-              ),
-              if (out)
-                Positioned.fill(
-                  child: Center(
-                    child: Text('TERTIMBUN',
-                        style: TextStyle(
-                            color: Colors.red.shade300,
-                            fontSize: 12,
-                            letterSpacing: 1.5,
-                            fontWeight: FontWeight.w900,
-                            shadows: const [
-                              Shadow(blurRadius: 4, color: Colors.black)
-                            ])),
-                  ),
-                ),
-            ],
+    return Row(
+      children: [
+        Expanded(
+          child: _sabotageBtn(
+            icon: Icons.rocket_launch_rounded,
+            label: rivalPending
+                ? '…'
+                : (throwLeft > 0 ? '${throwLeft.ceil()}s' : '10'),
+            tooltip:
+            'Lempar Sampah (Biaya 10). Lawan punya 2,5 dtk untuk Tangkis & memantulkannya.${isBounty ? ' Buronan: +40 koin bila mendarat.' : ''}',
+            color: const Color(0xFFFF7043),
+            enabled: canThrow,
+            vertical: vertical,
+            onTap: () => _act('throw_trash', {'p_target': id}),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(6, 5, 6, 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _sabotageBtn(
-                    icon: Icons.rocket_launch_rounded,
-                    label: rivalPending
-                        ? '…'
-                        : (throwLeft > 0 ? '${throwLeft.ceil()}s' : '10'),
-                    tooltip:
-                    'Lempar Sampah (Biaya 10). Lawan punya 2,5 dtk untuk Tangkis & memantulkannya.${isBounty ? ' Buronan: +40 koin bila mendarat.' : ''}',
-                    color: const Color(0xFFFF7043),
-                    enabled: canThrow,
-                    onTap: () => _act('throw_trash', {'p_target': id}),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: _sabotageBtn(
-                    icon: Icons.policy_rounded,
-                    label: (sabLeft > 0 && !revenge)
-                        ? '${sabLeft.ceil()}s'
-                        : '$inspectCost',
-                    tooltip:
-                    'Kirim Sidak Dinas (Biaya $inspectCost${isBounty ? ' · Buronan -30%, denda 35%' : ''}${revenge ? ' · Dendam -50%' : ''} · Aktif bila lawan habis bakar sampah / pakai Insinerator Polusi / sampah >70% · bisa ditangkis)',
-                    color: const Color(0xFFE53935),
-                    enabled: canInspect,
-                    onTap: () => _act('sabotage_inspect', {'p_target': id}),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: _sabotageBtn(
-                    icon: Icons.u_turn_left_rounded,
-                    label: (sabLeft > 0 && !revenge)
-                        ? '${sabLeft.ceil()}s'
-                        : '$hijackCost',
-                    tooltip:
-                    'Bajak Truk Sampah Lawan (Biaya $hijackCost${revenge ? ' · Dendam -50%' : ''} · Aktif saat truk lawan sedang mengangkut · tidak bisa ditangkis)',
-                    color: const Color(0xFFFFB300),
-                    enabled: canHijack,
-                    onTap: () => _act('sabotage_hijack', {'p_target': id}),
-                  ),
-                ),
-              ],
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: _sabotageBtn(
+            icon: Icons.policy_rounded,
+            label: (sabLeft > 0 && !revenge)
+                ? '${sabLeft.ceil()}s'
+                : '$inspectCost',
+            tooltip:
+            'Kirim Sidak Dinas (Biaya $inspectCost${isBounty ? ' · Buronan -30%, denda 35%' : ''}${revenge ? ' · Dendam -50%' : ''} · Aktif bila lawan habis bakar sampah / pakai Insinerator Polusi / sampah >70% · bisa ditangkis)',
+            color: const Color(0xFFE53935),
+            enabled: canInspect,
+            vertical: vertical,
+            onTap: () => _act('sabotage_inspect', {'p_target': id}),
+          ),
+        ),
+        const SizedBox(width: 4),
+        Expanded(
+          child: _sabotageBtn(
+            icon: Icons.u_turn_left_rounded,
+            label: (sabLeft > 0 && !revenge)
+                ? '${sabLeft.ceil()}s'
+                : '$hijackCost',
+            tooltip:
+            'Bajak Truk Sampah Lawan (Biaya $hijackCost${revenge ? ' · Dendam -50%' : ''} · Aktif saat truk lawan sedang mengangkut · tidak bisa ditangkis)',
+            color: const Color(0xFFFFB300),
+            enabled: canHijack,
+            vertical: vertical,
+            onTap: () => _act('sabotage_hijack', {'p_target': id}),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // --------------------------------------------------------- kontrol zoom
+
+  Widget _zoomPanel({
+    required bool hasHome,
+    required String? focusId,
+    required int count,
+  }) {
+    final overview = focusId == null;
+    final atHome = focusId != null && focusId == _me;
+
+    Widget btn(IconData icon, String tip, bool active, VoidCallback? onTap) {
+      return Tooltip(
+        message: tip,
+        child: Material(
+          color: active ? const Color(0xFFFFCA28) : Colors.transparent,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: onTap,
+            child: SizedBox(
+              width: 40,
+              height: 40,
+              child: Icon(
+                icon,
+                size: 22,
+                color: active
+                    ? Colors.black87
+                    : (onTap == null ? Colors.white30 : Colors.white),
+              ),
             ),
           ),
+        ),
+      );
+    }
+
+    return _glass(
+      padding: const EdgeInsets.all(4),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (hasHome) btn(Icons.home_rounded, 'Zoom ke rumahku', atHome, _zoomHome),
+          btn(
+            Icons.holiday_village_rounded,
+            'Lihat semua tetangga',
+            overview,
+            count > 1 ? _zoomAll : null,
+          ),
+          if (count > 1) ...[
+            const SizedBox(height: 2),
+            btn(
+              Icons.chevron_left_rounded,
+              'Rumah sebelumnya',
+              false,
+              overview ? null : () => _stepFocus(-1),
+            ),
+            btn(
+              Icons.chevron_right_rounded,
+              'Rumah berikutnya',
+              false,
+              overview ? null : () => _stepFocus(1),
+            ),
+          ],
         ],
       ),
     );
@@ -1979,24 +2202,44 @@ class _GameScreenState extends State<GameScreen>
     required Color color,
     required bool enabled,
     required VoidCallback onTap,
+    bool vertical = false,
   }) {
     return Tooltip(
       message: tooltip,
       child: SizedBox(
-        height: 28,
+        height: vertical ? 38 : 28,
         child: FilledButton(
           style: FilledButton.styleFrom(
             backgroundColor:
             enabled ? color : Colors.white.withValues(alpha: 0.08),
             foregroundColor: enabled ? Colors.white : Colors.white38,
-            padding: const EdgeInsets.symmetric(horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 2),
             minimumSize: Size.zero,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(8),
             ),
           ),
           onPressed: enabled ? onTap : null,
-          child: Row(
+          // Kartu sempit (tampilan semua tetangga di layar kecil): ikon di atas, angka di bawah.
+          child: vertical
+              ? Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 13),
+              FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: const TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          )
+              : Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(icon, size: 13),
