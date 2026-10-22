@@ -26,6 +26,7 @@ class _GameScreenState extends State<GameScreen>
     Color(0xFFF4CFC4),
     Color(0xFFD1DCF2),
   ];
+  static const _ink = Color(0xFF14201A); // warna kaca gelap HUD
 
   SupabaseClient get _db => Supabase.instance.client;
   String get _me => _db.auth.currentUser?.id ?? '';
@@ -38,6 +39,7 @@ class _GameScreenState extends State<GameScreen>
   // efek visual per pemain (dipicu event realtime) & durasi truk
   final Map<String, List<KostFx>> _fx = {};
   final Map<String, double> _haulTotal = {};
+  int _lastEventMs = -100000;
 
   Duration _offset = Duration.zero; // jam server - jam klien
   RealtimeChannel? _channel;
@@ -124,6 +126,7 @@ class _GameScreenState extends State<GameScreen>
         final ev = Map<String, dynamic>.from(r);
         _addFx(ev);
         setState(() {
+          _lastEventMs = sceneNowMs();
           _events.insert(0, ev);
           if (_events.length > 20) _events.removeLast();
         });
@@ -398,7 +401,7 @@ class _GameScreenState extends State<GameScreen>
           value: (value / maxValue).clamp(0.0, 1.0).toDouble(),
           minHeight: height,
           color: color,
-          backgroundColor: color.withValues(alpha: 0.15),
+          backgroundColor: color.withValues(alpha: 0.18),
         ),
       );
 
@@ -406,10 +409,9 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   Widget build(BuildContext context) {
-    final appBar = AppBar(title: Text('Ruangan ${widget.roomCode}'));
     if (!_loaded) {
       return Scaffold(
-        appBar: appBar,
+        appBar: AppBar(title: Text('Ruangan ${widget.roomCode}')),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
@@ -421,99 +423,522 @@ class _GameScreenState extends State<GameScreen>
     final others = _states.entries.where((e) => e.key != _me).toList()
       ..sort((a, b) => _name(a.key).compareTo(_name(b.key)));
 
+    // penonton: lawan pertama dijadikan sorotan utama
+    final String? mainId =
+    me != null ? _me : (others.isNotEmpty ? others.first.key : null);
+    final mainState = mainId == null ? null : _states[mainId];
+    final rivals = me != null ? others : others.skip(1).toList();
+
     return Scaffold(
-      appBar: appBar,
+      backgroundColor: const Color(0xFF1B2A22),
       body: LayoutBuilder(
         builder: (context, c) {
-          final wide = c.maxWidth >= 820;
-          return Center(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxWidth: wide ? 1280 : 640),
-              child: wide
-                  ? _wideBody(me, others, canAct, finished)
-                  : _narrowBody(me, others, canAct, finished),
-            ),
+          final pad = MediaQuery.of(context).padding;
+          final short = c.maxHeight < 520;
+          final wide = c.maxWidth >= 760 && c.maxWidth >= c.maxHeight * 1.1;
+
+          final hudH = wide ? (short ? 50.0 : 62.0) : 100.0;
+          final barH = wide ? (short ? 60.0 : 100.0) : 84.0;
+          final rightW = rivals.length > 1
+              ? (c.maxWidth * 0.3).clamp(270.0, 380.0).toDouble()
+              : (c.maxWidth * 0.22).clamp(210.0, 270.0).toDouble();
+          final stripH = (!wide && rivals.isNotEmpty) ? 146.0 : 0.0;
+          final hasBar = me != null;
+
+          final topInset =
+              pad.top + 8 + hudH + 8 + (stripH > 0 ? stripH + 8 : 0);
+          final bottomInset = (hasBar ? barH + 8 : 0.0) + pad.bottom + 8;
+          final rightInset = (wide && rivals.isNotEmpty) ? rightW + 24 : 0.0;
+
+          final out = mainState != null && mainState['eliminated_at'] != null;
+
+          return Stack(
+            children: [
+              // 1) adegan memenuhi layar
+              Positioned.fill(
+                child: mainState == null
+                    ? const Center(
+                  child: Text('Menunggu pemain…',
+                      style: TextStyle(color: Colors.white70)),
+                )
+                    : KostStage(
+                  data: _sceneData(mainId!, mainState, compact: false),
+                  repaint: _anim,
+                  insets: EdgeInsets.fromLTRB(
+                      pad.left, topInset, rightInset, bottomInset),
+                ),
+              ),
+
+              // 2) stempel tertimbun
+              if (out)
+                Positioned(
+                  left: 0,
+                  right: rightInset,
+                  top: topInset,
+                  bottom: bottomInset,
+                  child: IgnorePointer(child: Center(child: _stamp())),
+                ),
+
+              // 3) HUD
+              Positioned(
+                top: pad.top + 8,
+                left: 12 + pad.left,
+                right: 12 + pad.right,
+                child: _hud(wide, short, mainState),
+              ),
+
+              // 4) status / peringatan
+              Positioned(
+                left: 12 + pad.left,
+                top: topInset,
+                child: IgnorePointer(
+                  child: _statusTags(mainState, me == null),
+                ),
+              ),
+
+              // 5) lawan: kisi kecil di kanan (lebar) / strip atas (sempit)
+              if (wide && rivals.isNotEmpty)
+                Positioned(
+                  right: 12 + pad.right,
+                  top: pad.top + 8 + hudH + 10,
+                  bottom: pad.bottom + 12,
+                  width: rightW,
+                  child: _rivalPanel(rivals, canAct, me, rightW),
+                ),
+              if (!wide && rivals.isNotEmpty)
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: pad.top + 8 + hudH + 8,
+                  height: stripH,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    padding: EdgeInsets.symmetric(horizontal: 12 + pad.left),
+                    itemCount: rivals.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (_, i) => Align(
+                      alignment: Alignment.topCenter,
+                      child: SizedBox(
+                        width: 128,
+                        child: _rivalCard(
+                            rivals[i].key, rivals[i].value, canAct, me),
+                      ),
+                    ),
+                  ),
+                ),
+
+              // 6) kabar singkat + bilah aksi
+              if (hasBar) ...[
+                Positioned(
+                  left: 12 + pad.left,
+                  right: (wide ? rightInset : 12) + pad.right,
+                  bottom: bottomInset - 4,
+                  child: IgnorePointer(child: Center(child: _eventToast())),
+                ),
+                Positioned(
+                  left: 12 + pad.left,
+                  right: (wide ? rightInset : 12) + pad.right,
+                  bottom: pad.bottom + 8,
+                  child: Center(
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 700),
+                      child: _actionBar(me, canAct,
+                          wide: wide, short: short),
+                    ),
+                  ),
+                ),
+              ],
+
+              // 7) permainan selesai
+              if (finished)
+                Positioned.fill(
+                  child: Container(
+                    color: Colors.black.withValues(alpha: 0.55),
+                    alignment: Alignment.center,
+                    padding: const EdgeInsets.all(20),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 420),
+                      child: _finishedCard(),
+                    ),
+                  ),
+                ),
+            ],
           );
         },
       ),
     );
   }
 
-  /// Layar lebar: kiri = kost pemain (besar), kanan = kisi-kisi lawan.
-  Widget _wideBody(
-      Map<String, dynamic>? me,
-      List<MapEntry<String, Map<String, dynamic>>> others,
-      bool canAct,
-      bool finished,
-      ) {
-    return Column(
+  // ------------------------------------------------------------ elemen HUD
+
+  Widget _glass({
+    required Widget child,
+    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  }) {
+    return Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: _ink.withValues(alpha: 0.66),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+      ),
+      child: child,
+    );
+  }
+
+  Widget _hudStat(IconData icon, String text) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+    decoration: BoxDecoration(
+      color: Colors.white.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(20),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-          child: _topBar(finished),
-        ),
+        Icon(icon, size: 14, color: Colors.white70),
+        const SizedBox(width: 4),
+        Text(text,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+      ],
+    ),
+  );
+
+  Widget _moneyChip(Map<String, dynamic> s) {
+    final live = _live(s);
+    final out = s['eliminated_at'] != null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Icon(Icons.payments, size: 22, color: Color(0xFFFFC107)),
+        const SizedBox(width: 6),
+        Text(live.money.floor().toString(),
+            style: const TextStyle(
+                color: Colors.white, fontSize: 21, fontWeight: FontWeight.w800)),
+        if (!out) ...[
+          const SizedBox(width: 6),
+          Text('+${_num(s['income_rate']).toStringAsFixed(1)}/dtk',
+              style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        ],
+      ],
+    );
+  }
+
+  Widget _hudMeter({
+    required IconData icon,
+    required String label,
+    required String value,
+    required double v,
+    required double maxV,
+    required Color color,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: color),
+        const SizedBox(width: 8),
         Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 6,
-                  child: LayoutBuilder(
-                    builder: (context, c) {
-                      // skala adegan agar tombol aksi tetap terlihat
-                      final sceneW = min(
-                        c.maxWidth,
-                        max(340.0, (c.maxHeight - 290) * 4 / 3),
-                      );
-                      return SingleChildScrollView(
-                        child: _myPanel(me, canAct, sceneMaxWidth: sceneW),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  flex: 4,
-                  child: SingleChildScrollView(
-                    child: _rightPanel(others, canAct, me),
-                  ),
-                ),
-              ],
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(label,
+                      style: const TextStyle(color: Colors.white70, fontSize: 11)),
+                  const Spacer(),
+                  Text(value,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+              const SizedBox(height: 3),
+              _meter(v, maxV, color, height: 8),
+            ],
           ),
         ),
       ],
     );
   }
 
-  /// Layar sempit (HP portrait): ditumpuk ke bawah.
-  Widget _narrowBody(
-      Map<String, dynamic>? me,
-      List<MapEntry<String, Map<String, dynamic>>> others,
-      bool canAct,
-      bool finished,
-      ) {
-    return ListView(
-      padding: const EdgeInsets.all(12),
-      children: [
-        _topBar(finished),
-        const SizedBox(height: 12),
-        _myPanel(me, canAct),
-        const SizedBox(height: 16),
-        _rightPanel(others, canAct, me),
-      ],
+  Widget _hud(bool wide, bool short, Map<String, dynamic>? s) {
+    final p = _pollution;
+    final pc = _pollutionLevel(p).$2;
+
+    final back = IconButton(
+      onPressed: () => Navigator.of(context).maybePop(),
+      icon: const Icon(Icons.arrow_back, color: Colors.white),
+      visualDensity: VisualDensity.compact,
+      tooltip: 'Kembali',
+    );
+    final history = IconButton(
+      onPressed: _showFeed,
+      icon: const Icon(Icons.history, color: Colors.white),
+      visualDensity: VisualDensity.compact,
+      tooltip: 'Kabar terbaru',
+    );
+    final code = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(widget.roomCode,
+          style: const TextStyle(
+              color: Colors.white,
+              fontSize: 12,
+              letterSpacing: 2,
+              fontWeight: FontWeight.w800)),
+    );
+
+    Widget? trashMeter;
+    Widget? stats;
+    if (s != null) {
+      final live = _live(s);
+      final cap = max(1.0, _num(s['trash_capacity']));
+      final ratio = live.trash / cap;
+      trashMeter = _hudMeter(
+        icon: Icons.delete,
+        label: 'Sampah',
+        value: '${live.trash.floor()}/${cap.floor()}',
+        v: live.trash,
+        maxV: cap,
+        color: _trashColor(ratio),
+      );
+      stats = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _hudStat(Icons.meeting_room,
+              '${_num(s['rooms_count']).toInt()}/$_maxRooms'),
+          const SizedBox(width: 6),
+          _hudStat(Icons.shield,
+              '${_num(s['defense']).toInt()}/$_maxDefense'),
+        ],
+      );
+    }
+    final polMeter = _hudMeter(
+      icon: Icons.cloud,
+      label: 'Polusi',
+      value: '${p.round()}%',
+      v: p,
+      maxV: 100,
+      color: pc,
+    );
+
+    if (wide) {
+      return _glass(
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: short ? 4 : 8),
+        child: Row(
+          children: [
+            back,
+            code,
+            const SizedBox(width: 14),
+            if (s != null) ...[
+              _moneyChip(s),
+              const SizedBox(width: 14),
+              stats!,
+              const SizedBox(width: 18),
+              Expanded(child: trashMeter!),
+              const SizedBox(width: 18),
+            ],
+            Expanded(child: polMeter),
+            const SizedBox(width: 4),
+            history,
+          ],
+        ),
+      );
+    }
+
+    return _glass(
+      padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              back,
+              code,
+              const SizedBox(width: 8),
+              Expanded(
+                child: s == null
+                    ? const SizedBox.shrink()
+                    : FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: _moneyChip(s),
+                ),
+              ),
+              history,
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: Row(
+              children: [
+                if (trashMeter != null) ...[
+                  Expanded(child: trashMeter),
+                  const SizedBox(width: 14),
+                ],
+                Expanded(child: polMeter),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _topBar(bool finished) {
-    return Column(
+  Widget _tag(IconData icon, String text, Color color) => Container(
+    margin: const EdgeInsets.only(bottom: 4),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.94),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
-        if (finished) _finishedCard(),
-        if (!finished && _remaining(_room['smog_until']) > 0) _smogBanner(),
-        _pollutionCard(),
+        Icon(icon, size: 14, color: Colors.white),
+        const SizedBox(width: 5),
+        Text(text,
+            style: const TextStyle(
+                color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
       ],
+    ),
+  );
+
+  Widget _statusTags(Map<String, dynamic>? s, bool spectator) {
+    final tags = <Widget>[];
+    if (spectator) {
+      tags.add(_tag(Icons.visibility, 'Mode penonton', Colors.blueGrey));
+    }
+    if (_remaining(_room['smog_until']) > 0) {
+      tags.add(_tag(
+        Icons.masks,
+        'KABUT ASAP! Bakar diblokir · ${_remaining(_room['smog_until']).ceil()} dtk',
+        Colors.red.shade700,
+      ));
+    }
+    if (s != null) {
+      final live = _live(s);
+      final cap = max(1.0, _num(s['trash_capacity']));
+      final ratio = live.trash / cap;
+      final out = s['eliminated_at'] != null;
+      if (!out && ratio >= 0.5) {
+        tags.add(_tag(Icons.warning_amber_rounded, _trashStage(ratio),
+            _trashColor(ratio)));
+      }
+      final penalty = _remaining(s['burn_penalty_until']);
+      if (!out && penalty > 0) {
+        tags.add(_tag(
+          Icons.local_fire_department,
+          'Penalti bakar x${_num(s['burn_stacks']).toInt()} · ${penalty.ceil()} dtk',
+          Colors.deepOrange,
+        ));
+      }
+      final prot = _remaining(s['protected_until']);
+      if (!out && prot > 0) {
+        tags.add(_tag(Icons.shield, 'Dilindungi ${prot.ceil()} dtk',
+            Colors.amber.shade800));
+      }
+    }
+    final p = _pollution;
+    if (p >= 30) {
+      final (label, color) = _pollutionLevel(p);
+      tags.add(_tag(Icons.cloud, label, color));
+    }
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: tags);
+  }
+
+  Widget _stamp() => Transform.rotate(
+    angle: -0.12,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 8),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.red.shade400, width: 3),
+        borderRadius: BorderRadius.circular(10),
+        color: Colors.black.withValues(alpha: 0.5),
+      ),
+      child: Text('TERTIMBUN',
+          style: TextStyle(
+              color: Colors.red.shade300,
+              fontSize: 26,
+              letterSpacing: 3,
+              fontWeight: FontWeight.w900)),
+    ),
+  );
+
+  Widget _eventToast() {
+    final recent = sceneNowMs() - _lastEventMs < 6000;
+    String text = '';
+    IconData icon = Icons.info_outline;
+    Color color = Colors.grey;
+    if (_events.isNotEmpty) {
+      text = _eventText(_events.first);
+      final ic = _eventIcon(_events.first['type']);
+      icon = ic.$1;
+      color = ic.$2;
+    }
+    return AnimatedOpacity(
+      opacity: recent && text.isNotEmpty ? 1 : 0,
+      duration: const Duration(milliseconds: 300),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+          color: _ink.withValues(alpha: 0.78),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: Color.lerp(color, Colors.white, 0.4)),
+            const SizedBox(width: 8),
+            Flexible(
+              child: Text(text,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 12.5)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showFeed() {
+    final list = _events.where((e) => _eventText(e).isNotEmpty).toList();
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 440),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+            children: [
+              const Text('Kabar terbaru',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 10),
+              if (list.isEmpty) const Text('Belum ada kejadian.'),
+              for (final e in list)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(_eventIcon(e['type']).$1,
+                          size: 18, color: _eventIcon(e['type']).$2),
+                      const SizedBox(width: 10),
+                      Expanded(child: Text(_eventText(e))),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -524,320 +949,44 @@ class _GameScreenState extends State<GameScreen>
         : '${_name(winner)} menang. Kost Anda kalah tertimbun sampah.';
     return Card(
       color: Theme.of(context).colorScheme.primaryContainer,
-      elevation: 0,
+      elevation: 6,
       child: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(20),
         child: Column(
+          mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Permainan selesai',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-            const SizedBox(height: 6),
-            Text(text),
-            const SizedBox(height: 12),
-            FilledButton(
-              onPressed: () =>
-                  Navigator.of(context).popUntil((r) => r.isFirst),
-              child: const Text('Kembali ke beranda'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _smogBanner() => Card(
-    color: Colors.red.shade700,
-    elevation: 0,
-    child: Padding(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          const Icon(Icons.masks, color: Colors.white),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'KABUT ASAP! Pembakaran diblokir dan income berhenti '
-                  '(${_remaining(_room['smog_until']).ceil()} dtk).',
-              style: const TextStyle(
-                  color: Colors.white, fontWeight: FontWeight.w700),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Widget _pollutionCard() {
-    final p = _pollution;
-    final (label, color) = _pollutionLevel(p);
-    return Card(
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        child: Row(
-          children: [
-            Icon(Icons.cloud, color: color),
-            const SizedBox(width: 10),
-            const Text('Polusi bersama',
-                style: TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(width: 12),
-            Expanded(child: _meter(p, 100, color, height: 10)),
-            const SizedBox(width: 10),
-            Text('${p.round()}%',
-                style: TextStyle(fontWeight: FontWeight.w700, color: color)),
-            const SizedBox(width: 10),
-            Flexible(
-              flex: 2,
-              child: Text(label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: color, fontSize: 12)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // ------------------------------------------------ panel kiri (pemain)
-
-  Widget _hudChip({
-    required IconData icon,
-    required String text,
-    String? sub,
-    Color iconColor = const Color(0xFFFFC107),
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.55),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 18, color: iconColor),
-          const SizedBox(width: 6),
-          Text(text,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w800)),
-          if (sub != null) ...[
-            const SizedBox(width: 6),
-            Text(sub,
-                style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _myPanel(Map<String, dynamic>? s, bool canAct,
-      {double? sceneMaxWidth}) {
-    if (s == null) {
-      return const Card(
-        elevation: 0,
-        child: ListTile(title: Text('Anda penonton di ruangan ini.')),
-      );
-    }
-
-    final live = _live(s);
-    final cap = max(1.0, _num(s['trash_capacity']));
-    final ratio = live.trash / cap;
-    final out = s['eliminated_at'] != null;
-    final penalty = _remaining(s['burn_penalty_until']);
-    final stacks = _num(s['burn_stacks']).toInt();
-    final prot = _remaining(s['protected_until']);
-    final rooms = _num(s['rooms_count']).toInt();
-    final defense = _num(s['defense']).toInt();
-    final critical = ratio >= 0.9 && !out;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Row(
-          children: [
-            const Icon(Icons.home_work),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text('Kost ${_name(_me)}',
-                  style: const TextStyle(
-                      fontSize: 18, fontWeight: FontWeight.w800)),
-            ),
-            _statChip(Icons.meeting_room, '$rooms/$_maxRooms kamar'),
-            const SizedBox(width: 6),
-            _statChip(Icons.shield, '$defense/$_maxDefense'),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: ConstrainedBox(
-            constraints:
-            BoxConstraints(maxWidth: sceneMaxWidth ?? double.infinity),
-            child: Container(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(
-                  color: critical ? Colors.red.shade700 : Colors.black12,
-                  width: critical ? 2.5 : 1,
-                ),
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(14),
-                child: Stack(
-                  children: [
-                    KostScene(
-                      data: _sceneData(_me, s, compact: false),
-                      repaint: _anim,
-                    ),
-                    Positioned(
-                      left: 10,
-                      top: 10,
-                      child: _hudChip(
-                        icon: Icons.payments,
-                        text: live.money.floor().toString(),
-                        sub: out
-                            ? null
-                            : '+${_num(s['income_rate']).toStringAsFixed(1)}/dtk',
-                      ),
-                    ),
-                    Positioned(
-                      right: 10,
-                      top: 10,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          if (penalty > 0 && !out)
-                            _tag(Icons.local_fire_department,
-                                'Penalti bakar x$stacks · ${penalty.ceil()} dtk',
-                                Colors.deepOrange),
-                          if (prot > 0 && !out) ...[
-                            const SizedBox(height: 4),
-                            _tag(Icons.shield, 'Dilindungi ${prot.ceil()} dtk',
-                                Colors.amber.shade800),
-                          ],
-                        ],
-                      ),
-                    ),
-                    if (critical)
-                      Positioned(
-                        left: 0,
-                        right: 0,
-                        bottom: 8,
-                        child: Center(
-                          child: _tag(Icons.warning_amber_rounded,
-                              'SAMPAH KRITIS!', Colors.red.shade700),
-                        ),
-                      ),
-                    if (out)
-                      Positioned.fill(
-                        child: Center(
-                          child: Transform.rotate(
-                            angle: -0.12,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 16, vertical: 8),
-                              decoration: BoxDecoration(
-                                border: Border.all(
-                                    color: Colors.red.shade400, width: 3),
-                                borderRadius: BorderRadius.circular(8),
-                                color: Colors.black.withValues(alpha: 0.45),
-                              ),
-                              child: Text('TERTIMBUN',
-                                  style: TextStyle(
-                                      color: Colors.red.shade300,
-                                      fontSize: 24,
-                                      letterSpacing: 3,
-                                      fontWeight: FontWeight.w900)),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        const SizedBox(height: 10),
-        Card(
-          elevation: 0,
-          margin: EdgeInsets.zero,
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            Row(
               children: [
-                Row(
-                  children: [
-                    Icon(Icons.delete, size: 18, color: _trashColor(ratio)),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        out
-                            ? 'Anda tertimbun sampah.'
-                            : 'Sampah ${live.trash.floor()} / ${cap.floor()}'
-                            ' · ${_trashStage(ratio)}',
-                        style: TextStyle(
-                            color: _trashColor(ratio),
-                            fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                _meter(live.trash, cap, _trashColor(ratio)),
+                Icon(winner == _me ? Icons.emoji_events : Icons.delete_forever,
+                    size: 28),
+                const SizedBox(width: 10),
+                const Text('Permainan selesai',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
               ],
             ),
-          ),
+            const SizedBox(height: 10),
+            Text(text),
+            const SizedBox(height: 16),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton(
+                onPressed: () =>
+                    Navigator.of(context).popUntil((r) => r.isFirst),
+                child: const Text('Kembali ke beranda'),
+              ),
+            ),
+          ],
         ),
-        const SizedBox(height: 10),
-        _actionsCard(s, canAct),
-      ],
+      ),
     );
   }
 
-  Widget _statChip(IconData icon, String text) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(
-      color: Theme.of(context).colorScheme.secondaryContainer,
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14),
-        const SizedBox(width: 4),
-        Text(text,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-      ],
-    ),
-  );
+  // ------------------------------------------------------- bilah aksi
 
-  Widget _tag(IconData icon, String text, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.92),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: Colors.white),
-        const SizedBox(width: 4),
-        Text(text,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w700)),
-      ],
-    ),
-  );
-
-  Widget _actionsCard(Map<String, dynamic> s, bool canAct) {
+  Widget _actionBar(Map<String, dynamic>? s, bool canAct,
+      {required bool wide, required bool short}) {
+    if (s == null) return const SizedBox.shrink();
     final live = _live(s);
     final rooms = _num(s['rooms_count']).toInt();
     final defense = _num(s['defense']).toInt();
@@ -848,22 +997,25 @@ class _GameScreenState extends State<GameScreen>
     final smog = _remaining(_room['smog_until']) > 0;
     final haulCost = (min(live.trash.floorToDouble(), 40.0) * 3).ceil();
 
-    final tiles = <Widget>[
-      _ActionTile(
+    final mode = short && wide ? 2 : (wide ? 0 : 1);
+
+    final buttons = <Widget>[
+      _ActionButton(
+        mode: mode,
         icon: Icons.add_home_work,
-        color: Colors.blue.shade700,
+        color: Colors.lightBlue,
         title: rooms >= _maxRooms ? 'Kamar penuh' : 'Bangun kamar',
         subtitle: rooms >= _maxRooms ? 'Maksimal $_maxRooms' : 'Biaya $cost',
         onTap: canAct && rooms < _maxRooms && live.money >= cost
             ? () => _act('build_room')
             : null,
       ),
-      _ActionTile(
+      _ActionButton(
+        mode: mode,
         icon: Icons.local_shipping,
-        color: Colors.green.shade700,
+        color: Colors.lightGreen,
         title: 'Tukang sampah',
-        subtitle:
-        haulLeft > 0 ? 'Mengangkut… ${haulLeft.ceil()}s' : '~$haulCost',
+        subtitle: haulLeft > 0 ? 'Mengangkut ${haulLeft.ceil()}s' : '~$haulCost',
         onTap: canAct &&
             haulLeft == 0 &&
             live.trash >= 1 &&
@@ -871,22 +1023,24 @@ class _GameScreenState extends State<GameScreen>
             ? () => _act('hire_hauler')
             : null,
       ),
-      _ActionTile(
+      _ActionButton(
+        mode: mode,
         icon: Icons.local_fire_department,
-        color: Colors.deepOrange,
+        color: Colors.deepOrangeAccent,
         title: 'Bakar sampah',
         subtitle: burnLeft > 0
             ? 'Jeda ${burnLeft.ceil()}s'
             : smog
             ? 'Terblokir kabut'
-            : 'Gratis, polusi naik',
+            : 'Polusi naik',
         onTap: canAct && burnLeft == 0 && !smog && live.trash >= 2
             ? () => _act('burn')
             : null,
       ),
-      _ActionTile(
+      _ActionButton(
+        mode: mode,
         icon: Icons.shield,
-        color: Colors.teal,
+        color: Colors.tealAccent,
         title: defense >= _maxDefense ? 'Pertahanan maks' : 'Pertahanan',
         subtitle: defense >= _maxDefense
             ? 'Level $_maxDefense/$_maxDefense'
@@ -897,96 +1051,71 @@ class _GameScreenState extends State<GameScreen>
       ),
     ];
 
-    return Card(
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    final h = mode == 0 ? 84.0 : (mode == 1 ? 68.0 : 44.0);
+    return _glass(
+      padding: const EdgeInsets.all(8),
+      child: SizedBox(
+        height: h,
+        child: Row(
           children: [
-            const Text('Aksi',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 10),
-            LayoutBuilder(
-              builder: (context, c) {
-                final cols = c.maxWidth >= 480 ? 4 : 2;
-                final w = (c.maxWidth - 8 * (cols - 1)) / cols;
-                return Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    for (final t in tiles) SizedBox(width: w, child: t),
-                  ],
-                );
-              },
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Bakar menghapus ±50% sampah tapi menaikkan polusi untuk semua '
-                  'pemain, dan Anda kena penalti income ekstra.',
-              style: TextStyle(
-                  fontSize: 12,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant),
-            ),
+            for (var i = 0; i < buttons.length; i++) ...[
+              if (i > 0) const SizedBox(width: 8),
+              Expanded(child: buttons[i]),
+            ],
           ],
         ),
       ),
     );
   }
 
-  // ------------------------------------------------ panel kanan (lawan)
+  // ------------------------------------------------ lawan (kisi kecil)
 
-  Widget _rightPanel(
-      List<MapEntry<String, Map<String, dynamic>>> others,
+  Widget _rivalPanel(
+      List<MapEntry<String, Map<String, dynamic>>> rivals,
       bool canAct,
       Map<String, dynamic>? me,
+      double w,
       ) {
-    // 1 lawan -> kartu besar; lebih dari 1 -> kisi 2 kolom
-    final cols = others.length > 1 ? 2 : 1;
-    final compact = others.length > 1;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const Text('Kost lawan',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        const SizedBox(height: 8),
-        if (others.isEmpty)
-          const Card(
-            elevation: 0,
-            child: ListTile(title: Text('Belum ada lawan.')),
-          )
-        else
-          LayoutBuilder(
-            builder: (context, c) {
-              const gap = 10.0;
-              final w = (c.maxWidth - gap * (cols - 1)) / cols;
-              return Wrap(
-                spacing: gap,
-                runSpacing: gap,
-                children: [
-                  for (final e in others)
-                    SizedBox(
-                      width: w,
-                      child:
-                      _opponentCard(e.key, e.value, canAct, me, compact),
-                    ),
-                ],
-              );
-            },
+    final cols = rivals.length > 1 ? 2 : 1;
+    const gap = 8.0;
+    final cw = (w - gap * (cols - 1)) / cols;
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 4, bottom: 6),
+            child: Text(
+              'Kost lawan',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                shadows: [Shadow(blurRadius: 4, color: Colors.black54)],
+              ),
+            ),
           ),
-        const SizedBox(height: 12),
-        _feedCard(),
-      ],
+          Wrap(
+            spacing: gap,
+            runSpacing: gap,
+            children: [
+              for (final e in rivals)
+                SizedBox(
+                  width: cw,
+                  child: _rivalCard(e.key, e.value, canAct, me),
+                ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
-  Widget _opponentCard(
+  Widget _rivalCard(
       String id,
       Map<String, dynamic> s,
       bool canAct,
       Map<String, dynamic>? me,
-      bool compact,
       ) {
     final live = _live(s);
     final cap = max(1.0, _num(s['trash_capacity']));
@@ -995,11 +1124,6 @@ class _GameScreenState extends State<GameScreen>
     final prot = _remaining(s['protected_until']);
     final throwLeft = me == null ? 0.0 : _remaining(me['throw_cooldown_until']);
     final mine = me == null ? null : _live(me);
-    final status = out
-        ? 'Tertimbun sampah'
-        : prot > 0
-        ? 'Dilindungi ${prot.ceil()} dtk'
-        : _trashStage(ratio);
     final enabled = canAct &&
         !out &&
         prot == 0 &&
@@ -1008,18 +1132,32 @@ class _GameScreenState extends State<GameScreen>
         mine.trash >= 1 &&
         mine.money >= 10;
 
-    return Card(
-      elevation: 0,
-      margin: EdgeInsets.zero,
+    String? btnText;
+    if (out) {
+      btnText = 'Out';
+    } else if (prot > 0) {
+      btnText = '${prot.ceil()}s';
+    } else if (throwLeft > 0) {
+      btnText = '${throwLeft.ceil()}s';
+    }
+
+    return Material(
+      elevation: 5,
+      color: Theme.of(context).colorScheme.surface,
+      borderRadius: BorderRadius.circular(14),
       clipBehavior: Clip.antiAlias,
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Stack(
             children: [
-              KostScene(
-                data: _sceneData(id, s, compact: compact),
-                repaint: _anim,
+              AspectRatio(
+                aspectRatio: 4 / 3,
+                child: KostStage(
+                  data: _sceneData(id, s, compact: true),
+                  repaint: _anim,
+                ),
               ),
               Positioned(
                 left: 6,
@@ -1029,22 +1167,44 @@ class _GameScreenState extends State<GameScreen>
                   alignment: Alignment.centerLeft,
                   child: Container(
                     padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                     decoration: BoxDecoration(
                       color: Colors.black.withValues(alpha: 0.55),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Text(
-                      _name(id),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            color: _wallFor(id),
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                        const SizedBox(width: 5),
+                        Flexible(
+                          child: Text(
+                            _name(id),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: _meter(live.trash, cap, _trashColor(ratio), height: 5),
               ),
               if (out)
                 Positioned.fill(
@@ -1052,51 +1212,51 @@ class _GameScreenState extends State<GameScreen>
                     child: Text('TERTIMBUN',
                         style: TextStyle(
                             color: Colors.red.shade300,
-                            fontSize: compact ? 13 : 20,
-                            letterSpacing: 2,
-                            fontWeight: FontWeight.w900)),
+                            fontSize: 12,
+                            letterSpacing: 1.5,
+                            fontWeight: FontWeight.w900,
+                            shadows: const [
+                              Shadow(blurRadius: 4, color: Colors.black)
+                            ])),
                   ),
                 ),
             ],
           ),
           Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    const Icon(Icons.meeting_room, size: 14),
-                    const SizedBox(width: 3),
-                    Text('${_num(s['rooms_count']).toInt()}',
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w600)),
-                    const SizedBox(width: 10),
-                    const Icon(Icons.shield, size: 14),
-                    const SizedBox(width: 3),
-                    Text('${_num(s['defense']).toInt()}',
-                        style: const TextStyle(
-                            fontSize: 12, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                _meter(live.trash, cap, _trashColor(ratio), height: 10),
-                const SizedBox(height: 4),
-                Text(status,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 11, color: _trashColor(ratio))),
-                const SizedBox(height: 8),
-                OutlinedButton(
-                  onPressed: enabled
-                      ? () => _act('throw_trash', {'p_target': id})
-                      : null,
-                  child: FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(throwLeft > 0
-                        ? 'Buang (${throwLeft.ceil()}s)'
-                        : 'Buang ke sini (10)'),
+                const Icon(Icons.meeting_room, size: 14),
+                const SizedBox(width: 3),
+                Text('${_num(s['rooms_count']).toInt()}',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700)),
+                const SizedBox(width: 8),
+                const Icon(Icons.shield, size: 14),
+                const SizedBox(width: 3),
+                Text('${_num(s['defense']).toInt()}',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700)),
+                const Spacer(),
+                Tooltip(
+                  message: 'Buang sampah ke ${_name(id)} (10)',
+                  child: SizedBox(
+                    width: 36,
+                    height: 30,
+                    child: FilledButton.tonal(
+                      style: FilledButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        minimumSize: Size.zero,
+                      ),
+                      onPressed: enabled
+                          ? () => _act('throw_trash', {'p_target': id})
+                          : null,
+                      child: btnText == null
+                          ? const Icon(Icons.delete_sweep, size: 18)
+                          : Text(btnText,
+                          style: const TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w700)),
+                    ),
                   ),
                 ),
               ],
@@ -1106,46 +1266,13 @@ class _GameScreenState extends State<GameScreen>
       ),
     );
   }
-
-  Widget _feedCard() {
-    final list = _events.where((e) => _eventText(e).isNotEmpty).take(8).toList();
-    return Card(
-      elevation: 0,
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Kabar terbaru',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            if (list.isEmpty) const Text('Belum ada kejadian.'),
-            for (final e in list)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(_eventIcon(e['type']).$1,
-                        size: 16, color: _eventIcon(e['type']).$2),
-                    const SizedBox(width: 8),
-                    Expanded(
-                        child: Text(_eventText(e),
-                            style: const TextStyle(fontSize: 13))),
-                  ],
-                ),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
 }
 
-/// Tombol aksi bergaya kartu: ikon berwarna + judul + keterangan biaya/jeda.
-class _ActionTile extends StatelessWidget {
-  const _ActionTile({
+/// Tombol aksi di bilah bawah.
+/// mode 0 = besar, 1 = sedang (HP), 2 = padat (layar pendek).
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.mode,
     required this.icon,
     required this.color,
     required this.title,
@@ -1153,6 +1280,7 @@ class _ActionTile extends StatelessWidget {
     required this.onTap,
   });
 
+  final int mode;
   final IconData icon;
   final Color color;
   final String title;
@@ -1162,42 +1290,67 @@ class _ActionTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final enabled = onTap != null;
-    final c = enabled ? color : Colors.grey;
-    return SizedBox(
-      height: 96,
+    final c = enabled ? color : Colors.blueGrey;
+    final avatarR = mode == 0 ? 16.0 : (mode == 1 ? 13.0 : 14.0);
+    final titleSize = mode == 0 ? 13.0 : 11.5;
+    final subSize = mode == 0 ? 11.0 : 9.5;
+
+    final avatar = CircleAvatar(
+      radius: avatarR,
+      backgroundColor: c,
+      child: Icon(icon, size: avatarR + 2, color: Colors.white),
+    );
+    final texts = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment:
+      mode == 2 ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      children: [
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(title,
+              maxLines: 1,
+              style: TextStyle(
+                  color: Colors.white,
+                  fontSize: titleSize,
+                  fontWeight: FontWeight.w800)),
+        ),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(subtitle,
+              maxLines: 1,
+              style: TextStyle(color: Colors.white70, fontSize: subSize)),
+        ),
+      ],
+    );
+
+    return Opacity(
+      opacity: enabled ? 1 : 0.5,
       child: Material(
-        color: c.withValues(alpha: enabled ? 0.12 : 0.07),
-        borderRadius: BorderRadius.circular(14),
-        child: InkWell(
+        color: c.withValues(alpha: 0.2),
+        shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: c.withValues(alpha: 0.5)),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
           onTap: onTap,
           child: Padding(
-            padding: const EdgeInsets.all(10),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            padding: EdgeInsets.symmetric(
+                horizontal: mode == 2 ? 8 : 4, vertical: mode == 2 ? 4 : 6),
+            child: mode == 2
+                ? Row(
               children: [
-                CircleAvatar(
-                  radius: 16,
-                  backgroundColor: c,
-                  child: Icon(icon, size: 18, color: Colors.white),
-                ),
-                const Spacer(),
-                Text(title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w700,
-                        color: enabled ? null : Colors.grey.shade600)),
-                const SizedBox(height: 2),
-                Text(subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: enabled
-                            ? Theme.of(context).colorScheme.onSurfaceVariant
-                            : Colors.grey.shade500)),
+                avatar,
+                const SizedBox(width: 8),
+                Expanded(child: texts),
+              ],
+            )
+                : Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                avatar,
+                SizedBox(height: mode == 0 ? 5 : 3),
+                texts,
               ],
             ),
           ),
