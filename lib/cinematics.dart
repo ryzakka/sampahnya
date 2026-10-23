@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,7 +9,8 @@ import 'kost_scene.dart';
 // ====================================================================
 //  SINEMATIK GIM (v1)
 //
-//  1) Intro pembuka   : pan kamera menyusuri jalan kost -> judul gim
+//  1) Intro pembuka   : fajar -> pagi emas, pan kamera menyusuri jalan kost,
+//                       sinar matahari, burung, lalu judul gim
 //  2) Rumah tertimbun : hujan, longsoran sampah, lampu padam, penghuni sedih
 //  3) Sidak polisi    : telepon -> mobil polisi tiba -> garis polisi -> segel
 //
@@ -22,7 +24,12 @@ import 'kost_scene.dart';
 // ====================================================================
 
 /// Durasi total tiap adegan (ms).
-const int kIntroMs = 11800;
+const int kIntroMs = 12800;
+
+/// Garis waktu intro (ms).
+const int kIntroPanMs = 6000; //     pan menyusuri jalan: 0 .. 6000
+const int kIntroWideEndMs = 8400; // melebar: 6000 .. 8400, lalu mendarat
+const int kIntroTitleMs = 8600; //   judul gim muncul
 const int kBuriedMs = 9200;
 const int kCallMs = 3000;
 
@@ -31,6 +38,18 @@ double _lerp(double a, double b, double t) => a + (b - a) * t;
 double _ease(double x) {
   x = _c01(x);
   return x * x * (3 - 2 * x);
+}
+
+/// Smootherstep (kuintik): start & akhir jauh lebih lembut dari smoothstep.
+double _ease5(double x) {
+  x = _c01(x);
+  return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
+double _easeOutCubic(double x) {
+  x = _c01(x);
+  final y = 1 - x;
+  return 1 - y * y * y;
 }
 
 double _easeOutBack(double x) {
@@ -189,7 +208,7 @@ class CineDirector {
     final i = _intro;
     if (i != null) {
       final t = now - i.start;
-      if (!i.haptic && t >= 7900) {
+      if (!i.haptic && t >= kIntroTitleMs) {
         i.haptic = true;
         HapticFeedback.mediumImpact();
       }
@@ -269,24 +288,33 @@ class CineDirector {
       final panEndCx = n == 1 ? 250.0 : (n - 1) * 400.0 + 200.0;
       final panStartCx = n == 1 ? 150.0 : 200.0;
       final panEndS = sPan * 1.05;
-      if (t < 5600) {
-        final u = _ease(t / 5600);
+
+      // pendaratan memakai smootherstep & selesai sedikit sebelum intro habis
+      const landDur = kIntroMs - kIntroWideEndMs - 450;
+      final land = _ease5((t - kIntroWideEndMs) / landDur);
+
+      // getar napas kamera (handheld halus) yang hilang saat mendarat
+      final calm = 1 - land;
+      final dx = math.sin(t / 1900) * 7 * calm;
+      final ds = 1 + math.sin(t / 1400) * 0.004 * calm;
+
+      if (t < kIntroPanMs) {
+        final u = _ease(t / kIntroPanMs);
         return (
-        cx: _lerp(panStartCx, panEndCx, u),
-        scale: sPan * (1 + 0.05 * u),
+        cx: _lerp(panStartCx, panEndCx, u) + dx,
+        scale: sPan * (0.97 + 0.08 * u) * ds,
         );
       }
-      if (t < 7800) {
-        final u = _ease((t - 5600) / 2200);
+      if (t < kIntroWideEndMs) {
+        final u = _ease5((t - kIntroPanMs) / (kIntroWideEndMs - kIntroPanMs));
         return (
-        cx: _lerp(panEndCx, n * 200.0, u),
-        scale: _lerp(panEndS, sWide, u),
+        cx: _lerp(panEndCx, n * 200.0, u) + dx,
+        scale: _lerp(panEndS, sWide, u) * ds,
         );
       }
-      final u = _ease((t - 7800) / 3300);
       return (
-      cx: _lerp(n * 200.0, tgtCx, u),
-      scale: _lerp(sWide, tgtScale, u),
+      cx: _lerp(n * 200.0, tgtCx, land) + dx,
+      scale: _lerp(sWide, tgtScale, land) * ds,
       );
     }
 
@@ -665,6 +693,144 @@ class CinematicWorldLayer extends StatelessWidget {
   }
 }
 
+
+// ---- pewarnaan intro: fajar -> pagi emas, matahari terbit, sinar, lensa
+
+void _paintIntroGrade(Canvas canvas, Size size, double t) {
+  final rect = Offset.zero & size;
+  final p = Paint();
+  final out = _c01((kIntroMs - t) / 900);
+  final u1 = _ease(t / 3200);
+  final u2 = _ease((t - 2600) / 3400);
+  final u3 = _ease((t - 5600) / 3400);
+
+  // 1) wash warna: biru fajar -> ungu mawar -> emas
+  var wash = Color.lerp(const Color(0xFF0A1330), const Color(0xFF47254F), u1)!;
+  wash = Color.lerp(wash, const Color(0xFFFFB066), u2)!;
+  final washA = _lerp(_lerp(0.62, 0.30, u1), 0.13, u2) * (1 - u3);
+  if (washA > 0.001) {
+    p.color = wash.withValues(alpha: washA);
+    canvas.drawRect(rect, p);
+  }
+
+  // 2) matahari terbit di kanan atas: cahaya lembut + sinar + kilau lensa
+  final rise = _ease5(t / 7200);
+  final sun = Offset(
+    size.width * 0.82,
+    _lerp(size.height * 0.80, size.height * 0.16, rise),
+  );
+  final glowA = _c01(t / 1200) * (1 - _ease((t - 8300) / 2800));
+  final add = Paint()..blendMode = BlendMode.plus;
+  if (glowA > 0.001) {
+    final gr = size.longestSide * 0.78;
+    add.shader = RadialGradient(
+      colors: [
+        const Color(0xFFFFD590).withValues(alpha: 0.50 * glowA),
+        const Color(0xFFFF8A3C).withValues(alpha: 0.20 * glowA),
+        const Color(0xFFFF8A3C).withValues(alpha: 0),
+      ],
+      stops: const [0.0, 0.34, 1.0],
+    ).createShader(Rect.fromCircle(center: sun, radius: gr));
+    canvas.drawRect(rect, add);
+    add.shader = null;
+  }
+
+  // sinar matahari menyapu ke kiri-bawah
+  final rayA = _c01((t - 1200) / 1800) * (1 - _ease((t - 8200) / 2800));
+  if (rayA > 0.001) {
+    final reach = size.longestSide * 1.25;
+    for (var i = 0; i < 7; i++) {
+      final base = 1.98 + i * 0.15 + math.sin(t / 3200 + i * 1.3) * 0.03;
+      final wdt = 0.032 + (i % 3) * 0.015;
+      final a0 = base - wdt;
+      final a1 = base + wdt;
+      final far0 = sun + Offset(math.cos(a0), math.sin(a0)) * reach;
+      final far1 = sun + Offset(math.cos(a1), math.sin(a1)) * reach;
+      final mid = sun + Offset(math.cos(base), math.sin(base)) * reach;
+      final shimmer = 0.6 + 0.4 * math.sin(t / 900 + i * 1.7);
+      add.shader = ui.Gradient.linear(
+        sun,
+        mid,
+        [
+          const Color(0xFFFFE3A8).withValues(alpha: 0.13 * rayA * shimmer),
+          const Color(0xFFFFE3A8).withValues(alpha: 0),
+        ],
+      );
+      final path = Path()
+        ..moveTo(sun.dx, sun.dy)
+        ..lineTo(far0.dx, far0.dy)
+        ..lineTo(far1.dx, far1.dy)
+        ..close();
+      canvas.drawPath(path, add);
+    }
+    add.shader = null;
+
+    // garis kilau anamorfik tipis melintang di titik matahari
+    final sw = size.width * 0.9;
+    add.shader = ui.Gradient.linear(
+      Offset(sun.dx - sw / 2, sun.dy),
+      Offset(sun.dx + sw / 2, sun.dy),
+      [
+        const Color(0x00FFE3A8),
+        const Color(0xFFFFE3A8).withValues(alpha: 0.45 * rayA),
+        const Color(0x00FFE3A8),
+      ],
+      const [0.0, 0.5, 1.0],
+    );
+    canvas.drawRect(
+      Rect.fromCenter(center: sun, width: sw, height: 2.4),
+      add,
+    );
+    add.shader = null;
+
+    // kilau lensa di sepanjang garis matahari -> tengah layar
+    final c = size.center(Offset.zero);
+    final k = size.shortestSide / 400;
+    const flares = <(double, double, double)>[
+      (0.30, 22.0, 0.12),
+      (0.55, 12.0, 0.16),
+      (0.85, 34.0, 0.08),
+      (1.20, 16.0, 0.10),
+    ];
+    for (final f in flares) {
+      final pos = sun + (c - sun) * f.$1;
+      final r = f.$2 * k;
+      add.shader = RadialGradient(
+        colors: [
+          const Color(0xFFFFE9B8).withValues(alpha: f.$3 * rayA),
+          const Color(0x00FFE9B8),
+        ],
+      ).createShader(Rect.fromCircle(center: pos, radius: r));
+      canvas.drawCircle(pos, r, add);
+    }
+    add.shader = null;
+  }
+
+  // 3) vinyet lembut (menyempit & memudar saat pagi mekar)
+  final vig = 0.40 * (1 - 0.55 * u3) * _c01(out + 0.0);
+  p.shader = RadialGradient(
+    radius: 0.95,
+    colors: [
+      Colors.black.withValues(alpha: 0),
+      Colors.black.withValues(alpha: vig),
+    ],
+    stops: const [0.5, 1.0],
+  ).createShader(rect);
+  canvas.drawRect(rect, p);
+  p.shader = null;
+
+  // 4) butir film halus
+  final rnd = math.Random(t ~/ 70);
+  final gp = Paint();
+  for (var i = 0; i < 70; i++) {
+    final x = rnd.nextDouble() * size.width;
+    final y = rnd.nextDouble() * size.height;
+    gp.color = (rnd.nextBool() ? Colors.white : Colors.black)
+        .withValues(alpha: (0.04 + rnd.nextDouble() * 0.05) * out);
+    canvas.drawRect(Rect.fromLTWH(x, y, 1.3, 1.3), gp);
+  }
+}
+
 class _GradePainter extends CustomPainter {
   _GradePainter(this.d, Listenable repaint) : super(repaint: repaint);
 
@@ -680,25 +846,10 @@ class _GradePainter extends CustomPainter {
     final rect = Offset.zero & size;
     final p = Paint();
 
-    // ---- intro: fajar biru -> pagi hangat
+    // ---- intro: fajar biru -> semburat mawar -> pagi emas
     final intro = d._intro;
     if (intro != null) {
-      final t = (now - intro.start).toDouble();
-      final k = 1 - _ease(t / 6500);
-      if (k > 0) {
-        p.color = const Color(0xFF0B1636).withValues(alpha: 0.62 * k);
-        canvas.drawRect(rect, p);
-        p.shader = RadialGradient(
-          center: const Alignment(0.7, 0.9),
-          radius: 1.1,
-          colors: [
-            const Color(0xFFFF9A3C).withValues(alpha: 0.38 * k),
-            const Color(0xFFFF9A3C).withValues(alpha: 0),
-          ],
-        ).createShader(rect);
-        canvas.drawRect(rect, p);
-        p.shader = null;
-      }
+      _paintIntroGrade(canvas, size, (now - intro.start).toDouble());
     }
 
     // ---- rumah tertimbun: biru kelabu, vinyet berat, hujan
@@ -868,7 +1019,8 @@ class CinematicTopLayer extends StatelessWidget {
 
   // ------------------------------------------------------------- umum
 
-  Widget _caption(String text, {double size = 16, Color color = Colors.white}) {
+  Widget _caption(String text,
+      {double size = 16, Color color = Colors.white, double ls = 0.3}) {
     return Text(
       text,
       textAlign: TextAlign.center,
@@ -877,7 +1029,7 @@ class CinematicTopLayer extends StatelessWidget {
         fontSize: size,
         fontWeight: FontWeight.w700,
         height: 1.3,
-        letterSpacing: 0.3,
+        letterSpacing: ls,
         shadows: const [
           Shadow(color: Colors.black, blurRadius: 10),
           Shadow(color: Colors.black, blurRadius: 2, offset: Offset(0, 1)),
@@ -914,7 +1066,7 @@ class CinematicTopLayer extends StatelessWidget {
   );
 
   Widget _captionAt(Size size, double bottom, double a, String text,
-      {double fs = 16, Color color = Colors.white}) {
+      {double fs = 16, Color color = Colors.white, double ls = 0.3}) {
     return Positioned(
       left: 24,
       right: 24,
@@ -922,7 +1074,7 @@ class CinematicTopLayer extends StatelessWidget {
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 560),
-          child: _fade(a, _caption(text, size: fs, color: color)),
+          child: _fade(a, _caption(text, size: fs, color: color, ls: ls)),
         ),
       ),
     );
@@ -931,112 +1083,68 @@ class CinematicTopLayer extends StatelessWidget {
   // ------------------------------------------------------------- INTRO
 
   static const _introLines = <(double, double, String)>[
-    (800.0, 3200.0, 'Di sebuah gang sempit, para juragan kost bertetangga dalam damai…'),
-    (3300.0, 5600.0, 'Penghuni datang. Uang mengalir. Tapi sampah… tak pernah berhenti.'),
-    (5700.0, 7700.0, 'Hanya satu juragan yang akan tetap berdiri.'),
+    (900.0, 3400.0, 'Di sebuah gang sempit, para juragan kost bertetangga dalam damai…'),
+    (3600.0, 6000.0, 'Penghuni datang. Uang mengalir. Tapi sampah… tak pernah berhenti.'),
+    (6200.0, 8300.0, 'Hanya satu juragan yang akan tetap berdiri.'),
   ];
 
   /// Waktu (ms) saat kamera pan tepat di rumah ke-[i] (kebalikan smoothstep).
   double _panTimeFor(int i, int n) {
-    if (n <= 1) return 2800;
+    if (n <= 1) return kIntroPanMs / 2;
     final f = i / (n - 1);
     final x = 0.5 - math.sin(math.asin(1 - 2 * f) / 3);
-    return 5600 * x;
+    return kIntroPanMs * x;
   }
 
   List<Widget> _introWidgets(
       BuildContext context, Size size, _Intro intro, int now) {
     final t = (now - intro.start).toDouble();
-    final barK = _ease(math.min(t / 900, (kIntroMs - t) / 700));
-    final barH = size.height * 0.115 * barK;
-    final blackA = 1 - _c01((t - 100) / 1000);
+    final barK = _ease5(math.min(t / 1100, (kIntroMs - t) / 800));
+    final barH = size.height * 0.12 * barK;
+    final blackA = 1 - _ease((t - 150) / 1500);
     final out = _c01((kIntroMs - t) / 600);
     final w = <Widget>[];
 
-    // debu cahaya melayang di udara
+    // debu cahaya, bokeh, burung
     w.add(Positioned.fill(
       child: CustomPaint(painter: _MotePainter(t, out)),
     ));
 
-    // narasi
+    // narasi (spasi huruf merapat perlahan = terasa "mengendap")
     for (final l in _introLines) {
-      final a = _win(t, l.$1, l.$2);
+      final a = _win(t, l.$1, l.$2, 450);
       if (a <= 0) continue;
-      w.add(_captionAt(size, barH + 22, a, l.$3, fs: 16.5));
+      final ls = _lerp(1.8, 0.4, _ease5((t - l.$1) / 1500));
+      w.add(_captionAt(size, barH + 22, a, l.$3, fs: 16.5, ls: ls));
     }
 
     // papan nama tiap rumah saat kamera melintas
     final n = intro.order.length;
     for (var i = 0; i < n; i++) {
       final ti = _panTimeFor(i, n);
-      final a = _win(t, ti - 950, ti + 950);
-      if (a <= 0 || t > 6000) continue;
+      final a = _win(t, ti - 1000, ti + 1000, 450);
+      if (a <= 0 || t > kIntroPanMs + 400) continue;
       final id = intro.order[i];
       final name = (intro.names[id] ?? 'Pemain').toUpperCase();
       final me = id == intro.myId;
       w.add(Positioned(
-        left: 22,
+        left: 18,
         top: barH + 16,
-        child: _fade(
-          a,
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 4,
-                height: 40,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFCA28),
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    'JURAGAN KOST #${i + 1}${me ? '  ·  KAMU' : ''}',
-                    style: TextStyle(
-                      color: me
-                          ? const Color(0xFFFFCA28)
-                          : const Color(0xFF81C784),
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.8,
-                      shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
-                    ),
-                  ),
-                  Text(
-                    name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 22,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 1.2,
-                      shadows: [Shadow(color: Colors.black, blurRadius: 10)],
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          dy: 0,
-        ),
+        child: _namePlate(i, me, name, a),
       ));
     }
 
     // judul gim
-    final tt = t - 7900;
+    final tt = t - kIntroTitleMs;
     if (tt > 0) {
       w.add(Positioned.fill(
         child: IgnorePointer(
           child: DecoratedBox(
             decoration: BoxDecoration(
               gradient: RadialGradient(
-                radius: 0.75,
+                radius: 0.8,
                 colors: [
-                  Colors.black.withValues(alpha: 0.55 * _c01(tt / 700) * out),
+                  Colors.black.withValues(alpha: 0.58 * _c01(tt / 800) * out),
                   Colors.black.withValues(alpha: 0),
                 ],
               ),
@@ -1047,6 +1155,13 @@ class CinematicTopLayer extends StatelessWidget {
       w.add(Positioned.fill(
         child: Center(child: _titleBlock(tt, out, size.width)),
       ));
+      // kilat cahaya singkat saat judul menghantam
+      final fl = 0.38 * (1 - _c01(tt / 380));
+      if (fl > 0) {
+        w.add(Positioned.fill(
+          child: ColoredBox(color: Colors.white.withValues(alpha: fl)),
+        ));
+      }
     }
 
     // letterbox
@@ -1060,12 +1175,12 @@ class CinematicTopLayer extends StatelessWidget {
     }
 
     // tombol lewati
-    if (t > 900 && t < kIntroMs - 900) {
+    if (t > 1200 && t < kIntroMs - 900) {
       w.add(Positioned(
         right: 16,
         top: MediaQuery.of(context).padding.top + 10,
         child: Opacity(
-          opacity: 0.8 * _c01((t - 900) / 500),
+          opacity: 0.8 * _c01((t - 1200) / 600),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
@@ -1096,35 +1211,156 @@ class CinematicTopLayer extends StatelessWidget {
     return w;
   }
 
-  Widget _titleBlock(double tt, double out, double maxW) {
-    final fs = (maxW * 0.15).clamp(36.0, 86.0).toDouble();
-    final ls = _lerp(26, 4, _ease(tt / 1300));
-    final scale = _lerp(1.4, 1.0, _ease(tt / 1000));
-    final a = _c01(tt / 420) * out;
-    final sx = _lerp(-0.3, 1.3, _c01((tt - 700) / 1500));
-    final s1 = (sx - 0.18).clamp(0.0, 1.0).toDouble();
-    final s2 = sx.clamp(0.0, 1.0).toDouble();
-    final s3 = (sx + 0.18).clamp(0.0, 1.0).toDouble();
-    final emblem = _easeOutBack(tt / 650);
-
-    final stroke = Text(
-      'SAMPAHNYA!',
-      style: TextStyle(
-        fontSize: fs,
-        fontWeight: FontWeight.w900,
-        letterSpacing: ls,
-        foreground: Paint()
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = fs * 0.12
-          ..strokeJoin = StrokeJoin.round
-          ..color = const Color(0xFF0B1A10),
+  /// Papan nama rumah: lencana nomor + nama, geser masuk dari kiri.
+  Widget _namePlate(int i, bool me, String name, double a) {
+    final accent = me ? const Color(0xFFFFCA28) : const Color(0xFF81C784);
+    final e = _easeOutCubic(a);
+    return Opacity(
+      opacity: _c01(a * 1.4),
+      child: Transform.translate(
+        offset: Offset((1 - e) * -28, 0),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(8, 8, 22, 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              colors: [
+                Colors.black.withValues(alpha: 0.62),
+                Colors.black.withValues(alpha: 0),
+              ],
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: accent.withValues(alpha: 0.16),
+                  border: Border.all(color: accent, width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: accent.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                    ),
+                  ],
+                ),
+                child: Text(
+                  '${i + 1}',
+                  style: TextStyle(
+                    color: accent,
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 11),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    me ? 'JURAGAN KOST  ·  KAMU' : 'JURAGAN KOST',
+                    style: TextStyle(
+                      color: accent,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 2.0,
+                      shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    name,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 22,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.2,
+                      shadows: [Shadow(color: Colors.black, blurRadius: 10)],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Container(
+                    width: _lerp(0, 120, e),
+                    height: 2,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(1),
+                      gradient: LinearGradient(
+                        colors: [accent, accent.withValues(alpha: 0)],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
     );
+  }
+
+  static const String _titleWord = 'SAMPAHNYA!';
+
+  /// Satu baris huruf judul; tiap huruf naik & muncul bergantian.
+  /// [stroke] true = lapis garis tepi, false = lapis isi (dimasker emas).
+  Widget _titleRow(double tt, double fs, bool stroke) {
+    final gap = _lerp(fs * 0.20, fs * 0.03, _ease5(tt / 1500));
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var k = 0; k < _titleWord.length; k++)
+          Builder(builder: (_) {
+            final u = _c01((tt - 250 - k * 85) / 520);
+            final e = _easeOutBack(u);
+            final style = stroke
+                ? TextStyle(
+              fontSize: fs,
+              fontWeight: FontWeight.w900,
+              foreground: Paint()
+                ..style = PaintingStyle.stroke
+                ..strokeWidth = fs * 0.12
+                ..strokeJoin = StrokeJoin.round
+                ..color = const Color(0xFF0B1A10),
+            )
+                : TextStyle(
+              fontSize: fs,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
+            );
+            return Opacity(
+              opacity: _c01(u * 1.8),
+              child: Transform.translate(
+                offset: Offset(0, (1 - e) * fs * 0.45),
+                child: Padding(
+                  padding: EdgeInsets.symmetric(horizontal: gap / 2),
+                  child: Text(_titleWord[k], style: style),
+                ),
+              ),
+            );
+          }),
+      ],
+    );
+  }
+
+  Widget _titleBlock(double tt, double out, double maxW) {
+    final fs = (maxW * 0.15).clamp(36.0, 86.0).toDouble();
+    final a = _c01(tt / 300) * out;
+    final sx = _lerp(-0.35, 1.35, _ease5((tt - 1500) / 1700));
+    final s1 = (sx - 0.16).clamp(0.0, 1.0).toDouble();
+    final s2 = sx.clamp(0.0, 1.0).toDouble();
+    final s3 = (sx + 0.16).clamp(0.0, 1.0).toDouble();
+    final emblem = _easeOutBack(tt / 700);
+    final breathe = 1 + 0.015 * math.sin(tt / 520) * _c01((tt - 1500) / 600);
+
     final fill = ShaderMask(
       blendMode: BlendMode.srcIn,
       shaderCallback: (r) => LinearGradient(
         colors: const [
-          Color(0xFFFFCA28),
+          Color(0xFFFFD54F),
           Color(0xFFFFCA28),
           Colors.white,
           Color(0xFFFFCA28),
@@ -1132,15 +1368,7 @@ class CinematicTopLayer extends StatelessWidget {
         ],
         stops: [0.0, s1, s2, s3, 1.0],
       ).createShader(r),
-      child: Text(
-        'SAMPAHNYA!',
-        style: TextStyle(
-          fontSize: fs,
-          fontWeight: FontWeight.w900,
-          letterSpacing: ls,
-          color: Colors.white,
-        ),
-      ),
+      child: _titleRow(tt, fs, false),
     );
 
     return Padding(
@@ -1150,46 +1378,75 @@ class CinematicTopLayer extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Transform.scale(
-              scale: emblem,
-              child: Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFFFCA28),
-                  shape: BoxShape.circle,
-                  boxShadow: [
-                    BoxShadow(
-                      color: const Color(0xFFFFCA28).withValues(alpha: 0.55),
-                      blurRadius: 26,
+            SizedBox(
+              width: 64,
+              height: 64,
+              child: Stack(
+                alignment: Alignment.center,
+                clipBehavior: Clip.none,
+                children: [
+                  Positioned.fill(
+                    child: CustomPaint(painter: _EmblemFxPainter(tt, out)),
+                  ),
+                  Transform.scale(
+                    scale: emblem,
+                    child: Container(
+                      width: 64,
+                      height: 64,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [Color(0xFFFFE082), Color(0xFFFFB300)],
+                        ),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.85),
+                          width: 2,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                            const Color(0xFFFFCA28).withValues(alpha: 0.6),
+                            blurRadius: 30,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.delete_sweep_rounded,
+                        size: 38,
+                        color: Color(0xFF14201A),
+                      ),
                     ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.delete_sweep_rounded,
-                  size: 38,
-                  color: Color(0xFF14201A),
-                ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: 16),
             Transform.scale(
-              scale: scale,
+              scale: breathe,
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 child: Stack(
                   alignment: Alignment.center,
-                  children: [stroke, fill],
+                  children: [_titleRow(tt, fs, true), fill],
                 ),
               ),
             ),
             const SizedBox(height: 10),
             Container(
-              width: _lerp(0, 230, _ease((tt - 500) / 700)),
+              width: _lerp(0, 240, _ease5((tt - 900) / 900)),
               height: 3,
               decoration: BoxDecoration(
-                color: const Color(0xFFFFCA28),
                 borderRadius: BorderRadius.circular(2),
+                gradient: const LinearGradient(
+                  colors: [
+                    Color(0x00FFCA28),
+                    Color(0xFFFFCA28),
+                    Color(0x00FFCA28),
+                  ],
+                ),
                 boxShadow: [
                   BoxShadow(
                     color: const Color(0xFFFFCA28).withValues(alpha: 0.6),
@@ -1200,11 +1457,15 @@ class CinematicTopLayer extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             Opacity(
-              opacity: _c01((tt - 1000) / 500),
-              child: _caption(
-                'Kelola limbah. Sabotase tetangga.\nJangan sampai tertimbun!',
-                size: 15,
-                color: const Color(0xFFE8F5E9),
+              opacity: _c01((tt - 1700) / 600),
+              child: Transform.translate(
+                offset: Offset(0, 8 * (1 - _easeOutCubic((tt - 1700) / 700))),
+                child: _caption(
+                  'Kelola limbah. Sabotase tetangga.\nJangan sampai tertimbun!',
+                  size: 15,
+                  color: const Color(0xFFE8F5E9),
+                  ls: _lerp(2.0, 0.4, _ease5((tt - 1700) / 1300)),
+                ),
               ),
             ),
           ],
@@ -1354,6 +1615,7 @@ class CinematicTopLayer extends StatelessWidget {
   }
 }
 
+/// Debu cahaya + bokeh hangat + kawanan burung melintas (khusus intro).
 class _MotePainter extends CustomPainter {
   _MotePainter(this.t, this.out);
 
@@ -1366,6 +1628,35 @@ class _MotePainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
+    final k = size.shortestSide / 400;
+
+    // ---- bokeh hangat melayang pelan (muncul seiring matahari naik)
+    final bokehEnv = _c01((t - 2200) / 2200) * out;
+    if (bokehEnv > 0.001) {
+      final bp = Paint()..blendMode = BlendMode.plus;
+      for (var i = 0; i < 9; i++) {
+        final fx = (i * 0.618034) % 1.0;
+        final fy = (i * 0.414214 + 0.1) % 1.0;
+        final r = (14 + (i % 4) * 9) * k;
+        final x = ((fx * size.width + t / 1000 * (5 + i % 3 * 3)) %
+            (size.width + 2 * r)) -
+            r;
+        final y = fy * size.height + math.sin(t / 1800 + i * 1.9) * 10;
+        final tw = 0.55 + 0.45 * math.sin(t / 1100 + i * 2.3);
+        final c = Offset(x, y);
+        bp.shader = RadialGradient(
+          colors: [
+            const Color(0xFFFFD9A0).withValues(alpha: 0.11 * tw * bokehEnv),
+            const Color(0xFFFFD9A0).withValues(alpha: 0.05 * tw * bokehEnv),
+            const Color(0x00FFD9A0),
+          ],
+          stops: const [0.0, 0.7, 1.0],
+        ).createShader(Rect.fromCircle(center: c, radius: r));
+        canvas.drawCircle(c, r, bp);
+      }
+    }
+
+    // ---- debu cahaya
     final p = Paint()..style = PaintingStyle.fill;
     final env = _c01(t / 1500) * out;
     for (var i = 0; i < 42; i++) {
@@ -1379,6 +1670,111 @@ class _MotePainter extends CustomPainter {
       final tw = 0.5 + 0.5 * math.sin(t / 700 + i);
       p.color = const Color(0xFFFFE9B0).withValues(alpha: 0.35 * tw * env);
       canvas.drawCircle(Offset(x, y), r, p);
+    }
+
+    // ---- burung melintas di langit pagi
+    final bird = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    for (var i = 0; i < 6; i++) {
+      final v = (t - 1000 - i * 330) / 5600;
+      if (v <= 0 || v >= 1) continue;
+      final x = _lerp(-0.08, 1.08, v) * size.width;
+      final y = size.height * (0.13 + (i % 3) * 0.055) +
+          math.sin(v * 6 + i) * 8 * k +
+          i * 3.0;
+      final s = (5 + (i % 3) * 1.6) * k;
+      final flap = 0.5 + 0.5 * math.sin(t / 1000 * 2 * math.pi * (2.0 + i * 0.15) + i);
+      final a = 0.55 * _c01(math.min(v / 0.1, (1 - v) / 0.1)) * out;
+      bird
+        ..strokeWidth = 1.5 * k + 0.3
+        ..color = const Color(0xFF1B2433).withValues(alpha: a);
+      final lift = s * (0.15 + 0.85 * flap);
+      final path = Path()
+        ..moveTo(x - s * 1.5, y - lift * 0.9)
+        ..quadraticBezierTo(x - s * 0.7, y - lift * 1.4, x, y)
+        ..quadraticBezierTo(x + s * 0.7, y - lift * 1.4, x + s * 1.5, y - lift * 0.9);
+      canvas.drawPath(path, bird);
+    }
+  }
+}
+
+/// Efek di belakang lambang judul: sinar berputar, cincin kejut, kilau.
+class _EmblemFxPainter extends CustomPainter {
+  _EmblemFxPainter(this.tt, this.out);
+
+  final double tt;
+  final double out;
+
+  @override
+  bool shouldRepaint(covariant _EmblemFxPainter oldDelegate) => true;
+
+  void _star(Canvas c, Offset o, double r, Paint p) {
+    final path = Path()
+      ..moveTo(o.dx, o.dy - r)
+      ..quadraticBezierTo(o.dx, o.dy, o.dx + r, o.dy)
+      ..quadraticBezierTo(o.dx, o.dy, o.dx, o.dy + r)
+      ..quadraticBezierTo(o.dx, o.dy, o.dx - r, o.dy)
+      ..quadraticBezierTo(o.dx, o.dy, o.dx, o.dy - r)
+      ..close();
+    c.drawPath(path, p);
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final c = size.center(Offset.zero);
+    const gold = Color(0xFFFFCA28);
+
+    // sinar berputar
+    final env = _c01((tt - 100) / 700) * out;
+    if (env > 0.001) {
+      const reach = 150.0;
+      final rp = Paint()..blendMode = BlendMode.plus;
+      rp.shader = ui.Gradient.radial(
+        c,
+        reach,
+        [
+          gold.withValues(alpha: 0.30 * env),
+          gold.withValues(alpha: 0),
+        ],
+      );
+      final spin = tt / 1000 * 0.28;
+      for (var i = 0; i < 12; i++) {
+        final a = spin + i * 2 * math.pi / 12;
+        const w = 0.085;
+        final path = Path()
+          ..moveTo(c.dx, c.dy)
+          ..lineTo(c.dx + math.cos(a - w) * reach, c.dy + math.sin(a - w) * reach)
+          ..lineTo(c.dx + math.cos(a + w) * reach, c.dy + math.sin(a + w) * reach)
+          ..close();
+        canvas.drawPath(path, rp);
+      }
+    }
+
+    // cincin kejut
+    final u = _c01(tt / 1000);
+    if (u > 0 && u < 1) {
+      final ring = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 2.5 * (1 - u) + 0.5
+        ..color = gold.withValues(alpha: (1 - u) * 0.7 * out);
+      canvas.drawCircle(c, 30 + _easeOutCubic(u) * 150, ring);
+    }
+
+    // kilau meletup keluar lalu berkelap-kelip
+    final sp = Paint()..blendMode = BlendMode.plus;
+    for (var i = 0; i < 14; i++) {
+      final life = _c01((tt - 80 - i * 40) / 1900);
+      if (life <= 0 || life >= 1) continue;
+      final ang = i * 2.399963 + 0.4;
+      final dist = (26 + (60 + (i % 4) * 22) * _easeOutCubic(life * 1.4));
+      final o = c + Offset(math.cos(ang), math.sin(ang)) * dist;
+      final tw = 0.5 + 0.5 * math.sin(tt / 110 + i * 1.7);
+      final fade = math.min(life / 0.15, (1 - life) / 0.5).clamp(0.0, 1.0);
+      sp.color = const Color(0xFFFFF3C4)
+          .withValues(alpha: 0.9 * tw * fade * out);
+      _star(canvas, o, 3.5 + (i % 3) * 1.8, sp);
     }
   }
 }

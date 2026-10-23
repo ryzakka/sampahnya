@@ -88,6 +88,21 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   bool _faceRight = true;
   int _charCat = 0; // kategori kustomisasi karakter
 
+  // bangunan
+  int _bldCat = 0; // kategori kustomisasi bangunan
+  bool _night = false;
+  double _phase = 0.5; // fase siang-malam yang dihaluskan (0.5 siang, 1.0 malam)
+  double _phaseTarget = 0.5;
+  int _phaseMs = sceneNowMs();
+  int _sparkMs = -100000; // waktu kilau terakhir saat bangunan diubah
+
+  void _stepPhase() {
+    final now = sceneNowMs();
+    final dt = math.min(0.1, math.max(0, now - _phaseMs) / 1000.0);
+    _phaseMs = now;
+    _phase += (_phaseTarget - _phase) * (1 - math.exp(-dt * 1.6));
+  }
+
   RealtimeChannel? _channel;
   Timer? _saveTimer;
   Timer? _beat;
@@ -97,7 +112,10 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     super.initState();
     _anim = AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..repeat();
-    _anim.addListener(() => _cam.step());
+    _anim.addListener(() {
+      _cam.step();
+      _stepPhase();
+    });
     _channel = _db
         .channel('customize-${widget.roomId}')
         .onPostgresChanges(
@@ -189,7 +207,10 @@ class _CustomizeScreenState extends State<CustomizeScreen>
 
   void _edit(KostStyle Function(KostStyle) f) {
     if (widget.readOnly) return;
-    setState(() => _draft = f(_draft));
+    setState(() {
+      _draft = f(_draft);
+      if (_tab == 0) _sparkMs = sceneNowMs();
+    });
     _saveTimer?.cancel();
     _saveTimer = Timer(const Duration(milliseconds: 350), _push);
   }
@@ -481,6 +502,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     lights: 1.0,
     style: e.style.isEmpty ? null : e.style,
     owner: _ownerFor(e),
+    dayPhase: _phase,
   );
 
   Widget _streetView(List<_Entry> list) {
@@ -490,6 +512,8 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         child: Text('Menunggu pemain…', style: TextStyle(color: Colors.white70)),
       );
     }
+    final hero = _hero(list);
+    final hi = math.max(0, list.indexWhere((e) => e.id == hero.id));
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: DecoratedBox(
@@ -501,34 +525,48 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         child: LayoutBuilder(
           builder: (context, c) {
             final size = Size(c.maxWidth, c.maxHeight);
-            const insets = EdgeInsets.only(top: 52);
+            const insets = EdgeInsets.only(top: 58);
             final stage = _cam.stageFor(size, insets);
+            // kamera menyorot satu rumah; tetangga tampak di tepi layar
             final fit = math.min(
-              stage.width * 0.96 / (n * kStreetSlotW),
+              stage.width * 0.94 / (kStreetSlotW * 1.15),
               stage.height / kStreetSlotH,
             );
-            _cam.setTarget(n * kStreetSlotW / 2, math.min(fit, 1.15));
-            final backdrop = KostSceneData(
-              rooms: 0,
-              maxRooms: 12,
-              defense: 0,
-              trashRatio: 0,
-              pollution: 4,
-            );
+            _cam.setTarget((hi + 0.5) * kStreetSlotW, math.min(fit, 1.5));
             return Stack(
               children: [
                 Positioned.fill(
-                  child: AnimatedBuilder(
-                    animation: _anim,
-                    builder: (context, _) => KostStreet(
-                      houses: [
-                        for (var i = 0; i < n; i++) _house(list[i], i),
-                      ],
-                      backdrop: backdrop,
-                      camera: _cam,
-                      repaint: _anim,
-                      ids: [for (final e in list) e.id],
-                      insets: insets,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapUp: (d) {
+                      final i = _cam.houseAt(d.localPosition.dx, stage, n);
+                      if (i != null) setState(() => _focusId = list[i].id);
+                    },
+                    onHorizontalDragEnd: (d) {
+                      final v = d.primaryVelocity ?? 0;
+                      if (v.abs() < 200) return;
+                      final ni = math.min(n - 1, math.max(0, hi + (v < 0 ? 1 : -1)));
+                      setState(() => _focusId = list[ni].id);
+                    },
+                    child: AnimatedBuilder(
+                      animation: _anim,
+                      builder: (context, _) => KostStreet(
+                        houses: [
+                          for (var i = 0; i < n; i++) _house(list[i], i),
+                        ],
+                        backdrop: KostSceneData(
+                          rooms: 0,
+                          maxRooms: 12,
+                          defense: 0,
+                          trashRatio: 0,
+                          pollution: 4,
+                          dayPhase: _phase,
+                        ),
+                        camera: _cam,
+                        repaint: _anim,
+                        ids: [for (final e in list) e.id],
+                        insets: insets,
+                      ),
                     ),
                   ),
                 ),
@@ -536,11 +574,34 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                   child: IgnorePointer(
                     child: AnimatedBuilder(
                       animation: _anim,
-                      builder: (context, _) => Stack(
-                        clipBehavior: Clip.none,
-                        children: _streetTags(list, stage),
+                      builder: (context, _) => CustomPaint(
+                        painter: _SparkPainter(
+                          cam: _cam,
+                          stage: stage,
+                          index: hi,
+                          startMs: _sparkMs,
+                        ),
                       ),
                     ),
+                  ),
+                ),
+                Positioned(
+                  left: 10,
+                  right: 10,
+                  top: 8,
+                  child: _roster(list, selected: hero.id),
+                ),
+                Positioned(
+                  right: 10,
+                  bottom: 10,
+                  child: _miniBtn(
+                    _night ? Icons.dark_mode_rounded : Icons.light_mode_rounded,
+                    _night ? 'Malam' : 'Siang',
+                    _night,
+                        () => setState(() {
+                      _night = !_night;
+                      _phaseTarget = _night ? 1.0 : 0.5;
+                    }),
                   ),
                 ),
               ],
@@ -549,25 +610,6 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         ),
       ),
     );
-  }
-
-  List<Widget> _streetTags(List<_Entry> list, Rect stage) {
-    final s = _cam.scale;
-    final o = _cam.origin(stage);
-    final out = <Widget>[];
-    for (var i = 0; i < list.length; i++) {
-      final cx = o.dx + (i * kStreetSlotW + kStreetSlotW / 2) * s;
-      final roofY = o.dy + (236.0 - 50.0) * s;
-      final w = (kStreetSlotW * s - 6).clamp(84.0, 190.0).toDouble();
-      final top = math.max(4.0, roofY - 47 * s - 54);
-      out.add(Positioned(
-        left: cx - w / 2,
-        top: top,
-        width: w,
-        child: _tag(list[i]),
-      ));
-    }
-    return out;
   }
 
   static const List<(KostPose, IconData, String)> _poses = [
@@ -740,7 +782,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   }
 
   /// Pemain lain di ruang kostum: ketuk untuk menyorot karakternya.
-  Widget _roster(List<_Entry> others) => SizedBox(
+  Widget _roster(List<_Entry> others, {String? selected}) => SizedBox(
     height: 46,
     child: ListView.separated(
       scrollDirection: Axis.horizontal,
@@ -754,12 +796,17 @@ class _CustomizeScreenState extends State<CustomizeScreen>
           child: Container(
             padding: const EdgeInsets.fromLTRB(6, 5, 12, 5),
             decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.08),
+              color: selected == e.id
+                  ? _amber.withValues(alpha: 0.2)
+                  : _surface.withValues(alpha: 0.85),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: e.isMe
-                    ? _amber.withValues(alpha: 0.6)
-                    : Colors.white.withValues(alpha: 0.14),
+                color: selected == e.id
+                    ? _amber
+                    : (e.isMe
+                    ? _amber.withValues(alpha: 0.5)
+                    : Colors.white.withValues(alpha: 0.14)),
+                width: selected == e.id ? 1.8 : 1,
               ),
             ),
             child: Row(
@@ -861,15 +908,23 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               child: Text(_error!,
                   style: const TextStyle(color: Colors.white, fontSize: 12)),
             ),
-          if (chars) ...[
-            _charCatBar(),
-            const SizedBox(height: 12),
-          ],
+          _catBar(
+            chars ? _charCats : _bldCats,
+            chars ? _charCat : _bldCat,
+                (i) => setState(() {
+              if (chars) {
+                _charCat = i;
+              } else {
+                _bldCat = i;
+              }
+            }),
+          ),
+          const SizedBox(height: 12),
           Expanded(
             child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: chars ? [_charContent()] : _buildingControls(),
+                children: [chars ? _charContent() : _bldContent()],
               ),
             ),
           ),
@@ -1151,62 +1206,271 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     );
   }
 
-  List<Widget> _buildingControls() => [
-    _section(
-      'Warna dinding',
-      _swatches(KostPalette.walls, _draft.wall,
-              (i) => _edit((s) => s.copyWith(wall: i))),
-    ),
-    _section(
-      'Warna atap',
-      _swatches(KostPalette.roofs, _draft.roof,
-              (i) => _edit((s) => s.copyWith(roof: i))),
-    ),
-    _section(
-      'Nama kost di papan',
-      TextField(
-        controller: _nameCtl,
-        maxLength: KostPalette.maxNameLen,
-        textCapitalization: TextCapitalization.characters,
-        inputFormatters: [
-          FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9 ]')),
-          _UpperCaseFormatter(),
-        ],
-        style: const TextStyle(
-            color: Colors.white, fontWeight: FontWeight.w800, letterSpacing: 1),
-        decoration: InputDecoration(
-          isDense: true,
-          hintText: 'Kosong = KOST / EKSKLUSIF / SULTAN',
-          hintStyle: TextStyle(
-              color: Colors.white.withValues(alpha: 0.35),
-              fontSize: 12,
-              letterSpacing: 0),
-          counterStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
-          filled: true,
-          fillColor: Colors.white.withValues(alpha: 0.08),
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide.none,
+  static const List<String> _wallNames = [
+    'Krem', 'Mint', 'Salmon', 'Biru pastel', 'Kuning muda', 'Lavender',
+    'Peach', 'Aqua', 'Pink muda', 'Hijau pucat', 'Susu cokelat', 'Abu biru',
+  ];
+  static const List<String> _roofNames = [
+    'Bata', 'Abu gelap', 'Hijau tua', 'Biru tua', 'Ungu', 'Merah',
+    'Oranye', 'Cokelat tua', 'Teal', 'Abu',
+  ];
+  static const List<String> _signNames = [
+    'Hijau', 'Biru', 'Hitam', 'Merah', 'Ungu', 'Oranye', 'Teal', 'Cokelat',
+  ];
+  static const List<String> _doorNames = [
+    'Cokelat', 'Biru', 'Hijau', 'Merah', 'Kuning', 'Ungu', 'Abu gelap', 'Pink',
+  ];
+  static const List<(IconData, String)> _bldCats = [
+    (Icons.format_paint_rounded, 'Dinding'),
+    (Icons.roofing_rounded, 'Atap'),
+    (Icons.sell_rounded, 'Papan'),
+    (Icons.door_front_door_rounded, 'Pintu'),
+    (Icons.stars_rounded, 'Kelas'),
+  ];
+
+  /// Rumah mungil untuk pratinjau pilihan: warna lain tetap dari draf kamu.
+  Widget _houseThumb({
+    Color? wall,
+    Color? roof,
+    Color? sign,
+    Color? door,
+    int? tier,
+    double w = 58,
+    double h = 46,
+  }) {
+    final tr = tier ?? _previewTier;
+    final wl = wall ?? _draft.wallColor ?? KostPalette.walls[0];
+    final rf = roof ??
+        _draft.roofColor ??
+        (tr == 1
+            ? const Color(0xFF37474F)
+            : Color.lerp(wl, const Color(0xFF8D4B3B), 0.75)!);
+    return SizedBox(
+      width: w,
+      height: h,
+      child: CustomPaint(
+        painter: _HouseThumbPainter(
+          wall: wl,
+          roof: rf,
+          sign: sign ?? _draft.signColor ?? const Color(0xFF477A62),
+          door: door ?? _draft.doorColor ?? const Color(0xFF6D4C41),
+          tier: tr,
+        ),
+      ),
+    );
+  }
+
+  Widget _thumbGrid({
+    required int count,
+    required int? selected,
+    required String Function(int) labelOf,
+    required Widget Function(int) thumb,
+    required void Function(int) pick,
+  }) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        const gap = 8.0;
+        final cols = c.maxWidth >= 320 ? 4 : 3;
+        final w = (c.maxWidth - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (var i = 0; i < count; i++)
+              GestureDetector(
+                onTap: () => pick(i),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  width: w,
+                  padding: const EdgeInsets.symmetric(vertical: 7),
+                  decoration: BoxDecoration(
+                    color: selected == i
+                        ? _amber.withValues(alpha: 0.16)
+                        : Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: selected == i
+                          ? _amber
+                          : Colors.white.withValues(alpha: 0.1),
+                      width: selected == i ? 2 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      thumb(i),
+                      const SizedBox(height: 4),
+                      Text(
+                        labelOf(i),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected == i ? _amber : Colors.white,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _tierCard(int i, String desc) {
+    final on = _previewTier == i;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => setState(() => _previewTier = i),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          margin: EdgeInsets.only(left: i == 0 ? 0 : 8),
+          padding: const EdgeInsets.fromLTRB(6, 10, 6, 10),
+          decoration: BoxDecoration(
+            color: on
+                ? _amber.withValues(alpha: 0.16)
+                : Colors.white.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: on ? _amber : Colors.white.withValues(alpha: 0.1),
+              width: on ? 2 : 1,
+            ),
+          ),
+          child: Column(
+            children: [
+              _houseThumb(tier: i, w: 70, h: 56),
+              const SizedBox(height: 6),
+              Text(
+                _tierNames[i],
+                style: TextStyle(
+                  color: on ? _amber : Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                desc,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.55),
+                  fontSize: 10,
+                ),
+              ),
+            ],
           ),
         ),
-        onChanged: (v) => _edit((s) => s.copyWith(name: v.trim())),
       ),
-    ),
-    _section(
-      'Warna papan',
-      _swatches(KostPalette.signs, _draft.sign,
-              (i) => _edit((s) => s.copyWith(sign: i))),
-    ),
-    _section(
-      'Warna pintu',
-      _swatches(KostPalette.doors, _draft.door,
-              (i) => _edit((s) => s.copyWith(door: i))),
-    ),
-    _section(
-      'Pratinjau kelas kost (hanya di layarmu)',
-      _choices(_tierNames, _previewTier, (i) => setState(() => _previewTier = i)),
-    ),
-  ];
+    );
+  }
+
+  Widget _bldContent() {
+    switch (_bldCat) {
+      case 0:
+        return _section(
+          'Warna dinding',
+          _thumbGrid(
+            count: KostPalette.walls.length,
+            selected: _draft.wall,
+            labelOf: (i) => _wallNames[i],
+            thumb: (i) => _houseThumb(wall: KostPalette.walls[i]),
+            pick: (i) => _edit((s) => s.copyWith(wall: i)),
+          ),
+          value: _draft.wall == null ? 'Bawaan' : _wallNames[_draft.wall!],
+        );
+      case 1:
+        return _section(
+          'Warna atap',
+          _thumbGrid(
+            count: KostPalette.roofs.length,
+            selected: _draft.roof,
+            labelOf: (i) => _roofNames[i],
+            thumb: (i) => _houseThumb(roof: KostPalette.roofs[i]),
+            pick: (i) => _edit((s) => s.copyWith(roof: i)),
+          ),
+          value: _draft.roof == null ? 'Bawaan' : _roofNames[_draft.roof!],
+        );
+      case 2:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _section(
+              'Nama kost di papan',
+              TextField(
+                controller: _nameCtl,
+                maxLength: KostPalette.maxNameLen,
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[A-Za-z0-9 ]')),
+                  _UpperCaseFormatter(),
+                ],
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1),
+                decoration: InputDecoration(
+                  isDense: true,
+                  prefixIcon: const Icon(Icons.edit_rounded,
+                      size: 18, color: Colors.white54),
+                  hintText: 'Kosong = KOST / EKSKLUSIF / SULTAN',
+                  hintStyle: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.35),
+                      fontSize: 12,
+                      letterSpacing: 0),
+                  counterStyle:
+                  TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.08),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+                onChanged: (v) => _edit((s) => s.copyWith(name: v.trim())),
+              ),
+            ),
+            _section(
+              'Warna papan',
+              _thumbGrid(
+                count: KostPalette.signs.length,
+                selected: _draft.sign,
+                labelOf: (i) => _signNames[i],
+                thumb: (i) => _houseThumb(sign: KostPalette.signs[i]),
+                pick: (i) => _edit((s) => s.copyWith(sign: i)),
+              ),
+              value: _draft.sign == null ? 'Bawaan' : _signNames[_draft.sign!],
+            ),
+          ],
+        );
+      case 3:
+        return _section(
+          'Warna pintu',
+          _thumbGrid(
+            count: KostPalette.doors.length,
+            selected: _draft.door,
+            labelOf: (i) => _doorNames[i],
+            thumb: (i) => _houseThumb(door: KostPalette.doors[i]),
+            pick: (i) => _edit((s) => s.copyWith(door: i)),
+          ),
+          value: _draft.door == null ? 'Bawaan' : _doorNames[_draft.door!],
+        );
+      default:
+        return _section(
+          'Pratinjau kelas kost (hanya di layarmu)',
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _tierCard(0, 'Rumah biasa'),
+              _tierCard(1, 'Jendela biru'),
+              _tierCard(2, 'Atap emas'),
+            ],
+          ),
+        );
+    }
+  }
 
   static const List<String> _skinNames = [
     'Terang',
@@ -1263,28 +1527,29 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     );
   }
 
-  Widget _catButton(int i) {
-    final on = _charCat == i;
-    final (icon, label) = _charCats[i];
+  Widget _catBtn(List<(IconData, String)> cats, int cur, int i,
+      void Function(int) on) {
+    final sel = cur == i;
+    final (icon, label) = cats[i];
     return GestureDetector(
-      onTap: () => setState(() => _charCat = i),
+      onTap: () => on(i),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
         padding: const EdgeInsets.symmetric(vertical: 8),
         decoration: BoxDecoration(
-          color: on
+          color: sel
               ? _amber.withValues(alpha: 0.18)
               : Colors.white.withValues(alpha: 0.06),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: on ? _amber : Colors.transparent,
+            color: sel ? _amber : Colors.transparent,
             width: 1.6,
           ),
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 20, color: on ? _amber : Colors.white70),
+            Icon(icon, size: 20, color: sel ? _amber : Colors.white70),
             const SizedBox(height: 2),
             Text(
               label,
@@ -1292,7 +1557,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               style: TextStyle(
                 fontSize: 10.5,
                 fontWeight: FontWeight.w800,
-                color: on ? _amber : Colors.white70,
+                color: sel ? _amber : Colors.white70,
               ),
             ),
           ],
@@ -1301,14 +1566,15 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     );
   }
 
-  Widget _charCatBar() => Row(
-    children: [
-      for (var i = 0; i < _charCats.length; i++) ...[
-        if (i > 0) const SizedBox(width: 6),
-        Expanded(child: _catButton(i)),
-      ],
-    ],
-  );
+  Widget _catBar(List<(IconData, String)> cats, int cur, void Function(int) on) =>
+      Row(
+        children: [
+          for (var i = 0; i < cats.length; i++) ...[
+            if (i > 0) const SizedBox(width: 6),
+            Expanded(child: _catBtn(cats, cur, i, on)),
+          ],
+        ],
+      );
 
   Widget _charContent() {
     switch (_charCat) {
@@ -1561,4 +1827,196 @@ class _AvatarPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _AvatarPainter oldDelegate) => true;
+}
+
+// ======================================================================
+//  KILAU saat bangunan diubah + RUMAH MUNGIL untuk pratinjau pilihan
+// ======================================================================
+
+class _SparkPainter extends CustomPainter {
+  _SparkPainter({
+    required this.cam,
+    required this.stage,
+    required this.index,
+    required this.startMs,
+  });
+
+  final KostStreetCamera cam;
+  final Rect stage;
+  final int index;
+  final int startMs;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final age = sceneNowMs() - startMs;
+    const dur = 750;
+    if (age < 0 || age > dur) return;
+    final q = age / dur;
+    final e = 1 - math.pow(1 - q, 3).toDouble();
+    final s = cam.scale;
+    final o = cam.origin(stage);
+    final c = Offset(
+      o.dx + (index * kStreetSlotW + kStreetSlotW / 2) * s,
+      o.dy + 150 * s,
+    );
+    final p = Paint();
+    p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 3 * (1 - q)
+      ..color = const Color(0xFFFFCA28).withValues(alpha: 0.7 * (1 - q));
+    canvas.drawOval(
+      Rect.fromCenter(center: c, width: 260 * s * e, height: 150 * s * e),
+      p,
+    );
+    p.style = PaintingStyle.fill;
+    for (var i = 0; i < 14; i++) {
+      final ang = i * math.pi * 2 / 14 + i * 0.7;
+      final dist = (60 + (i % 4) * 22) * s * e;
+      final pos = c + Offset(math.cos(ang) * dist * 1.3, math.sin(ang) * dist * 0.8);
+      p.color = (i.isEven ? const Color(0xFFFFE082) : Colors.white)
+          .withValues(alpha: (1 - q) * 0.9);
+      canvas.drawCircle(pos, (1 + (i % 3) * 0.8) * (1 - q * 0.5) * math.max(1.0, s * 1.6), p);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _SparkPainter old) => true;
+}
+
+class _HouseThumbPainter extends CustomPainter {
+  _HouseThumbPainter({
+    required this.wall,
+    required this.roof,
+    required this.sign,
+    required this.door,
+    required this.tier,
+  });
+
+  final Color wall;
+  final Color roof;
+  final Color sign;
+  final Color door;
+  final int tier;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.scale(size.width / 58, size.height / 46);
+    final p = Paint();
+
+    // bayangan
+    p.color = Colors.black.withValues(alpha: 0.25);
+    canvas.drawOval(const Rect.fromLTWH(3, 39, 52, 6), p);
+
+    // dinding
+    final w = tier == 2
+        ? Color.lerp(wall, const Color(0xFFFFF8E1), 0.55)!
+        : (tier == 1 ? Color.lerp(wall, const Color(0xFFECEFF1), 0.45)! : wall);
+    const body = Rect.fromLTRB(7, 18, 51, 41);
+    p
+      ..style = PaintingStyle.fill
+      ..color = w;
+    canvas.drawRect(body, p);
+    p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.8
+      ..color = Color.lerp(w, Colors.black, 0.3)!;
+    canvas.drawRect(body, p);
+    p
+      ..style = PaintingStyle.fill
+      ..color = tier == 2
+          ? const Color(0xFFFFB300)
+          : Color.lerp(w, Colors.black, 0.22)!;
+    canvas.drawRect(const Rect.fromLTWH(7, 38.5, 44, 2.5), p);
+
+    // jendela
+    final glass = tier == 2 ? const Color(0xFFFFE57F) : const Color(0xFFFFDD7A);
+    final frame = tier == 2
+        ? const Color(0xFFFFB300)
+        : (tier == 1 ? const Color(0xFF455A64) : const Color(0xFF6B5843));
+    for (final x in const [11.0, 38.0]) {
+      p
+        ..style = PaintingStyle.fill
+        ..color = glass;
+      canvas.drawRect(Rect.fromLTWH(x, 23, 9, 8), p);
+      p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = frame;
+      canvas.drawRect(Rect.fromLTWH(x, 23, 9, 8), p);
+      canvas.drawLine(Offset(x + 4.5, 23), Offset(x + 4.5, 31), p);
+    }
+
+    // pintu
+    p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFF3E2723);
+    canvas.drawRect(const Rect.fromLTWH(25.4, 27.4, 8.2, 13.6), p);
+    p.color = door;
+    canvas.drawRect(const Rect.fromLTWH(26, 28, 7, 13), p);
+    p.color = const Color(0xFFFFCA28);
+    canvas.drawCircle(const Offset(31.6, 35), 0.7, p);
+
+    // atap
+    if (tier == 2) {
+      p.color = roof;
+      canvas.drawRect(const Rect.fromLTRB(4, 12, 54, 18), p);
+      p.color = const Color(0xFFFFD54F);
+      canvas.drawRect(const Rect.fromLTRB(4, 11, 54, 12.8), p);
+    } else {
+      final path = Path()
+        ..moveTo(3, 18)
+        ..lineTo(11, 9)
+        ..lineTo(47, 9)
+        ..lineTo(55, 18)
+        ..close();
+      p.color = roof;
+      canvas.drawPath(path, p);
+      p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..strokeCap = StrokeCap.round
+        ..color = Color.lerp(roof, Colors.white, 0.4)!.withValues(alpha: 0.8);
+      canvas.drawLine(const Offset(11.5, 9.6), const Offset(46.5, 9.6), p);
+      p
+        ..style = PaintingStyle.fill
+        ..color = Color.lerp(roof, Colors.black, 0.3)!;
+      canvas.drawRect(const Rect.fromLTWH(3, 16.4, 52, 1.6), p);
+    }
+
+    // papan nama
+    final sg = RRect.fromRectAndRadius(
+        const Rect.fromLTWH(19, 1, 20, 8), const Radius.circular(1.6));
+    p
+      ..style = PaintingStyle.fill
+      ..color = sign;
+    canvas.drawRRect(sg, p);
+    p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.7
+      ..color = tier == 2
+          ? const Color(0xFFFFD54F)
+          : Colors.white.withValues(alpha: 0.75);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            const Rect.fromLTWH(19.7, 1.7, 18.6, 6.6), const Radius.circular(1.2)),
+        p);
+    p
+      ..style = PaintingStyle.fill
+      ..color = Colors.white.withValues(alpha: 0.85);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(
+            const Rect.fromLTWH(23, 4, 12, 1.8), const Radius.circular(0.9)),
+        p);
+
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _HouseThumbPainter old) =>
+      old.wall != wall ||
+          old.roof != roof ||
+          old.sign != sign ||
+          old.door != door ||
+          old.tier != tier;
 }

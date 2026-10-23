@@ -1591,24 +1591,12 @@ class _GameScreenState extends State<GameScreen>
                         ),
                       ),
 
-                      // 5b) Kontrol zoom: Rumahku / Semua tetangga / geser rumah
-                      if (n > 0)
-                        Positioned(
-                          right: 12 + pad.right,
-                          top: topInset + max(8.0, (stage.height - 180) / 2),
-                          child: _zoomPanel(
-                            hasHome: me != null,
-                            focusId: focusId,
-                            count: n,
-                          ),
-                        ),
-
-                      // 5c) Tawaran Loket Sampah yang masuk (Terima / Tolak)
-                      if (_incomingOffer != null && alive && !finished)
-                        _offerCard(me, bottomInset + 64, pad),
-
-                      // 6) Pemilih Emoji Reaksi + Kabar Singkat + Bilah Aksi
-                      if (hasBar) ...[
+                      // 5b) DOK BAWAH: semua yang melayang di atas bilah aksi
+                      //     (emoji, kabar singkat, tawaran loket, kontrol zoom)
+                      //     ditumpuk dalam SATU kolom agar tidak saling menimpa.
+                      //     Saat ada serangan masuk, emoji & kabar disembunyikan
+                      //     supaya cincin TANGKIS tidak tertutup.
+                      if (n > 0 || hasBar)
                         Positioned(
                           left: 12 + pad.left,
                           right: 12 + pad.right,
@@ -1616,15 +1604,39 @@ class _GameScreenState extends State<GameScreen>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (_emojiBarOpen)
-                                Padding(
-                                  padding: const EdgeInsets.only(bottom: 6),
-                                  child: _emojiPickerBar(),
+                              if (hasBar && myAttackLeft <= 0) ...[
+                                if (_emojiBarOpen)
+                                  Padding(
+                                    padding: const EdgeInsets.only(bottom: 6),
+                                    child: _emojiPickerBar(),
+                                  ),
+                                IgnorePointer(
+                                  child: Center(child: _eventToast()),
                                 ),
-                              IgnorePointer(child: Center(child: _eventToast())),
+                              ],
+                              if (_incomingOffer != null && alive && !finished)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: _offerCard(me),
+                                ),
+                              if (n > 0)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Align(
+                                    alignment: Alignment.centerRight,
+                                    child: _zoomPanel(
+                                      hasHome: me != null,
+                                      focusId: focusId,
+                                      count: n,
+                                    ),
+                                  ),
+                                ),
                             ],
                           ),
                         ),
+
+                      // 6) Bilah Aksi
+                      if (hasBar) ...[
                         Positioned(
                           left: 12 + pad.left,
                           right: 12 + pad.right,
@@ -1891,11 +1903,11 @@ class _GameScreenState extends State<GameScreen>
     ),
   );
 
-  Widget _moneyChip(Map<String, dynamic> s) {
+  Widget _moneyChip(Map<String, dynamic> s, {bool stacked = false}) {
     final live = _live(s);
     final out = s['eliminated_at'] != null;
     final trRate = _num(s['trash_rate']);
-    return Row(
+    final amount = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         const Icon(Icons.payments, size: 22, color: Color(0xFFFFC107)),
@@ -1905,12 +1917,27 @@ class _GameScreenState extends State<GameScreen>
                 color: Colors.white,
                 fontSize: 21,
                 fontWeight: FontWeight.w800)),
+      ],
+    );
+    final rate = Text(
+      '+${_num(s['income_rate']).toStringAsFixed(1)}/s · ${trRate >= 0 ? '+' : ''}${trRate.toStringAsFixed(2)}🗑️',
+      style: const TextStyle(color: Colors.white70, fontSize: 11),
+    );
+    if (stacked) {
+      // Potret: angka uang besar, laju di bawahnya (tidak ikut mengecil).
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [amount, if (!out) rate],
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        amount,
         if (!out) ...[
           const SizedBox(width: 6),
-          Text(
-            '+${_num(s['income_rate']).toStringAsFixed(1)}/s · ${trRate >= 0 ? '+' : ''}${trRate.toStringAsFixed(2)}🗑️',
-            style: const TextStyle(color: Colors.white70, fontSize: 11),
-          ),
+          rate,
         ],
       ],
     );
@@ -1994,7 +2021,7 @@ class _GameScreenState extends State<GameScreen>
       tooltip: 'Kabar terbaru',
     );
     final code = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
@@ -2003,7 +2030,7 @@ class _GameScreenState extends State<GameScreen>
           style: const TextStyle(
               color: Colors.white,
               fontSize: 12,
-              letterSpacing: 2,
+              letterSpacing: 1.4,
               fontWeight: FontWeight.w800)),
     );
 
@@ -2080,20 +2107,22 @@ class _GameScreenState extends State<GameScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          // Baris 1: kembali · uang (besar, terbaca) · kode ruang · 3 tombol
           Row(
             children: [
               back,
-              code,
-              const SizedBox(width: 8),
               Expanded(
                 child: s == null
                     ? const SizedBox.shrink()
                     : FittedBox(
                   fit: BoxFit.scaleDown,
-                  alignment: Alignment.centerRight,
-                  child: _moneyChip(s),
+                  alignment: Alignment.centerLeft,
+                  child: _moneyChip(s, stacked: true),
                 ),
               ),
+              const SizedBox(width: 6),
+              code,
+              const SizedBox(width: 4),
               boothBtn,
               emojiBtn,
               history,
@@ -2328,6 +2357,7 @@ class _GameScreenState extends State<GameScreen>
     showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
       builder: (ctx) => SafeArea(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxHeight: 440),
@@ -2680,7 +2710,12 @@ class _GameScreenState extends State<GameScreen>
       // Kartu + emoji ditumpuk dalam satu kolom: emoji selalu tepat di atas
       // kartu sehingga tidak pernah tertimpa.
       final bubbleH = emoji != null ? kEmojiBoxH : 0.0;
-      final bottom = max(topInset + 70.0 + bubbleH, roofY - 34 * s - 6);
+      // Rumah sempit (banyak pemain di layar kecil): kartu tetangga akan saling
+      // menimpa, jadi disusun zig-zag pada 2-3 tingkat ketinggian.
+      final rows = ((w + 4) / houseW).ceil().clamp(1, 3).toInt();
+      final lift = (i % rows) * 92.0;
+      final bottom =
+      max(topInset + 70.0 + bubbleH, roofY - 34 * s - 6 - lift);
 
       out.add(
         Positioned(
@@ -2799,7 +2834,7 @@ class _GameScreenState extends State<GameScreen>
               if (!isMe) ...[
                 const SizedBox(width: 10),
                 SizedBox(
-                  width: 156,
+                  width: 168,
                   child: out
                       ? Center(
                     child: Text(
@@ -3033,60 +3068,64 @@ class _GameScreenState extends State<GameScreen>
 
     showModalBottomSheet<void>(
       context: context,
+      isScrollControlled: true, // layar landscape pendek: tidak terpotong
+      constraints: const BoxConstraints(maxWidth: 520),
       backgroundColor: const Color(0xFF1A2820),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
       ),
       builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(8, 14, 8, 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Lempar ke ${_name(id)}',
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w800,
+        child: SingleChildScrollView(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(8, 14, 8, 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'Lempar ke ${_name(id)}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              for (final k in kinds)
-                ListTile(
-                  enabled: k.ok,
-                  dense: true,
-                  leading: Text(k.icon, style: const TextStyle(fontSize: 26)),
-                  title: Text(
-                    k.title,
-                    style: TextStyle(
-                      color: k.ok ? Colors.white : Colors.white38,
-                      fontWeight: FontWeight.w800,
+                const SizedBox(height: 6),
+                for (final k in kinds)
+                  ListTile(
+                    enabled: k.ok,
+                    dense: true,
+                    leading: Text(k.icon, style: const TextStyle(fontSize: 26)),
+                    title: Text(
+                      k.title,
+                      style: TextStyle(
+                        color: k.ok ? Colors.white : Colors.white38,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
-                  ),
-                  subtitle: Text(
-                    k.why ?? k.desc,
-                    style: TextStyle(
-                      color: k.ok ? Colors.white70 : Colors.white30,
-                      fontSize: 12,
+                    subtitle: Text(
+                      k.why ?? k.desc,
+                      style: TextStyle(
+                        color: k.ok ? Colors.white70 : Colors.white30,
+                        fontSize: 12,
+                      ),
                     ),
-                  ),
-                  trailing: Text(
-                    '${k.cost}',
-                    style: TextStyle(
-                      color: k.ok ? const Color(0xFFFFCA28) : Colors.white30,
-                      fontWeight: FontWeight.w900,
-                      fontSize: 16,
+                    trailing: Text(
+                      '${k.cost}',
+                      style: TextStyle(
+                        color: k.ok ? const Color(0xFFFFCA28) : Colors.white30,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 16,
+                      ),
                     ),
+                    onTap: k.ok
+                        ? () {
+                      Navigator.of(ctx).pop();
+                      _act('throw_trash', {'p_target': id, 'p_kind': k.kind});
+                    }
+                        : null,
                   ),
-                  onTap: k.ok
-                      ? () {
-                    Navigator.of(ctx).pop();
-                    _act('throw_trash', {'p_target': id, 'p_kind': k.kind});
-                  }
-                      : null,
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -3101,6 +3140,7 @@ class _GameScreenState extends State<GameScreen>
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 520),
       backgroundColor: const Color(0xFF1A2820),
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
@@ -3130,99 +3170,101 @@ class _GameScreenState extends State<GameScreen>
             ];
 
             return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        const Text('🏪 ', style: TextStyle(fontSize: 22)),
-                        const Expanded(
-                          child: Text(
-                            'Loket Sampah',
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text('🏪 ', style: TextStyle(fontSize: 22)),
+                          const Expanded(
+                            child: Text(
+                              'Loket Sampah',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
-                        ),
-                        if (open)
-                          Text('buka ${left.ceil()} dtk',
-                              style: const TextStyle(
-                                color: Color(0xFF69F0AE),
-                                fontWeight: FontWeight.w800,
-                              )),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    if (!open) ...[
-                      const Text(
-                        'Buka loket (30 uang, aktif 40 detik) untuk menawar uang kepada pemain lain agar mau menampung sampahmu. Mereka boleh menolak.',
-                        style: TextStyle(color: Colors.white70, fontSize: 13),
-                      ),
-                      const SizedBox(height: 12),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: (mine.money >= 30 && _activeRpc == null)
-                              ? () => _act('open_trash_booth')
-                              : null,
-                          child: Text(mine.money >= 30
-                              ? 'Buka Loket · 30'
-                              : 'Uang belum cukup (30)'),
-                        ),
-                      ),
-                    ] else if (rivals.isEmpty) ...[
-                      const Text('Tidak ada pemain lain yang bisa ditawari.',
-                          style: TextStyle(color: Colors.white70)),
-                    ] else ...[
-                      Text('Jumlah sampah: ${amount.round()}',
-                          style: const TextStyle(color: Colors.white)),
-                      Slider(
-                        value: amount,
-                        min: 1,
-                        max: maxAmt,
-                        divisions: maxAmt > 1 ? (maxAmt - 1).round() : null,
-                        onChanged: mine.trash >= 2
-                            ? (v) => setSheet(() => amount = v)
-                            : null,
-                      ),
-                      Text('Kamu bayar: ${price.round()} uang',
-                          style: const TextStyle(color: Colors.white)),
-                      Slider(
-                        value: price,
-                        min: 0,
-                        max: 300,
-                        divisions: 60,
-                        onChanged: (v) => setSheet(() => price = v),
-                      ),
-                      const SizedBox(height: 4),
-                      Wrap(
-                        spacing: 8,
-                        children: [
-                          for (final r in rivals)
-                            FilledButton.icon(
-                              icon: const Icon(Icons.send, size: 16),
-                              label: Text('Tawar ${_name(r)}'),
-                              onPressed: (!_offerBusy &&
-                                  mine.trash >= amount &&
-                                  mine.money >= price)
-                                  ? () => _sendOffer(
-                                  r, amount.round(), price.round())
-                                  : null,
-                            ),
+                          if (open)
+                            Text('buka ${left.ceil()} dtk',
+                                style: const TextStyle(
+                                  color: Color(0xFF69F0AE),
+                                  fontWeight: FontWeight.w800,
+                                )),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        'Tawaran berlaku 10 detik. Uang berpindah hanya bila lawan menerima.',
-                        style: TextStyle(color: Colors.white38, fontSize: 11),
-                      ),
+                      const SizedBox(height: 8),
+                      if (!open) ...[
+                        const Text(
+                          'Buka loket (30 uang, aktif 40 detik) untuk menawar uang kepada pemain lain agar mau menampung sampahmu. Mereka boleh menolak.',
+                          style: TextStyle(color: Colors.white70, fontSize: 13),
+                        ),
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton(
+                            onPressed: (mine.money >= 30 && _activeRpc == null)
+                                ? () => _act('open_trash_booth')
+                                : null,
+                            child: Text(mine.money >= 30
+                                ? 'Buka Loket · 30'
+                                : 'Uang belum cukup (30)'),
+                          ),
+                        ),
+                      ] else if (rivals.isEmpty) ...[
+                        const Text('Tidak ada pemain lain yang bisa ditawari.',
+                            style: TextStyle(color: Colors.white70)),
+                      ] else ...[
+                        Text('Jumlah sampah: ${amount.round()}',
+                            style: const TextStyle(color: Colors.white)),
+                        Slider(
+                          value: amount,
+                          min: 1,
+                          max: maxAmt,
+                          divisions: maxAmt > 1 ? (maxAmt - 1).round() : null,
+                          onChanged: mine.trash >= 2
+                              ? (v) => setSheet(() => amount = v)
+                              : null,
+                        ),
+                        Text('Kamu bayar: ${price.round()} uang',
+                            style: const TextStyle(color: Colors.white)),
+                        Slider(
+                          value: price,
+                          min: 0,
+                          max: 300,
+                          divisions: 60,
+                          onChanged: (v) => setSheet(() => price = v),
+                        ),
+                        const SizedBox(height: 4),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            for (final r in rivals)
+                              FilledButton.icon(
+                                icon: const Icon(Icons.send, size: 16),
+                                label: Text('Tawar ${_name(r)}'),
+                                onPressed: (!_offerBusy &&
+                                    mine.trash >= amount &&
+                                    mine.money >= price)
+                                    ? () => _sendOffer(
+                                    r, amount.round(), price.round())
+                                    : null,
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'Tawaran berlaku 10 detik. Uang berpindah hanya bila lawan menerima.',
+                          style: TextStyle(color: Colors.white38, fontSize: 11),
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             );
@@ -3232,7 +3274,7 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _offerCard(Map<String, dynamic>? me, double bottom, EdgeInsets pad) {
+  Widget _offerCard(Map<String, dynamic>? me) {
     final o = _incomingOffer!;
     final amt = _num(o['trash_amount']).round();
     final price = _num(o['price']).round();
@@ -3240,10 +3282,7 @@ class _GameScreenState extends State<GameScreen>
     final live = me == null ? null : _live(me);
     final cap = me == null ? 1.0 : _num(me['trash_capacity']);
     final fatal = live != null && live.trash + amt >= cap;
-    return Positioned(
-      left: 12 + pad.left,
-      right: 12 + pad.right,
-      bottom: bottom,
+    return Align(
       child: Center(
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
@@ -3338,7 +3377,7 @@ class _GameScreenState extends State<GameScreen>
 
     return _glass(
       padding: const EdgeInsets.all(4),
-      child: Column(
+      child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (hasHome) btn(Icons.home_rounded, 'Zoom ke rumahku', atHome, _zoomHome),
@@ -3349,7 +3388,7 @@ class _GameScreenState extends State<GameScreen>
             count > 1 ? _zoomAll : null,
           ),
           if (count > 1) ...[
-            const SizedBox(height: 2),
+            const SizedBox(width: 2),
             btn(
               Icons.chevron_left_rounded,
               'Rumah sebelumnya',
@@ -3380,7 +3419,7 @@ class _GameScreenState extends State<GameScreen>
     return Tooltip(
       message: tooltip,
       child: SizedBox(
-        height: vertical ? 38 : 28,
+        height: vertical ? 40 : 34,
         child: FilledButton(
           style: FilledButton.styleFrom(
             backgroundColor:

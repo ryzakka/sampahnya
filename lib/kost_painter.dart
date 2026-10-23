@@ -1261,6 +1261,19 @@ extension KostPainterBuilding on KostPainter {
         ..style = PaintingStyle.fill
         ..color = _mix(roofColor, Colors.black, 0.3);
       canvas.drawRect(Rect.fromLTWH(_bl - 8, roofY - 3, 206, 3), _p);
+      // kilau di bubungan + bayangan atap yang jatuh di dinding
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1
+        ..strokeCap = StrokeCap.round
+        ..color = _mix(roofColor, Colors.white, 0.4).withValues(alpha: 0.8);
+      canvas.drawLine(
+          Offset(_bl + 10, roofY - 21.4), Offset(_bl + 180, roofY - 21.4), _p);
+      _p
+        ..style = PaintingStyle.fill
+        ..strokeCap = StrokeCap.butt
+        ..color = Colors.black.withValues(alpha: 0.16);
+      canvas.drawRect(Rect.fromLTWH(_bl, roofY, 190, 4.5), _p);
     }
 
     _p.color =
@@ -1282,6 +1295,20 @@ extension KostPainterBuilding on KostPainter {
             : (d.kostTier == 1
             ? const Color(0xFF0D47A1)
             : const Color(0xFF477A62)));
+    if (!d.compact) {
+      final glow = 0.5 + 0.5 * math.sin(t * 2.4);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = _mix(signBg, Colors.white, 0.5)
+            .withValues(alpha: 0.08 + 0.08 * glow);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(
+          Rect.fromLTWH(116, roofY - 42, 68, 20).inflate(4),
+          const Radius.circular(8),
+        ),
+        _p,
+      );
+    }
     _p
       ..style = PaintingStyle.fill
       ..color = signBg;
@@ -1608,6 +1635,74 @@ extension KostPainterBuilding on KostPainter {
     canvas.drawLine(
         Offset(win.center.dx, win.top), Offset(win.center.dx, win.bottom), _p);
     _p.style = PaintingStyle.fill;
+
+    if (!d.compact) {
+      // kilau kaca yang menyapu pelan
+      canvas.save();
+      canvas.clipRect(win);
+      final gl = (t * 0.16 + idx * 0.37) % 1.0;
+      final gx = win.left - 10 + gl * (win.width + 24);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = Colors.white.withValues(alpha: lit ? 0.14 : 0.2);
+      canvas.drawPath(
+        Path()
+          ..moveTo(gx, win.bottom)
+          ..lineTo(gx + 4, win.bottom)
+          ..lineTo(gx + 10, win.top)
+          ..lineTo(gx + 6, win.top)
+          ..close(),
+        _p,
+      );
+      // tirai yang bergoyang tertiup angin
+      if (lit) {
+        const curtains = [
+          Color(0xFFE57373),
+          Color(0xFF64B5F6),
+          Color(0xFF81C784),
+          Color(0xFFFFB74D),
+        ];
+        final cc =
+        curtains[_hh(idx + 9) % curtains.length].withValues(alpha: 0.8);
+        final cs = math.sin(t * 1.6 + idx * 1.3) * 1.2;
+        _p.color = cc;
+        canvas.drawPath(
+          Path()
+            ..moveTo(win.left, win.top)
+            ..lineTo(win.left + 5 + cs, win.top)
+            ..lineTo(win.left + 3 + cs * 0.6, win.top + win.height * 0.6)
+            ..lineTo(win.left, win.bottom)
+            ..close(),
+          _p,
+        );
+        canvas.drawPath(
+          Path()
+            ..moveTo(win.right, win.top)
+            ..lineTo(win.right - 5 - cs, win.top)
+            ..lineTo(win.right - 3 - cs * 0.6, win.top + win.height * 0.6)
+            ..lineTo(win.right, win.bottom)
+            ..close(),
+          _p,
+        );
+      }
+      canvas.restore();
+      // ambang jendela
+      _p.color = _mix(wall, Colors.black, 0.32);
+      canvas.drawRect(
+          Rect.fromLTWH(win.left - 2, win.bottom, win.width + 4, 2.4), _p);
+      // pot tanaman di ambang
+      if (idx % 3 == 0) {
+        final sx = math.sin(t * 1.8 + idx) * 0.5;
+        _p.color = const Color(0xFFBF6B3F);
+        canvas.drawRect(
+            Rect.fromLTWH(win.left + 1, win.bottom - 4.2, 6, 4.2), _p);
+        _p.color = const Color(0xFF5CAA5E);
+        canvas.drawCircle(
+            Offset(win.left + 4 + sx, win.bottom - 6.2), 2.8, _p);
+        canvas.drawCircle(
+            Offset(win.left + 1.6 + sx, win.bottom - 4.9), 1.9, _p);
+      }
+    }
 
     if (d.kostTier >= 1) {
       _p.color = const Color(0xFF80D8FF).withValues(alpha: 0.38);

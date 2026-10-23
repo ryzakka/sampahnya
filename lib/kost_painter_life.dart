@@ -194,15 +194,34 @@ extension KostPainterResidents on KostPainter {
   void _drawDoor(Canvas canvas, double open) {
     if (d.compact) return;
     const door = Rect.fromLTWH(195, 214, 12, 22);
+    final dc = d.style?.doorColor ?? const Color(0xFF6D4C41);
+
+    // kusen
     _p
       ..style = PaintingStyle.fill
-      ..color = _mix(const Color(0xFF2B1F18), const Color(0xFFFFC860), open * 0.6);
-    canvas.drawRect(door, _p);
-    _p.color = d.style?.doorColor ?? const Color(0xFF6D4C41);
+      ..color = _mix(dc, Colors.black, 0.5);
     canvas.drawRect(
-      Rect.fromLTWH(door.left, door.top, door.width * (1 - 0.75 * open), door.height),
-      _p,
-    );
+        Rect.fromLTRB(door.left - 1.6, door.top - 1.6, door.right + 1.6,
+            door.bottom),
+        _p);
+    // ruang di balik pintu (menyala hangat saat terbuka)
+    _p.color =
+        _mix(const Color(0xFF2B1F18), const Color(0xFFFFC860), open * 0.6);
+    canvas.drawRect(door, _p);
+    // daun pintu
+    final leafW = door.width * (1 - 0.75 * open);
+    _p.color = dc;
+    canvas.drawRect(
+        Rect.fromLTWH(door.left, door.top, leafW, door.height), _p);
+    if (open < 0.5) {
+      // panel bawah + kaca kecil
+      _p.color = _mix(dc, Colors.black, 0.2);
+      canvas.drawRect(
+          Rect.fromLTWH(door.left + 1.8, door.top + 11.5, leafW - 3.6, 8), _p);
+      _p.color = const Color(0xFFB3E5FC).withValues(alpha: 0.75);
+      canvas.drawRect(
+          Rect.fromLTWH(door.left + 2.2, door.top + 2.4, leafW - 4.4, 6), _p);
+    }
     if (open < 0.3) {
       _p.color = const Color(0xFFFFCA28);
       canvas.drawCircle(Offset(door.right - 2.5, door.top + 12), 0.9, _p);
@@ -213,6 +232,26 @@ extension KostPainterResidents on KostPainter {
       ..color = const Color(0xFF3E2723);
     canvas.drawRect(door, _p);
     _p.style = PaintingStyle.fill;
+
+    // kanopi kecil di atas pintu (warna ikut papan nama)
+    _p.color = d.style?.signColor ?? const Color(0xFF477A62);
+    canvas.drawPath(
+      Path()
+        ..moveTo(door.left - 3, door.top - 1.6)
+        ..lineTo(door.right + 3, door.top - 1.6)
+        ..lineTo(door.right + 1.6, door.top - 6)
+        ..lineTo(door.left - 1.6, door.top - 6)
+        ..close(),
+      _p,
+    );
+    _p.color = Colors.white.withValues(alpha: 0.25);
+    canvas.drawRect(
+        Rect.fromLTRB(door.left - 3, door.top - 2.6, door.right + 3, door.top - 1.6),
+        _p);
+    // keset kaki
+    _p.color = const Color(0xFF5D4037).withValues(alpha: 0.85);
+    canvas.drawRect(
+        Rect.fromLTWH(door.left - 1, door.bottom - 1.2, door.width + 2, 2), _p);
   }
 
   /// Gelembung ikon kecil di atas kepala penghuni.
