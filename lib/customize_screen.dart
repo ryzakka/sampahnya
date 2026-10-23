@@ -82,6 +82,12 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   int _tab = 0; // 0 bangunan, 1 karakter
   int _previewTier = 0;
 
+  // ruang kostum
+  String? _focusId; // pemain yang sedang disorot di panggung
+  KostPose _pose = KostPose.wave;
+  bool _faceRight = true;
+  int _charCat = 0; // kategori kustomisasi karakter
+
   RealtimeChannel? _channel;
   Timer? _saveTimer;
   Timer? _beat;
@@ -268,7 +274,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                           : Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          Expanded(flex: 5, child: view),
+                          Expanded(flex: 6, child: view),
                           const SizedBox(height: 10),
                           Expanded(flex: 5, child: panel),
                         ],
@@ -564,6 +570,20 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     return out;
   }
 
+  static const List<(KostPose, IconData, String)> _poses = [
+    (KostPose.stand, Icons.accessibility_new_rounded, 'Santai'),
+    (KostPose.wave, Icons.waving_hand_rounded, 'Lambai'),
+    (KostPose.cheer, Icons.celebration_rounded, 'Senang'),
+    (KostPose.proud, Icons.emoji_events_rounded, 'Bangga'),
+  ];
+
+  _Entry _hero(List<_Entry> list) {
+    final f = list.where((e) => e.id == _focusId).firstOrNull;
+    if (f != null) return f;
+    final me = list.where((e) => e.isMe).firstOrNull;
+    return me ?? list.first;
+  }
+
   Widget _stageView(List<_Entry> list) {
     final n = list.length;
     if (n == 0) {
@@ -571,6 +591,12 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         child: Text('Menunggu pemain…', style: TextStyle(color: Colors.white70)),
       );
     }
+    final hero = _hero(list);
+    final others = [
+      for (final e in list)
+        if (e.id != hero.id) e,
+    ];
+    final heroLook = kostLookFor(hero.id, hero.style);
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: DecoratedBox(
@@ -582,35 +608,33 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         child: Stack(
           children: [
             Positioned.fill(
-              child: CustomPaint(painter: _StagePainter(_anim)),
+              child: CustomPaint(painter: _StagePainter(_anim, heroLook.shirt)),
             ),
             Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 40, 20, 12),
-                child: Row(
+                padding: const EdgeInsets.fromLTRB(12, 22, 12, 10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    for (var i = 0; i < n; i++)
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Expanded(
-                              child: CustomPaint(
-                                painter: _AvatarPainter(
-                                  look: kostLookFor(list[i].id, list[i].style),
-                                  anim: _anim,
-                                  waving: list[i].isMe,
-                                  phase: i * 1.3,
-                                  faceRight: n == 1 ? true : i < n / 2,
-                                  highlight: list[i].isMe,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Center(child: _tag(list[i])),
-                          ],
+                    Expanded(
+                      child: CustomPaint(
+                        painter: _AvatarPainter(
+                          look: heroLook,
+                          anim: _anim,
+                          pose: _pose,
+                          phase: 0,
+                          faceRight: _faceRight,
+                          highlight: hero.isMe,
+                          accent: heroLook.shirt,
                         ),
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    _heroBar(hero),
+                    if (others.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _roster(others),
+                    ],
                   ],
                 ),
               ),
@@ -620,6 +644,169 @@ class _CustomizeScreenState extends State<CustomizeScreen>
       ),
     );
   }
+
+  Widget _miniBtn(IconData icon, String tip, bool on, VoidCallback onTap) =>
+      Tooltip(
+        message: tip,
+        child: GestureDetector(
+          onTap: onTap,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 140),
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: on ? _amber : Colors.white.withValues(alpha: 0.12),
+              border: Border.all(
+                color: on ? _amber : Colors.white.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Icon(icon, size: 18, color: on ? Colors.black87 : Colors.white70),
+          ),
+        ),
+      );
+
+  Widget _heroBar(_Entry e) {
+    final (icon, label, color) = _statusInfo(e.status);
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+            decoration: BoxDecoration(
+              color: _surface.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: e.isMe
+                    ? _amber.withValues(alpha: 0.8)
+                    : Colors.white.withValues(alpha: 0.18),
+                width: e.isMe ? 1.6 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                KostHeadIcon(
+                  look: kostLookFor(e.id, e.style),
+                  size: 30,
+                  ring: e.isMe ? _amber : null,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${e.name}${e.isMe ? ' (Anda)' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: e.isMe ? _amber : Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Icon(icon, size: 12, color: color),
+                          const SizedBox(width: 3),
+                          Text(
+                            label,
+                            style: TextStyle(
+                              color: color,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        _miniBtn(Icons.flip_rounded, 'Balik arah', false,
+                () => setState(() => _faceRight = !_faceRight)),
+        for (final (pose, pIcon, pLabel) in _poses) ...[
+          const SizedBox(width: 6),
+          _miniBtn(pIcon, pLabel, _pose == pose,
+                  () => setState(() => _pose = pose)),
+        ],
+      ],
+    );
+  }
+
+  /// Pemain lain di ruang kostum: ketuk untuk menyorot karakternya.
+  Widget _roster(List<_Entry> others) => SizedBox(
+    height: 46,
+    child: ListView.separated(
+      scrollDirection: Axis.horizontal,
+      itemCount: others.length,
+      separatorBuilder: (_, __) => const SizedBox(width: 8),
+      itemBuilder: (context, i) {
+        final e = others[i];
+        final st = _statusInfo(e.status);
+        return GestureDetector(
+          onTap: () => setState(() => _focusId = e.id),
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(6, 5, 12, 5),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: e.isMe
+                    ? _amber.withValues(alpha: 0.6)
+                    : Colors.white.withValues(alpha: 0.14),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                KostHeadIcon(
+                  look: kostLookFor(e.id, e.style),
+                  size: 30,
+                  ring: e.isMe ? _amber : null,
+                ),
+                const SizedBox(width: 7),
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      e.isMe ? '${e.name} (Anda)' : e.name,
+                      maxLines: 1,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Icon(st.$1, size: 11, color: st.$3),
+                        const SizedBox(width: 3),
+                        Text(
+                          st.$2,
+                          style: TextStyle(
+                            color: st.$3,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    ),
+  );
 
   // ------------------------------------------------------------- panel
 
@@ -658,54 +845,65 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   );
 
   Widget _editPanel() {
+    final chars = _tab == 1;
     return _panelShell(
-      body: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            if (_error != null)
-              Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: Colors.red.withValues(alpha: 0.18),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(_error!,
-                    style: const TextStyle(color: Colors.white, fontSize: 12)),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_error != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 10),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.18),
+                borderRadius: BorderRadius.circular(12),
               ),
-            ..._tab == 0 ? _buildingControls() : _characterControls(),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      _edit((s) => _tab == 0
-                          ? s.randomBuilding(_rnd)
-                          : s.randomCharacter(_rnd));
-                    },
-                    style: _outlined,
-                    icon: const Icon(Icons.casino_rounded, size: 18),
-                    label: const Text('Acak'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      _edit((s) =>
-                      _tab == 0 ? s.clearBuilding() : s.clearCharacter());
-                      if (_tab == 0) _nameCtl.clear();
-                    },
-                    style: _outlined,
-                    icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                    label: const Text('Bawaan'),
-                  ),
-                ),
-              ],
+              child: Text(_error!,
+                  style: const TextStyle(color: Colors.white, fontSize: 12)),
             ),
+          if (chars) ...[
+            _charCatBar(),
+            const SizedBox(height: 12),
           ],
-        ),
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: chars ? [_charContent()] : _buildingControls(),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    _edit((s) => _tab == 0
+                        ? s.randomBuilding(_rnd)
+                        : s.randomCharacter(_rnd));
+                  },
+                  style: _outlined,
+                  icon: const Icon(Icons.casino_rounded, size: 18),
+                  label: const Text('Acak'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: () {
+                    _edit((s) =>
+                    _tab == 0 ? s.clearBuilding() : s.clearCharacter());
+                    if (_tab == 0) _nameCtl.clear();
+                  },
+                  style: _outlined,
+                  icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                  label: const Text('Bawaan'),
+                ),
+              ),
+            ],
+          ),
+        ],
       ),
       footer: _doneButton('Selesai kustomisasi'),
     );
@@ -776,52 +974,156 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     letterSpacing: 0.4,
   );
 
-  Widget _section(String title, Widget child) => Padding(
+  Widget _section(String title, Widget child, {String? value}) => Padding(
     padding: const EdgeInsets.only(bottom: 14),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: _labelStyle),
+        Row(
+          children: [
+            Text(title, style: _labelStyle),
+            if (value != null) ...[
+              const SizedBox(width: 8),
+              Flexible(
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _amber,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
         const SizedBox(height: 8),
         child,
       ],
     ),
   );
 
-  Widget _swatches(List<Color> colors, int? selected, void Function(int) pick) {
+  Widget _swatches(
+      List<Color> colors,
+      int? selected,
+      void Function(int) pick, {
+        List<String>? names,
+      }) {
     return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+      spacing: 4,
+      runSpacing: 4,
       children: [
         for (var i = 0; i < colors.length; i++)
-          GestureDetector(
-            onTap: () => pick(i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 140),
-              width: 36,
-              height: 36,
-              decoration: BoxDecoration(
-                color: colors[i],
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: selected == i
-                      ? _amber
-                      : Colors.white.withValues(alpha: 0.28),
-                  width: selected == i ? 3 : 1.5,
+          Tooltip(
+            message: names != null && i < names.length ? names[i] : '',
+            child: GestureDetector(
+              onTap: () => pick(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 140),
+                width: 46,
+                height: 46,
+                padding: const EdgeInsets.all(3.5),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: selected == i ? _amber : Colors.transparent,
+                    width: 2.5,
+                  ),
+                ),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colors[i],
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.28),
+                      width: 1.2,
+                    ),
+                    boxShadow: selected == i
+                        ? [
+                      BoxShadow(
+                        color: colors[i].withValues(alpha: 0.55),
+                        blurRadius: 8,
+                      ),
+                    ]
+                        : null,
+                  ),
+                  child: selected == i
+                      ? Icon(
+                    Icons.check_rounded,
+                    size: 18,
+                    color: colors[i].computeLuminance() > 0.5
+                        ? Colors.black87
+                        : Colors.white,
+                  )
+                      : null,
                 ),
               ),
-              child: selected == i
-                  ? Icon(
-                Icons.check_rounded,
-                size: 16,
-                color: colors[i].computeLuminance() > 0.5
-                    ? Colors.black87
-                    : Colors.white,
-              )
-                  : null,
             ),
           ),
       ],
+    );
+  }
+
+  /// Kisi pilihan bergambar: tiap kotak menampilkan pratinjau kepala
+  /// dengan opsi tersebut, jadi tidak perlu menebak dari nama.
+  Widget _tileGrid({
+    required List<String> labels,
+    required int selected,
+    required KostLook Function(int) lookOf,
+    required void Function(int) pick,
+  }) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        const gap = 8.0;
+        final cols = c.maxWidth >= 300 ? 3 : 2;
+        final w = (c.maxWidth - gap * (cols - 1)) / cols;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: [
+            for (var i = 0; i < labels.length; i++)
+              GestureDetector(
+                onTap: () => pick(i),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  width: w,
+                  padding: const EdgeInsets.symmetric(vertical: 9),
+                  decoration: BoxDecoration(
+                    color: selected == i
+                        ? _amber.withValues(alpha: 0.16)
+                        : Colors.white.withValues(alpha: 0.06),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: selected == i
+                          ? _amber
+                          : Colors.white.withValues(alpha: 0.1),
+                      width: selected == i ? 2 : 1,
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      KostHeadIcon(look: lookOf(i), size: 46),
+                      const SizedBox(height: 5),
+                      Text(
+                        labels[i],
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: selected == i ? _amber : Colors.white,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -906,33 +1208,188 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     ),
   ];
 
-  List<Widget> _characterControls() => [
-    _section(
-      'Warna kulit',
-      _swatches(KostPalette.skins, _draft.skin ?? 1,
-              (i) => _edit((s) => s.copyWith(skin: i))),
-    ),
-    _section(
-      'Baju',
-      _swatches(KostPalette.shirts, _draft.shirt,
-              (i) => _edit((s) => s.copyWith(shirt: i))),
-    ),
-    _section(
-      'Gaya rambut',
-      _choices(KostPalette.hairNames, _draft.hair,
-              (i) => _edit((s) => s.copyWith(hair: i))),
-    ),
-    _section(
-      'Warna rambut / topi',
-      _swatches(KostPalette.hairColors, _draft.hairColor,
-              (i) => _edit((s) => s.copyWith(hairColor: i))),
-    ),
-    _section(
-      'Aksesori',
-      _choices(KostPalette.accNames, _draft.acc,
-              (i) => _edit((s) => s.copyWith(acc: i))),
-    ),
+  static const List<String> _skinNames = [
+    'Terang',
+    'Sawo muda',
+    'Sawo matang',
+    'Cokelat',
+    'Gelap',
+    'Pucat',
   ];
+
+  static const List<String> _shirtNames = [
+    'Biru',
+    'Merah',
+    'Hijau',
+    'Ungu',
+    'Kuning',
+    'Oranye',
+    'Tosca',
+    'Pink',
+    'Cokelat',
+    'Abu gelap',
+    'Putih',
+    'Hijau muda',
+  ];
+
+  static const List<String> _hairColorNames = [
+    'Hitam',
+    'Cokelat',
+    'Cokelat tua',
+    'Pirang',
+    'Jahe',
+    'Uban',
+    'Biru',
+    'Pink',
+  ];
+
+  static const List<(IconData, String)> _charCats = [
+    (Icons.face_rounded, 'Kulit'),
+    (Icons.checkroom_rounded, 'Baju'),
+    (Icons.content_cut_rounded, 'Rambut'),
+    (Icons.palette_rounded, 'Warna'),
+    (Icons.auto_awesome_rounded, 'Aksesori'),
+  ];
+
+  /// Tampilan karakterku dengan satu opsi diganti (untuk pratinjau kotak).
+  KostLook _lookWith({int? hair, int? acc}) {
+    final base = kostLookFor(_myId ?? '', _draft);
+    return KostLook(
+      skin: base.skin,
+      shirt: base.shirt,
+      hair: hair ?? base.hair,
+      hairColor: base.hairColor,
+      acc: acc ?? base.acc,
+    );
+  }
+
+  Widget _catButton(int i) {
+    final on = _charCat == i;
+    final (icon, label) = _charCats[i];
+    return GestureDetector(
+      onTap: () => setState(() => _charCat = i),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: on
+              ? _amber.withValues(alpha: 0.18)
+              : Colors.white.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: on ? _amber : Colors.transparent,
+            width: 1.6,
+          ),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 20, color: on ? _amber : Colors.white70),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
+                color: on ? _amber : Colors.white70,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _charCatBar() => Row(
+    children: [
+      for (var i = 0; i < _charCats.length; i++) ...[
+        if (i > 0) const SizedBox(width: 6),
+        Expanded(child: _catButton(i)),
+      ],
+    ],
+  );
+
+  Widget _charContent() {
+    switch (_charCat) {
+      case 0:
+        {
+          final cur = _draft.skin ?? 1;
+          return _section(
+            'Warna kulit',
+            _swatches(KostPalette.skins, cur,
+                    (i) => _edit((s) => s.copyWith(skin: i)),
+                names: _skinNames),
+            value: _skinNames[cur],
+          );
+        }
+      case 1:
+        return _section(
+          'Warna baju',
+          _swatches(KostPalette.shirts, _draft.shirt,
+                  (i) => _edit((s) => s.copyWith(shirt: i)),
+              names: _shirtNames),
+          value: _draft.shirt == null ? 'Bawaan' : _shirtNames[_draft.shirt!],
+        );
+      case 2:
+        return _section(
+          'Gaya rambut',
+          _tileGrid(
+            labels: KostPalette.hairNames,
+            selected: _draft.hair,
+            lookOf: (i) => _lookWith(hair: i, acc: 0),
+            pick: (i) => _edit((s) => s.copyWith(hair: i)),
+          ),
+          value: KostPalette.hairNames[_draft.hair],
+        );
+      case 3:
+        return _section(
+          'Warna rambut / topi',
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _swatches(KostPalette.hairColors, _draft.hairColor,
+                      (i) => _edit((s) => s.copyWith(hairColor: i)),
+                  names: _hairColorNames),
+              if (_draft.hair == 0 && _draft.acc != 4)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline_rounded,
+                          size: 14, color: Colors.white.withValues(alpha: 0.55)),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          'Warna ini baru terlihat setelah kamu memilih gaya '
+                              'rambut, topi, atau kumis.',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.55),
+                            fontSize: 11.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+          value: _hairColorNames[_draft.hairColor],
+        );
+      default:
+        return _section(
+          'Aksesori',
+          _tileGrid(
+            labels: KostPalette.accNames,
+            selected: _draft.acc,
+            lookOf: (i) => _lookWith(acc: i),
+            pick: (i) => _edit((s) => s.copyWith(acc: i)),
+          ),
+          value: KostPalette.accNames[_draft.acc],
+        );
+    }
+  }
 }
 
 class _UpperCaseFormatter extends TextInputFormatter {
@@ -948,9 +1405,12 @@ class _UpperCaseFormatter extends TextInputFormatter {
 // ======================================================================
 
 class _StagePainter extends CustomPainter {
-  _StagePainter(this.anim) : super(repaint: anim);
+  _StagePainter(this.anim, this.accent) : super(repaint: anim);
 
   final Animation<double> anim;
+
+  /// Warna cahaya di belakang karakter (mengikuti warna baju).
+  final Color accent;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -958,52 +1418,47 @@ class _StagePainter extends CustomPainter {
     final t = sceneNowMs() / 1000.0;
     final p = Paint();
 
-    // dinding
+    // latar gradasi
     p.shader = const LinearGradient(
       begin: Alignment.topCenter,
       end: Alignment.bottomCenter,
-      colors: [Color(0xFF1A3226), Color(0xFF0F1D16)],
+      colors: [Color(0xFF1B3629), Color(0xFF0B1610)],
+    ).createShader(Offset.zero & size);
+    canvas.drawRect(Offset.zero & size, p);
+
+    // cahaya lembut di belakang karakter
+    p.shader = RadialGradient(
+      colors: [
+        accent.withValues(alpha: 0.30),
+        accent.withValues(alpha: 0.0),
+      ],
+    ).createShader(
+      Rect.fromCircle(
+          center: Offset(w / 2, h * 0.42), radius: math.max(w, h) * 0.5),
+    );
+    canvas.drawRect(Offset.zero & size, p);
+
+    // vinyet tepi
+    p.shader = const RadialGradient(
+      radius: 1.0,
+      colors: [Color(0x00000000), Color(0x59000000)],
+      stops: [0.6, 1.0],
     ).createShader(Offset.zero & size);
     canvas.drawRect(Offset.zero & size, p);
     p.shader = null;
 
-    // motif garis tipis pada dinding
-    p
-      ..color = Colors.white.withValues(alpha: 0.035)
-      ..strokeWidth = 1;
-    for (var x = 0.0; x < w; x += 26) {
-      canvas.drawLine(Offset(x, 0), Offset(x, h * 0.78), p);
-    }
-
-    // lantai papan kayu
-    final floorTop = h * 0.78;
-    p.color = const Color(0xFF1E3326);
-    canvas.drawRect(Rect.fromLTRB(0, floorTop, w, h), p);
-    p
-      ..color = Colors.black.withValues(alpha: 0.25)
-      ..strokeWidth = 1.2;
-    for (var y = floorTop + 10; y < h; y += 14) {
-      canvas.drawLine(Offset(0, y), Offset(w, y), p);
-    }
-
-    // tirai kiri & kanan
-    final cw = math.min(28.0, w * 0.06);
-    for (final left in [true, false]) {
-      final r = left ? Rect.fromLTWH(0, 0, cw, floorTop) : Rect.fromLTWH(w - cw, 0, cw, floorTop);
-      p.color = const Color(0xFF5D1F2A);
-      canvas.drawRect(r, p);
-      p
-        ..color = Colors.black.withValues(alpha: 0.22)
-        ..strokeWidth = 2;
-      for (var x = r.left + cw / 4; x < r.right; x += cw / 4) {
-        canvas.drawLine(Offset(x, 0), Offset(x, floorTop), p);
-      }
+    // partikel berkilau naik pelan
+    for (var i = 0; i < 16; i++) {
+      final fx = (i * 0.618034) % 1.0;
+      final speed = 0.015 + (i % 4) * 0.008;
+      final fy = 1.0 - ((i * 0.381966 + t * speed) % 1.0);
+      final tw = 0.5 + 0.5 * math.sin(t * 2.0 + i * 2.1);
+      p.color = Colors.white.withValues(alpha: 0.05 + 0.20 * tw);
+      canvas.drawCircle(Offset(fx * w, fy * h), 1.0 + (i % 3) * 0.6, p);
     }
 
     // rel lampu di atas
-    p
-      ..color = const Color(0xFF263238)
-      ..style = PaintingStyle.fill;
+    p.color = const Color(0xFF263238);
     canvas.drawRect(Rect.fromLTWH(0, 0, w, 8), p);
     final count = math.max(6, (w / 34).floor());
     for (var i = 0; i < count; i++) {
@@ -1014,21 +1469,6 @@ class _StagePainter extends CustomPainter {
       p.color = const Color(0xFFFFF8E1).withValues(alpha: 0.6 + 0.4 * tw);
       canvas.drawCircle(Offset(x, 14), 2.6, p);
     }
-
-    // papan judul
-    final tp = TextPainter(
-      text: const TextSpan(
-        text: 'RUANG KOSTUM',
-        style: TextStyle(
-          color: Color(0xFFFFCA28),
-          fontSize: 12,
-          fontWeight: FontWeight.w900,
-          letterSpacing: 3,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    tp.paint(canvas, Offset((w - tp.width) / 2, 26));
   }
 
   @override
@@ -1039,18 +1479,20 @@ class _AvatarPainter extends CustomPainter {
   _AvatarPainter({
     required this.look,
     required this.anim,
-    required this.waving,
+    required this.pose,
     required this.phase,
     required this.faceRight,
     required this.highlight,
+    required this.accent,
   }) : super(repaint: anim);
 
   final KostLook look;
   final Animation<double> anim;
-  final bool waving;
+  final KostPose pose;
   final double phase;
   final bool faceRight;
   final bool highlight;
+  final Color accent;
 
   final Paint _p = Paint();
 
@@ -1058,7 +1500,7 @@ class _AvatarPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     if (size.width <= 4 || size.height <= 4) return;
     final t = sceneNowMs() / 1000.0;
-    final s = math.min(size.width / 18, size.height / 30);
+    final s = math.min(size.width / 20, size.height / 32);
     final fx = size.width / 2;
     final fy = size.height * 0.84;
 
@@ -1082,26 +1524,36 @@ class _AvatarPainter extends CustomPainter {
     canvas.drawPath(spot, _p);
     _p.shader = null;
 
-    // podium
+    // podium silinder: sisi, lalu permukaan atas
     final pod = Rect.fromCenter(
-        center: Offset(fx, fy + 1.6 * s), width: 20 * s, height: 4.2 * s);
-    _p.color = const Color(0xFF22402F);
+        center: Offset(fx, fy + 0.9 * s), width: 20 * s, height: 3.4 * s);
+    _p.color = const Color(0xFF16291E);
+    canvas.drawRect(
+        Rect.fromLTRB(
+            pod.left, pod.center.dy, pod.right, pod.center.dy + 0.9 * s),
+        _p);
+    canvas.drawOval(pod.shift(Offset(0, 0.9 * s)), _p);
+    _p.color = const Color(0xFF2B4F3D);
     canvas.drawOval(pod, _p);
     _p
       ..style = PaintingStyle.stroke
-      ..strokeWidth = highlight ? 2.4 : 1.2
-      ..color = highlight
-          ? const Color(0xFFFFCA28)
-          : Colors.white.withValues(alpha: 0.25);
+      ..strokeWidth = highlight ? 2.4 : 1.4
+      ..color = accent.withValues(alpha: highlight ? 0.9 : 0.5);
     canvas.drawOval(pod, _p);
     _p.style = PaintingStyle.fill;
+
+    // bayangan di bawah kaki
+    _p.color = Colors.black.withValues(alpha: 0.28);
+    canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(fx, fy + 0.25 * s), width: 8 * s, height: 1.8 * s),
+        _p);
 
     // karakter
     canvas.save();
     canvas.translate(fx, fy);
     canvas.scale(faceRight ? s : -s, s);
-    paintKostCharacter(canvas, _p, look,
-        t: t, pose: waving ? KostPose.wave : KostPose.stand, phase: phase);
+    paintKostCharacter(canvas, _p, look, t: t, pose: pose, phase: phase);
     canvas.restore();
 
     canvas.restore();

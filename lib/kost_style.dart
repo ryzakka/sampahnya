@@ -553,6 +553,18 @@ void paintKostCharacter(
       const Offset(-0.6, -6), Offset(-1.2 - stance + sw, 0), p);
   canvas.drawLine(
       const Offset(0.6, -6), Offset(1.2 + stance - sw, 0), p);
+  // sepatu
+  p
+    ..style = PaintingStyle.fill
+    ..color = const Color(0xFF263238);
+  canvas.drawOval(
+      Rect.fromCenter(
+          center: Offset(-0.5 - stance + sw, -0.2), width: 2.8, height: 1.3),
+      p);
+  canvas.drawOval(
+      Rect.fromCenter(
+          center: Offset(2.0 + stance - sw, -0.2), width: 2.8, height: 1.3),
+      p);
 
   // ---- badan atas (miring di pinggul) ----
   canvas.save();
@@ -650,6 +662,11 @@ void paintKostCharacter(
   // kepala
   p.color = look.skin;
   canvas.drawCircle(const Offset(0, -17.5), 3.2, p);
+  // pipi merona
+  p
+    ..style = PaintingStyle.fill
+    ..color = const Color(0xFFFF8A80).withValues(alpha: 0.35);
+  canvas.drawCircle(const Offset(2.35, -16.9), 0.55, p);
   _paintFace(canvas, p, pose, mask);
 
   canvas.save();
