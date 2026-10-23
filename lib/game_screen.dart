@@ -150,7 +150,7 @@ class _GameScreenState extends State<GameScreen>
         l.removeWhere((f) =>
         now - f.startMs > (f.durMs > 0 ? f.durMs + 800 : 6000));
       }
-      _shots.removeWhere((sh) => sh.age > sh.durMs + 400);
+      _shots.removeWhere((sh) => sh.age > sh.durMs + 1500);
       if (_incomingOffer != null &&
           _remaining(_incomingOffer!['expires_at']) <= 0) {
         _incomingOffer = null;

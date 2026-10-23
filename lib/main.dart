@@ -48,7 +48,6 @@ class _Ui {
   // Warna
   static const bg = Color(0xFF0A140F);
   static const surface = Color(0xFF12221A);
-  static const surfaceHigh = Color(0xFF1B3226);
   static const green = Color(0xFF2E7D32);
   static const greenBright = Color(0xFF43A047);
   static const greenSoft = Color(0xFF81C784);
@@ -60,8 +59,6 @@ class _Ui {
   static const wideBreakpoint = 860.0;
 
   // Jarak
-  static const gap8 = SizedBox(height: 8);
-  static const gap12 = SizedBox(height: 12);
   static const gap16 = SizedBox(height: 16);
   static const gap24 = SizedBox(height: 24);
 
@@ -120,12 +117,11 @@ class _GlassPanel extends StatelessWidget {
   const _GlassPanel({
     required this.child,
     this.padding = const EdgeInsets.all(24),
-    this.radius = 28,
   });
 
   final Widget child;
   final EdgeInsets padding;
-  final double radius;
+  static const double radius = 28;
 
   @override
   Widget build(BuildContext context) {
@@ -166,7 +162,6 @@ class _ActionButton extends StatelessWidget {
     this.background = _Ui.amber,
     this.foreground = Colors.black87,
     this.busy = false,
-    this.height = 54,
   });
 
   final String label;
@@ -175,7 +170,7 @@ class _ActionButton extends StatelessWidget {
   final Color background;
   final Color foreground;
   final bool busy;
-  final double height;
+  static const double height = 54;
 
   @override
   Widget build(BuildContext context) {
