@@ -137,7 +137,8 @@ class _GameScreenState extends State<GameScreen>
       if (!mounted) return;
       final now = sceneNowMs();
       for (final l in _fx.values) {
-        l.removeWhere((f) => now - f.startMs > 6000);
+        l.removeWhere((f) =>
+        now - f.startMs > (f.durMs > 0 ? f.durMs + 800 : 6000));
       }
       _shots.removeWhere((sh) => sh.age > sh.durMs + 400);
       // Jendela Tangkis habis -> minta server menyelesaikan serangan segera
@@ -305,13 +306,14 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  void _ensureFx(String? id, FxType t, {double amount = 0, String? peer}) {
+  void _ensureFx(String? id, FxType t,
+      {double amount = 0, String? peer, int durMs = 0}) {
     if (id == null) return;
     final list = _fx[id] ??= <KostFx>[];
     final hasRecent =
     list.any((f) => f.type == t && f.amount == amount && f.age < 650);
     if (!hasRecent) {
-      list.add(KostFx(t, amount: amount, peerId: peer));
+      list.add(KostFx(t, amount: amount, peerId: peer, durMs: durMs));
     }
   }
 
@@ -370,9 +372,15 @@ class _GameScreenState extends State<GameScreen>
         _playPolice(target, actor, amt.round(), reflected: true);
         break;
       case 'hijack':
-      // amount 1 = sisi pembajak (kabur bawa truk), 2 = sisi korban (disergap)
-        _ensureFx(actor, FxType.hijack, amount: 1);
-        _ensureFx(target, FxType.hijack, amount: 2);
+      // amount 1 = sisi pembajak (truk rampasan tiba), 2 = sisi korban
+      // (disergap). peer = lawannya, supaya truk bergerak antar kedua rumah;
+      // durasi mengikuti jarak rumah (sama untuk kedua sisi).
+        final ha = _order.indexOf(actor ?? '');
+        final hb = _order.indexOf(target ?? '');
+        final hDist = (ha < 0 || hb < 0) ? 1 : max(1, (ha - hb).abs());
+        final hDur = hijackDurationMs(hDist);
+        _ensureFx(actor, FxType.hijack, amount: 1, peer: target, durMs: hDur);
+        _ensureFx(target, FxType.hijack, amount: 2, peer: actor, durMs: hDur);
         break;
       case 'emoji':
         _ensureFx(actor, FxType.emoji, amount: amt);

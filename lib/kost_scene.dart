@@ -44,7 +44,8 @@ String emojiFromCode(int code) {
 class KostFx {
   /// [delayMs] > 0 menunda efek (age negatif = belum tampil). Dipakai agar
   /// dampak lemparan baru terasa setelah sampah benar-benar mendarat.
-  KostFx(this.type, {this.amount = 0, this.peerId, int delayMs = 0})
+  KostFx(this.type,
+      {this.amount = 0, this.peerId, int delayMs = 0, this.durMs = 0})
       : startMs = sceneNowMs() + delayMs;
 
   final FxType type;
@@ -54,6 +55,10 @@ class KostFx {
   /// Lawan yang terlibat (penyerang / sasaran). Dipakai mode jalan untuk
   /// menentukan arah lemparan sampah antar rumah bertetangga.
   final String? peerId;
+
+  /// Durasi total efek (ms) bila efek punya durasi sendiri (adegan bajak
+  /// bergantung jarak rumah). 0 = pakai durasi bawaan painter.
+  final int durMs;
 
   int get age => sceneNowMs() - startMs;
 }
@@ -481,6 +486,40 @@ double _easeOutBack(double x) {
   return 1 + c3 * y * y * y + c1 * y * y;
 }
 
+double _easeOut3(double x) {
+  x = _c01(x);
+  final y = 1 - x;
+  return 1 - y * y * y;
+}
+
+double _easeInOut3(double x) {
+  x = _c01(x);
+  if (x < 0.5) return 4 * x * x * x;
+  final y = -2 * x + 2;
+  return 1 - y * y * y / 2;
+}
+
+/// Durasi total adegan pembajakan (ms). [dist] = selisih urutan rumah korban
+/// dan pembajak (min 1): makin jauh, makin lama kendaraan menempuh jalan.
+int hijackDurationMs(int dist) {
+  final extra = (dist < 1 ? 0 : dist - 1).clamp(0, 5).toInt();
+  return 6000 + 1000 * extra;
+}
+
+class _HjTimes {
+  const _HjTimes(this.a, this.g, this.e, this.s);
+  final double a; // van menyusul truk korban
+  final double g; // perebutan truk
+  final double e; // kabur ke rumah pembajak
+  final double s; // tiba & masuk garasi
+}
+
+_HjTimes _hijackTimes(KostFx fx) {
+  final dur = fx.durMs > 0 ? fx.durMs : hijackDurationMs(1);
+  final extra = ((dur - 6000) / 1000).round().clamp(0, 5).toDouble();
+  return _HjTimes(1500 + 500 * extra, 1700, 1900 + 500 * extra, 900);
+}
+
 int _hh(int n) => ((n * 7919 + 104729) * 15485863) % 1000003;
 Color _mix(Color a, Color b, double t) => Color.lerp(a, b, _c01(t))!;
 
@@ -769,13 +808,14 @@ class KostPainter extends CustomPainter {
       shakeX += math.sin(incomingP * 110) * 3.2 * q;
     }
     // Guncangan kamera saat truk dibajak (hanya di sisi korban)
-    final hj = _fxActive(FxType.hijack, _hijackMs);
+    final hj = _hijackFx();
     if (hj != null && hj.amount.round() != 1) {
-      final hp = hj.age / _hijackMs;
-      if (hp > 0.2 && hp < 0.55) {
-        final q = 1 - (hp - 0.2) / 0.35;
-        shakeX += math.sin(hp * 220) * 3.0 * q;
-        shakeY += math.cos(hp * 180) * 2.2 * q;
+      final hl = _hijackTimes(hj);
+      final gp = (hj.age - hl.a) / hl.g; // kemajuan fase perebutan
+      if (gp > 0.2 && gp < 0.6) {
+        final q = 1 - (gp - 0.2) / 0.4;
+        shakeX += math.sin(gp * 220) * 3.0 * q;
+        shakeY += math.cos(gp * 180) * 2.2 * q;
       }
     }
     // Rumah bergetar makin keras sebelum runtuh
@@ -3889,39 +3929,222 @@ class KostPainter extends CustomPainter {
   }
 
   // ------------------------------------------------------ truk sampah
+  //
+  // Semua kendaraan digambar di "lapisan dunia" (di atas semua rumah) supaya
+  // bisa melintasi batas rumah dan tidak tertutup bangunan tetangga. Truk
+  // selalu MASUK dari luar layar dan KELUAR ke luar layar: tidak ada lagi
+  // muncul / hilang mendadak. Mode satu rumah memakai jalur yang sama lewat
+  // [_drawTruck]; mode jalan lewat [paintStreetTruck].
 
+  static const double _roadY = 297.0; // garis jalan (koordinat rumah)
+  static const double _parkX = 318.0; // titik parkir truk angkut
+
+  /// Mode satu rumah. (Mode jalan: digambar oleh [paintStreetTruck].)
   void _drawTruck(Canvas canvas, double t) {
-    // Adegan pembajakan: bila kita korban, truk normal digantikan adegan ini
-    if (_drawHijackScene(canvas, t)) return;
+    if (_street) return;
+    _truckLayer(canvas, t, _vl, _vr);
+  }
 
+  /// Dipanggil KostStreetPainter SETELAH semua rumah digambar.
+  /// [view] = jangkauan layar dalam koordinat rumah ini. [thiefDx] = selisih
+  /// posisi dunia rumah pembajak terhadap rumah ini (null bila tak diketahui).
+  void paintStreetTruck(Canvas canvas, double t, Rect view,
+      {double? thiefDx, bool thiefHauling = false}) {
+    final sl = _vl, sr = _vr, st = _vt, sb = _vb;
+    _street = true;
+    _setView(view);
+    _truckLayer(canvas, t, view.left, view.right,
+        thiefDx: thiefDx, thiefHauling: thiefHauling);
+    _vl = sl;
+    _vr = sr;
+    _vt = st;
+    _vb = sb;
+  }
+
+  /// Id pembajak dari adegan bajak sisi KORBAN yang sedang aktif (atau null).
+  String? activeHijackThief() {
+    final f = _hijackFx();
+    if (f == null || f.amount.round() == 1) return null;
+    return f.peerId;
+  }
+
+  KostFx? _hijackFx() {
+    KostFx? best;
+    for (final f in d.fx) {
+      if (f.type != FxType.hijack) continue;
+      final a = f.age;
+      final dur = f.durMs > 0 ? f.durMs : hijackDurationMs(1);
+      if (a < 0 || a > dur) continue;
+      if (best == null || a < best.age) best = f;
+    }
+    return best;
+  }
+
+  void _truckLayer(Canvas canvas, double t, double vl, double vr,
+      {double? thiefDx, bool thiefHauling = false}) {
+    final hj = _hijackFx();
     final hp = d.haulProgress;
+    if (hj != null) {
+      final victim = hj.amount.round() != 1;
+      if (victim) {
+        // Korban: seluruh adegan (van datang, truk direbut, kabur ke rumah
+        // pembajak) digambar dari sini; truk angkut biasa digantikan.
+        _hijackWorld(
+          canvas,
+          t,
+          hj,
+          victimX: _parkX,
+          thiefX: _parkX + (thiefDx ?? (_street ? -1400.0 : -1500.0)),
+          vl: vl,
+          vr: vr,
+          thiefHauling: thiefHauling,
+        );
+        return;
+      }
+      // Pembajak: mode jalan sudah digambar oleh adegan rumah korban. Mode
+      // satu rumah: gambar kedatangan truk rampasan dari arah korban.
+      if (!_street) {
+        _hijackWorld(
+          canvas,
+          t,
+          hj,
+          victimX: _parkX + 1500,
+          thiefX: _parkX,
+          vl: vl,
+          vr: vr,
+          thiefHauling: hp != null,
+        );
+      }
+    }
     if (hp == null) return;
+    _haulTruck(canvas, t, hp, vl, vr);
+  }
 
-    double x;
-    var facingLeft = true;
+  /// Siklus truk angkut (hp 0..1):
+  ///  0.00-0.20  datang dari luar layar, melambat & mengerem (hidung menunduk)
+  ///  0.20-0.28  parkir, pegas bodi reda, petugas turun dari bak belakang
+  ///  0.28-0.76  bekerja: pungut -> lempar ke hopper -> pemadat bekerja
+  ///  0.76-0.82  petugas naik lagi
+  ///  0.82-1.00  siap jalan, tancap gas, melaju keluar layar (arah rute sama)
+  void _haulTruck(Canvas canvas, double t, double hp, double vl, double vr) {
+    const arriveEnd = 0.20;
+    const leaveStart = 0.82;
+    // Truk masuk dari kanan dan terus ke kiri: titik awal/akhir ada di luar
+    // jangkauan layar (maks 1000 satuan agar kecepatan tetap wajar).
+    final inX = math.min(math.max(vr + 110, _parkX + 220), _parkX + 1000);
+    final outX = math.max(math.min(vl - 110, _parkX - 220), _parkX - 1000);
+    // Kamera sangat jauh: ujung rute masih terlihat -> pudar, bukan pop.
+    final inVisible = inX < vr + 40;
+    final outVisible = outX > vl - 40;
+
+    var x = _parkX;
+    var alpha = 1.0;
+    var lean = 0.0;
+    var brake = false;
     var moving = false;
-    if (hp < 0.15) {
-      x = _lerp(470, 318, _ease(hp / 0.15));
-      moving = hp < 0.14;
-    } else if (hp < 0.85) {
-      x = 318;
+
+    if (hp < arriveEnd) {
+      final u = hp / arriveEnd;
+      x = _lerp(inX, _parkX, _easeOut3(u));
+      if (inVisible) alpha = _ease(u / 0.3);
+      brake = u > 0.45;
+      lean = -0.035 * _ease((u - 0.5) / 0.45);
+      moving = u < 0.93;
+    } else if (hp < leaveStart) {
+      final r = _c01((hp - arriveEnd) / 0.08);
+      lean = -0.035 * math.exp(-r * 4) * math.cos(r * 10);
+      brake = r < 0.5;
     } else {
-      x = _lerp(318, 470, _ease((hp - 0.85) / 0.15));
-      facingLeft = false;
-      moving = true;
+      final u = (hp - leaveStart) / (1 - leaveStart);
+      final go = _c01((u - 0.14) / 0.86);
+      x = _lerp(_parkX, outX, _easeIn(go));
+      if (outVisible) alpha = 1 - _ease((go - 0.7) / 0.3);
+      lean = 0.03 * _ease(go / 0.2) * (1 - _ease((go - 0.2) / 0.4));
+      moving = go > 0.02;
     }
 
-    canvas.save();
-    canvas.translate(x, 297);
-    if (!facingLeft) canvas.scale(-1, 1);
-    if (moving) canvas.translate(0, math.sin(t * 24) * 0.7);
+    final vis = _ease((hp - 0.215) / 0.06) * (1 - _ease((hp - 0.755) / 0.06));
+    final (double, double) lr = vis > 0.6 ? _workLid(t) : (0.0, 0.0);
+    final bob = moving ? math.sin(t * 24) * 0.7 : math.sin(t * 38) * 0.22;
 
+    _fadeLayer(
+      canvas,
+      Rect.fromLTRB(x - 130, _roadY - 90, x + 130, _roadY + 16),
+      alpha,
+          () {
+        canvas.save();
+        canvas.translate(x, _roadY);
+        _truckBody(
+          canvas,
+          t,
+          wheelA: x / 6.5,
+          lean: lean,
+          moving: moving,
+          brake: brake,
+          lid: lr.$1,
+          ram: lr.$2,
+          bob: bob,
+        );
+        canvas.restore();
+      },
+    );
+
+    if (vis > 0.01) _workers(canvas, t, vis: vis);
+  }
+
+  /// (bukaan tutup hopper, gerak pelat pemadat) mengikuti ritme petugas.
+  (double, double) _workLid(double t) {
+    var lid = 0.0, ram = 0.0;
+    for (var i = 0; i < 2; i++) {
+      final ph = (t * 0.9 + i * 0.5) % 1.0;
+      if (ph >= 0.5 && ph < 0.66) {
+        lid = math.max(lid, math.sin((ph - 0.5) / 0.16 * math.pi));
+      }
+      if (ph >= 0.6 && ph < 0.86) {
+        ram = math.max(ram, math.sin((ph - 0.6) / 0.26 * math.pi));
+      }
+    }
+    return (lid, ram);
+  }
+
+  /// Gambar [draw] dengan transparansi [a] (tanpa layer bila a >= 1).
+  void _fadeLayer(Canvas canvas, Rect bounds, double a, void Function() draw) {
+    final al = _c01(a);
+    if (al <= 0.02) return;
+    if (al < 1) {
+      canvas.saveLayer(bounds, Paint()..color = Color.fromRGBO(0, 0, 0, al));
+    }
+    draw();
+    if (al < 1) canvas.restore();
+  }
+
+  /// Bodi truk sampah, titik asal = tengah bawah (di tanah), menghadap KIRI.
+  /// Pemanggil mengatur translate / scale (mirror) dan transparansi.
+  void _truckBody(
+      Canvas canvas,
+      double t, {
+        double wheelA = 0,
+        double lean = 0,
+        bool moving = false,
+        bool brake = false,
+        double lid = 0,
+        double ram = 0,
+        bool stolen = false,
+        bool thiefInCab = false,
+        double bob = 0,
+      }) {
+    // bayangan menempel di tanah
     _p
       ..style = PaintingStyle.fill
       ..color = Colors.black.withValues(alpha: 0.25);
     canvas.drawOval(
         Rect.fromCenter(center: Offset.zero, width: 88, height: 6), _p);
 
+    canvas.save();
+    canvas.translate(0, bob);
+    canvas.rotate(lean);
+
+    // sorot lampu depan
     _p.color = const Color(0xFFFFF59D).withValues(alpha: 0.22);
     canvas.drawPath(
       Path()
@@ -3932,15 +4155,17 @@ class KostPainter extends CustomPainter {
       _p,
     );
 
-    if (moving) {
-      for (var k = 0; k < 4; k++) {
-        final ph = (t * 1.6 + k * 0.25) % 1.0;
-        _p.color = const Color(0xFFBDBDBD).withValues(alpha: (1 - ph) * 0.5);
-        canvas.drawCircle(
-            Offset(44 + ph * 24, -6 - ph * 10), 3 + ph * 6.5, _p);
-      }
+    // asap knalpot (kecil saat diam, tebal saat melaju)
+    final puffs = moving ? 4 : 2;
+    for (var k = 0; k < puffs; k++) {
+      final ph = (t * (moving ? 1.6 : 0.8) + k / puffs) % 1.0;
+      final base = stolen ? const Color(0xFF424242) : const Color(0xFFBDBDBD);
+      _p.color = base.withValues(alpha: (1 - ph) * (moving ? 0.5 : 0.22));
+      canvas.drawCircle(
+          Offset(44 + ph * 24, -6 - ph * 10), 3 + ph * (moving ? 6.5 : 4), _p);
     }
 
+    // bak
     _p.color = const Color(0xFF43A047);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
@@ -3954,20 +4179,28 @@ class KostPainter extends CustomPainter {
     _p.color = const Color(0xFF2E7D32);
     canvas.drawCircle(const Offset(12, -29), 1.6, _p);
 
-    _p.color = const Color(0xFF2E5E3A);
-    canvas.drawRect(const Rect.fromLTWH(32, -36, 8, 11), _p);
-    if (!moving) {
-      final open = 0.5 + 0.5 * math.sin(t * 3);
-      _p
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2
-        ..color = const Color(0xFF1B3B25);
-      canvas.drawLine(const Offset(40, -36),
-          Offset(40 + 7 * open, -36 - 6 * open), _p);
-      _p.style = PaintingStyle.fill;
+    // pelat pemadat bergeser saat memadatkan sampah
+    if (ram > 0.01) {
+      _p.color = const Color(0xFF1B5E20).withValues(alpha: 0.75);
+      canvas.drawRect(Rect.fromLTWH(_lerp(31, 21, ram), -34, 3, 24), _p);
     }
 
-    _p.color = const Color(0xFF2E9E5B);
+    // hopper + tutupnya (engsel di sisi belakang)
+    _p.color = const Color(0xFF2E5E3A);
+    canvas.drawRect(const Rect.fromLTWH(32, -36, 8, 11), _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..color = const Color(0xFF1B3B25);
+    canvas.drawLine(const Offset(40, -36),
+        Offset(40 - 8 * math.cos(lid), -36 - 8 * math.sin(lid)), _p);
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt;
+
+    // kabin
+    _p.color = stolen ? const Color(0xFFB71C1C) : const Color(0xFF2E9E5B);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
           const Rect.fromLTWH(-40, -30, 24, 24), const Radius.circular(4)),
@@ -3977,16 +4210,43 @@ class KostPainter extends CustomPainter {
     canvas.drawRect(const Rect.fromLTWH(-38, -27, 12, 10), _p);
     _p.color = Colors.white.withValues(alpha: 0.35);
     canvas.drawRect(const Rect.fromLTWH(-37, -26, 4, 8), _p);
+    if (thiefInCab) {
+      _p.color = const Color(0xFF212121);
+      canvas.drawCircle(const Offset(-32, -22), 3.8, _p);
+      _p.color = Colors.white;
+      canvas.drawCircle(const Offset(-33.4, -22.5), 0.8, _p);
+      canvas.drawCircle(const Offset(-30.6, -22.5), 0.8, _p);
+    }
     _p.color = const Color(0xFF212121);
     canvas.drawRect(const Rect.fromLTWH(-42, -22, 3, 2), _p);
     _p.color = const Color(0xFFFFF176);
     canvas.drawRect(const Rect.fromLTWH(-41, -15, 3, 4), _p);
-    final siren = 0.5 + 0.5 * math.sin(t * 14);
-    _p.color = const Color(0xFFFFA000).withValues(alpha: 0.3 + 0.5 * siren);
-    canvas.drawCircle(const Offset(-29, -33), 6 + siren * 4, _p);
-    _p.color = const Color(0xFFFFCA28);
-    canvas.drawRect(const Rect.fromLTWH(-32, -33, 6, 3), _p);
 
+    // lampu rem belakang
+    _p.color = brake ? const Color(0xFFFF1744) : const Color(0xFF8E1B1B);
+    canvas.drawRect(const Rect.fromLTWH(40, -17, 2.5, 5), _p);
+    if (brake) {
+      _p.color = const Color(0xFFFF1744).withValues(alpha: 0.28);
+      canvas.drawCircle(const Offset(43, -14.5), 6, _p);
+    }
+
+    // sirene: oranye saat dinas, strobo merah-biru saat dibajak
+    if (stolen) {
+      final blink = math.sin(t * 18) > 0;
+      final c = blink ? const Color(0xFFFF1744) : const Color(0xFF2979FF);
+      _p.color = c.withValues(alpha: 0.35);
+      canvas.drawCircle(const Offset(-29, -33), 10, _p);
+      _p.color = c;
+      canvas.drawRect(const Rect.fromLTWH(-32, -33, 6, 3), _p);
+    } else {
+      final siren = 0.5 + 0.5 * math.sin(t * 14);
+      _p.color = const Color(0xFFFFA000).withValues(alpha: 0.3 + 0.5 * siren);
+      canvas.drawCircle(const Offset(-29, -33), 6 + siren * 4, _p);
+      _p.color = const Color(0xFFFFCA28);
+      canvas.drawRect(const Rect.fromLTWH(-32, -33, 6, 3), _p);
+    }
+
+    // roda (berputar sesuai jarak tempuh)
     for (final wx in const [-26.0, 18.0]) {
       _p
         ..style = PaintingStyle.fill
@@ -3994,20 +4254,58 @@ class KostPainter extends CustomPainter {
       canvas.drawCircle(Offset(wx, -6), 6.5, _p);
       _p.color = const Color(0xFF9E9E9E);
       canvas.drawCircle(Offset(wx, -6), 2.6, _p);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..strokeCap = StrokeCap.butt
+        ..color = const Color(0xFF9E9E9E);
+      for (var s = 0; s < 2; s++) {
+        final a = wheelA + s * math.pi / 2;
+        canvas.drawLine(
+          Offset(wx + math.cos(a) * 5.2, -6 + math.sin(a) * 5.2),
+          Offset(wx - math.cos(a) * 5.2, -6 - math.sin(a) * 5.2),
+          _p,
+        );
+      }
+      _p.style = PaintingStyle.fill;
     }
     canvas.restore();
-
-    if (hp >= 0.15 && hp < 0.85) _drawWorkers(canvas, t);
   }
 
-  void _drawWorkers(Canvas canvas, double t) {
+  /// Dua petugas angkut. [vis] 0..1: keluar/masuk lewat bak belakang truk
+  /// (muncul sambil berjalan, bukan tiba-tiba). [freezeT] membekukan langkah
+  /// pada waktu tertentu, [shock] = pose kaget, [idle] = tak membawa kantong,
+  /// [dx] = pergeseran (berjalan menjauh), [alpha] = pudar.
+  void _workers(
+      Canvas canvas,
+      double t, {
+        double vis = 1,
+        double alpha = 1,
+        double? freezeT,
+        double shock = 0,
+        bool idle = false,
+        double dx = 0,
+      }) {
+    final a = vis * alpha;
+    if (a <= 0.02) return;
+    final tt = freezeT ?? t;
     for (var i = 0; i < 2; i++) {
-      final phase = (t * 0.9 + i * 0.5) % 1.0;
+      final phase = (tt * 0.9 + i * 0.5) % 1.0;
       final tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
-      final x = _lerp(382, 352, tri);
+      final baseX = _lerp(382, 352, tri) + dx;
+      final x = vis < 1 ? _lerp(_parkX + 38, baseX, vis) : baseX;
       const y = 270.0;
-      final carrying = phase < 0.5;
-      final swing = math.sin(t * 10 + i) * 2;
+      final carrying = !idle && phase < 0.5;
+      final swing = shock > 0.05
+          ? math.sin(t * 22 + i) * 2.5 * shock
+          : (idle ? 0.0 : math.sin(tt * 10 + i) * 2);
+
+      if (a < 1) {
+        canvas.saveLayer(
+          Rect.fromCenter(center: Offset(x, y - 14), width: 56, height: 60),
+          Paint()..color = Color.fromRGBO(0, 0, 0, _c01(a)),
+        );
+      }
 
       _p
         ..style = PaintingStyle.stroke
@@ -4017,14 +4315,49 @@ class KostPainter extends CustomPainter {
       canvas.drawLine(Offset(x, y - 4), Offset(x - swing, y), _p);
       canvas.drawLine(Offset(x, y - 4), Offset(x + swing, y), _p);
       _p.color = const Color(0xFFFF8F00);
-      canvas.drawLine(
-          Offset(x, y - 10), Offset(x + (carrying ? 4 : 3), y - 15), _p);
+      if (shock > 0.2) {
+        canvas.drawLine(Offset(x, y - 10), Offset(x - 4, y - 17), _p);
+        canvas.drawLine(Offset(x, y - 10), Offset(x + 4, y - 17), _p);
+      } else {
+        canvas.drawLine(
+            Offset(x, y - 10), Offset(x + (carrying ? 4 : 3), y - 15), _p);
+      }
       _p.style = PaintingStyle.fill;
       _p.color = const Color(0xFFE0AC84);
       canvas.drawCircle(Offset(x, y - 14), 3, _p);
       _p.color = const Color(0xFFFF8F00);
       canvas.drawRect(Rect.fromLTWH(x - 3.5, y - 18, 7, 2.5), _p);
-      if (carrying) _bag(canvas, Offset(x + 4, y - 20), 900 + i, scale: 0.7);
+
+      if (shock > 0.2) {
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 1.8
+          ..color = const Color(0xFFFF5252).withValues(alpha: _c01(shock));
+        canvas.drawLine(Offset(x, y - 31), Offset(x, y - 25), _p);
+        _p.style = PaintingStyle.fill;
+        canvas.drawCircle(Offset(x, y - 22.5), 1.1, _p);
+      }
+
+      if (carrying) {
+        // mengangkat kantong dari tumpukan
+        final lift = _ease(phase / 0.08);
+        _bag(canvas, Offset(x + 4, _lerp(y - 5, y - 20, lift)), 900 + i,
+            scale: 0.7);
+      } else if (!idle && phase >= 0.5 && phase < 0.64) {
+        // melempar kantong ke mulut hopper (tidak lenyap begitu saja)
+        final q = (phase - 0.5) / 0.14;
+        _bag(
+          canvas,
+          Offset(
+            _lerp(x + 4, _parkX + 35, q),
+            _lerp(y - 20, 263, q) - math.sin(q * math.pi) * 9,
+          ),
+          900 + i,
+          scale: 0.7 * (1 - 0.4 * q),
+        );
+      }
+
+      if (a < 1) canvas.restore();
     }
   }
 
@@ -4594,148 +4927,253 @@ class KostPainter extends CustomPainter {
   }
 
   // ===================================================================
-  //  ADEGAN PEMBAJAKAN TRUK
-  //  amount == 1 -> sisi PEMBAJAK (kabur membawa truk rampasan)
-  //  amount != 1 -> sisi KORBAN (truk disergap & dibawa kabur)
+  //  ADEGAN PEMBAJAKAN TRUK (satu adegan utuh di koordinat dunia)
+  //
+  //  1) Van pembajak berangkat dari sisi RUMAH PEMBAJAK, melaju ke truk
+  //     korban yang sedang bekerja, mengerem (jejak ban & asap).
+  //  2) Maling lari dari van, melompat ke kabin, sopir terlempar, truk
+  //     bergetar lalu putar balik (bila perlu) menghadap rumah pembajak.
+  //  3) Van & truk rampasan kabur BERSAMA menuju rumah pembajak (van di
+  //     depan), menambah lalu mengurangi kecepatan, parkir di sana.
+  //  4) Maling turun merayakan, kendaraan masuk garasi sambil memudar.
+  //
+  //  Durasi mengikuti jarak rumah (lihat [hijackDurationMs]). Semua posisi
+  //  dihitung dari waktu adegan, jadi kedua rumah melihat hal yang sama.
   // ===================================================================
-
-  static const int _hijackMs = 3600;
-
-  KostFx? _fxActive(FxType type, int durMs) {
-    KostFx? best;
-    for (final f in d.fx) {
-      if (f.type != type) continue;
-      final a = f.age;
-      if (a < 0 || a > durMs) continue;
-      if (best == null || a < best.age) best = f;
-    }
-    return best;
-  }
 
   double _easeIn(double x) {
     x = _c01(x);
     return x * x * x;
   }
 
-  /// Mengembalikan true bila adegan sisi KORBAN sedang tampil
-  /// (truk haul normal tidak perlu digambar lagi).
-  bool _drawHijackScene(Canvas canvas, double t) {
-    final fx = _fxActive(FxType.hijack, _hijackMs);
-    if (fx == null) return false;
-    final p = fx.age / _hijackMs;
-    if (fx.amount.round() == 1) {
-      _hijackThiefView(canvas, t, p);
-      return false;
+  void _hijackWorld(
+      Canvas canvas,
+      double t,
+      KostFx fx, {
+        required double victimX,
+        required double thiefX,
+        required double vl,
+        required double vr,
+        bool thiefHauling = false,
+      }) {
+    final tl = _hijackTimes(fx);
+    final aMs = tl.a, gMs = tl.g, eMs = tl.e, sMs = tl.s;
+    final ms = fx.age.toDouble();
+    final tG = ms - aMs; // waktu sejak perebutan
+    final tE = tG - gMs; // waktu sejak kabur
+    final tS = tE - eMs; // waktu sejak tiba di rumah pembajak
+    final dir = thiefX >= victimX ? 1.0 : -1.0; // arah kabur
+    const gy = _roadY;
+    final span = (thiefX - victimX).abs();
+    // Bila truk pembajak sendiri sedang parkir di rumahnya, berhenti lebih awal.
+    final parkT = thiefX - (thiefHauling ? dir * 110.0 : 0.0);
+
+    // ------------------------------------------------ jalur kendaraan
+    final vanStop = victimX + (dir > 0 ? 112.0 : -104.0);
+    final vanStart = victimX + dir * math.max(math.min(span, 900.0), 420.0);
+    final vanEnd = parkT + dir * 118.0;
+    final vanEscStart = aMs + gMs * 0.92;
+    final vanEscLen = eMs - 100.0;
+
+    double vanXAt(double m) {
+      if (m < aMs) return _lerp(vanStart, vanStop, _easeOut3(m / aMs));
+      if (m < vanEscStart) return vanStop;
+      return _lerp(
+          vanStop, vanEnd, _easeInOut3((m - vanEscStart) / vanEscLen));
     }
-    _hijackVictimView(canvas, t, p);
-    return true;
-  }
 
-  void _hijackVictimView(Canvas canvas, double t, double p) {
-    const gy = 297.0;
-    final escQ = _c01((p - 0.5) / 0.5);
-    final truckRight = p >= 0.46;
-    final truckX = p < 0.5 ? 318.0 : _lerp(318, 560, _easeIn(escQ));
-    final vanIn = _ease(p / 0.22);
-    final vanRight = p < 0.5;
-    final vanX =
-    p < 0.5 ? _lerp(-90, 214, vanIn) : _lerp(214, -150, _easeIn(escQ));
+    double truckXAt(double m) {
+      final e = m - aMs - gMs;
+      if (e <= 0) return victimX;
+      return _lerp(victimX, parkT, _easeInOut3(e / eMs));
+    }
 
-    // Jejak ban hitam di aspal saat van mengerem mendadak
-    if (p > 0.14) {
-      final len = _c01((p - 0.14) / 0.08) * 80;
+    // Masuk garasi: maju sedikit sambil memudar (akhir adegan).
+    final garage = _ease((tS - sMs * 0.5) / (sMs * 0.5));
+    final roll = dir * 70.0 * garage;
+    final vehAlpha = 1 - garage;
+
+    final vanInView = vanStart > vl - 60 && vanStart < vr + 60;
+    final vanA = (vanInView ? _ease(ms / 450.0) : 1.0) * vehAlpha;
+
+    final truckPure = truckXAt(ms);
+    final truckX = truckPure + roll;
+    final vanPure = vanXAt(ms);
+    final vanX = vanPure + roll;
+
+    // kecepatan (px/ms) untuk garis kecepatan, rem & kemiringan bodi
+    final vT = (truckPure - truckXAt(ms - 50)) / 50.0;
+    final vV = (vanPure - vanXAt(ms - 50)) / 50.0;
+    final spNow = (truckPure - truckXAt(ms - 40)).abs() / 40.0;
+    final spPrev = (truckXAt(ms - 60) - truckXAt(ms - 100)).abs() / 40.0;
+    final truckLean = ((spNow - spPrev) * 0.35).clamp(-0.04, 0.04).toDouble();
+    final truckBraking = tE > 0 && (spNow - spPrev) < -0.02;
+
+    // ------------------------------------------------ jejak ban & asap rem
+    final vanSkidFrom = _lerp(vanStart, vanStop, _easeOut3(0.55));
+    if (ms > aMs * 0.55) {
+      final cur = vanXAt(math.min(ms, aMs));
+      final fade = 1 - _c01(tE / (eMs * 0.8));
       _p
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.6
         ..strokeCap = StrokeCap.round
-        ..color = Colors.black.withValues(alpha: 0.35 * (1 - p * 0.6));
-      canvas.drawLine(Offset(214 - len - 8, gy - 1), Offset(206, gy - 1), _p);
-      canvas.drawLine(Offset(214 - len - 8, gy + 2), Offset(206, gy + 2), _p);
+        ..color = Colors.black.withValues(alpha: 0.35 * fade);
+      canvas.drawLine(Offset(vanSkidFrom, gy - 1), Offset(cur, gy - 1), _p);
+      canvas.drawLine(Offset(vanSkidFrom, gy + 2), Offset(cur, gy + 2), _p);
       _p
         ..style = PaintingStyle.fill
         ..strokeCap = StrokeCap.butt;
-    }
-
-    // Asap rem
-    if (p > 0.14 && p < 0.42) {
       for (var k = 0; k < 5; k++) {
-        final ph = _c01((p - 0.14 - k * 0.012) / 0.26);
-        _p.color = const Color(0xFFD7CCC8).withValues(alpha: (1 - ph) * 0.6);
+        final tk = aMs * (0.55 + 0.45 * k / 4.0);
+        final ph = _c01((ms - tk) / 800.0);
+        if (ph <= 0 || ph >= 1) continue;
+        _p.color = const Color(0xFFD7CCC8).withValues(alpha: (1 - ph) * 0.55);
         canvas.drawCircle(
-            Offset(190 - ph * 26 - k * 5, gy - 4 - ph * 16), 4 + ph * 10, _p);
+          Offset(_lerp(vanSkidFrom, vanStop, k / 4.0), gy - 4 - ph * 16),
+          4 + ph * 10,
+          _p,
+        );
       }
     }
 
-    // Van pembajak
-    _raiderVan(canvas, vanX, gy, t, right: vanRight, braking: p > 0.14 && p < 0.3);
+    // ------------------------------------------------ truk korban
+    final truckF = dir > 0 ? _c01((tG - gMs * 0.58) / (gMs * 0.20)) : 0.0;
+    var truckSX = dir > 0 ? math.cos(math.pi * truckF) : 1.0;
+    if (truckSX.abs() < 0.03) truckSX = truckSX < 0 ? -0.03 : 0.03;
+    final truckHop =
+    (truckF > 0 && truckF < 1) ? -math.sin(math.pi * truckF) * 8 : 0.0;
+    final stolen = tG > gMs * 0.40;
+    final revving = tG > gMs * 0.34 && tE < 0;
+    final jitter = revving ? math.sin(t * 70) * 0.9 : 0.0;
+    final (double, double) lr = tG < 0 ? _workLid(t) : (0.0, 0.0);
 
-    // Garis kecepatan di belakang truk yang kabur
-    if (p > 0.52) {
-      final a = _c01((p - 0.52) / 0.1) * (1 - _c01((p - 0.92) / 0.08));
+    _fadeLayer(
+      canvas,
+      Rect.fromLTRB(truckX - 140, gy - 90, truckX + 140, gy + 18),
+      vehAlpha,
+          () {
+        canvas.save();
+        canvas.translate(truckX + jitter, gy + truckHop);
+        canvas.scale(truckSX, 1);
+        _truckBody(
+          canvas,
+          t,
+          wheelA: truckPure / 6.5 * (truckSX >= 0 ? 1 : -1),
+          lean: truckLean,
+          moving: vT.abs() > 0.02 || revving,
+          brake: truckBraking,
+          lid: lr.$1,
+          ram: lr.$2,
+          stolen: stolen,
+          thiefInCab: tG >= gMs * 0.42 && tS <= 0,
+          bob: revving ? math.sin(t * 60) * 0.5 : 0,
+        );
+        canvas.restore();
+      },
+    );
+
+    // ------------------------------------------------ van pembajak
+    final vanF = _c01((tG - gMs * 0.74) / (gMs * 0.18));
+    final vanFaceRaw = (-dir) * math.cos(math.pi * vanF);
+    final vanFace = vanFaceRaw.abs() < 0.04
+        ? (vanFaceRaw < 0 ? -0.04 : 0.04)
+        : vanFaceRaw;
+    final vanHop = (vanF > 0 && vanF < 1) ? -math.sin(math.pi * vanF) * 6 : 0.0;
+    final vanBraking = ms > aMs * 0.55 && ms < aMs + 220;
+    _fadeLayer(
+      canvas,
+      Rect.fromLTRB(vanX - 110, gy - 80, vanX + 110, gy + 18),
+      vanA,
+          () {
+        _raiderVan(
+          canvas,
+          vanX,
+          gy + vanHop,
+          t,
+          face: vanFace,
+          braking: vanBraking,
+          wheelA: vanPure / 5.4 * (vanFace >= 0 ? 1 : -1),
+        );
+      },
+    );
+
+    // ------------------------------------------------ garis kecepatan
+    void speedLines(double cx, double v, double reach, double alphaMul) {
+      final k = _c01((v.abs() - 0.12) / 0.3) * alphaMul;
+      if (k <= 0.02) return;
+      final s = v >= 0 ? 1.0 : -1.0; // arah gerak; ekor di sisi berlawanan
       _p
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.2
         ..strokeCap = StrokeCap.round
-        ..color = Colors.white.withValues(alpha: 0.55 * a);
-      for (var k = 0; k < 7; k++) {
-        final yy = gy - 6 - k * 5.0;
-        final len = 26 + (k % 3) * 14 + escQ * 40;
-        final sx = truckX - 52 - (k % 2) * 10;
-        canvas.drawLine(Offset(sx - len, yy), Offset(sx, yy), _p);
+        ..color = Colors.white.withValues(alpha: 0.55 * k);
+      for (var i = 0; i < 7; i++) {
+        final yy = gy - 6 - i * 5.0;
+        final len = 26 + (i % 3) * 14 + k * 40;
+        final sx = cx - s * (reach + (i % 2) * 10);
+        canvas.drawLine(Offset(sx, yy), Offset(sx - s * len, yy), _p);
       }
       _p
         ..style = PaintingStyle.fill
         ..strokeCap = StrokeCap.butt;
-      // Knalpot ngebul hitam
-      for (var k = 0; k < 5; k++) {
-        final ph = (t * 2.2 + k * 0.2) % 1.0;
-        _p.color = const Color(0xFF424242).withValues(alpha: (1 - ph) * 0.6 * a);
-        canvas.drawCircle(
-            Offset(truckX - 50 - ph * 34, gy - 8 - ph * 10), 3 + ph * 8, _p);
+    }
+
+    speedLines(truckX, vT, 52, vehAlpha);
+    speedLines(vanX, vV, 40, vanA * 0.7);
+
+    // koin rampasan beterbangan di belakang truk yang kabur
+    final spT = _c01((vT.abs() - 0.12) / 0.3) * vehAlpha;
+    if (tE > 0 && spT > 0.05) {
+      final s = vT >= 0 ? 1.0 : -1.0;
+      for (var k = 0; k < 8; k++) {
+        final ph = (t * 1.6 + k * 0.125) % 1.0;
+        final cx = truckX - s * (50 + ph * 46 + k * 2);
+        final cy = gy - 26 - math.sin(ph * math.pi) * 26;
+        _p.color =
+            const Color(0xFFFFD54F).withValues(alpha: (1 - ph) * 0.95 * spT);
+        canvas.drawCircle(Offset(cx, cy), 2.6, _p);
+        _p.color =
+            const Color(0xFFFFF59D).withValues(alpha: (1 - ph) * 0.95 * spT);
+        canvas.drawCircle(Offset(cx - 0.7, cy - 0.7), 0.9, _p);
       }
     }
 
-    // Truk (bergetar -> loncat putar balik -> tancap gas)
-    final hop = (p > 0.44 && p < 0.54)
-        ? -math.sin((p - 0.44) / 0.1 * math.pi) * 7
-        : 0.0;
-    final jitter = (p > 0.22 && p < 0.46) ? math.sin(t * 70) * 0.9 : 0.0;
-    canvas.save();
-    canvas.translate(truckX + jitter, gy + hop);
-    if (truckRight) canvas.scale(-1, 1);
-    _hijackTruck(canvas, t, moving: p >= 0.5, stolen: p >= 0.34);
-    canvas.restore();
-
-    // Maling melompat dari van ke kabin truk
-    if (p >= 0.22 && p < 0.42) {
-      final q = _c01((p - 0.22) / 0.2);
-      final from = Offset(vanX + 6, gy - 30);
-      const to = Offset(284, gy - 18);
-      final pos = Offset(
-        _lerp(from.dx, to.dx, q),
-        _lerp(from.dy, to.dy, q) - math.sin(q * math.pi) * 38,
+    // ------------------------------------------------ maling: lari & lompat
+    if (tG > 0 && tG < gMs * 0.44) {
+      final runEndX = victimX - 46;
+      final r = _c01(tG / (gMs * 0.30));
+      final j = _c01((tG - gMs * 0.30) / (gMs * 0.12));
+      Offset pos;
+      var rot = 0.0;
+      if (j <= 0) {
+        pos = Offset(_lerp(vanStop, runEndX, _ease(r)), gy + 4);
+      } else {
+        pos = Offset(
+          _lerp(runEndX, victimX - 32, _ease(j)),
+          _lerp(gy + 4, gy - 20, _ease(j)) - math.sin(j * math.pi) * 18,
+        );
+        rot = j * 6.28;
+      }
+      _person(
+        canvas,
+        pos,
+        shirt: const Color(0xFF212121),
+        mask: true,
+        rot: rot,
+        swing: j > 0 ? 3 : math.sin(t * 26) * 3.4,
+        alpha: _c01(tG / (gMs * 0.06)),
       );
-      _person(canvas, pos,
-          shirt: const Color(0xFF212121), mask: true, rot: q * 6.28, swing: 3);
-    } else if (p >= 0.42) {
-      // Kepala maling bertopeng mengintip dari jendela kabin
-      final hx = truckRight ? truckX + 32 : truckX - 32;
-      final hy = gy - 22 + hop;
-      _p
-        ..style = PaintingStyle.fill
-        ..color = const Color(0xFF212121);
-      canvas.drawCircle(Offset(hx, hy), 3.8, _p);
-      _p.color = Colors.white;
-      canvas.drawCircle(Offset(hx - 1.4, hy - 0.5), 0.8, _p);
-      canvas.drawCircle(Offset(hx + 1.4, hy - 0.5), 0.8, _p);
     }
 
-    // Sopir terlempar keluar & pusing
-    if (p >= 0.34) {
-      final td = _c01((p - 0.34) / 0.14);
-      final dx = _lerp(282, 250, _ease(td));
-      final dy = gy - (1 - td) * 10 - math.sin(td * math.pi) * 16;
-      final fade = 1 - _c01((p - 0.9) / 0.1);
+    // ------------------------------------------------ sopir terlempar
+    if (tG >= gMs * 0.34) {
+      final td = _c01((tG - gMs * 0.34) / (gMs * 0.22));
+      final fadeOut = 1 - _ease((tE - eMs * 0.2) / (eMs * 0.5));
+      final walk = -dir * 46 * _easeOut3(tE / (eMs * 0.8));
+      final dx = _lerp(victimX - 44, victimX - 68, _ease(td)) + walk;
+      // mendarat di jalur dekat kamera supaya tidak tergilas truk yang kabur
+      final dy = _lerp(gy - 18, gy + 8, td) - math.sin(td * math.pi) * 16;
       _person(
         canvas,
         Offset(dx, dy),
@@ -4743,22 +5181,22 @@ class KostPainter extends CustomPainter {
         hat: true,
         rot: td < 1 ? td * 5.5 : math.sin(t * 3) * 0.08,
         swing: td < 1 ? 3 : 0.6,
-        alpha: fade,
+        alpha: fadeOut,
       );
-      if (td >= 1) {
+      if (td >= 1 && fadeOut > 0.05) {
         for (var k = 0; k < 3; k++) {
           final ang = t * 5 + k * 2.09;
           _star(
             canvas,
             Offset(dx + math.cos(ang) * 7, dy - 19 + math.sin(ang) * 2.5),
             2.6,
-            const Color(0xFFFFD54F).withValues(alpha: fade),
+            const Color(0xFFFFD54F).withValues(alpha: fadeOut),
           );
         }
       }
-      // Garis kaget memancar
-      if (p < 0.62) {
-        final e = 1 - (p - 0.34) / 0.28;
+      // garis kaget memancar
+      if (tG < gMs * 0.95) {
+        final e = 1 - (tG - gMs * 0.34) / (gMs * 0.61);
         _p
           ..style = PaintingStyle.stroke
           ..strokeWidth = 1.4
@@ -4778,85 +5216,72 @@ class KostPainter extends CustomPainter {
       }
     }
 
-    // Kantong sampah berjatuhan dari bak truk yang kabur
-    if (p > 0.52) {
-      for (var j = 0; j < 4; j++) {
-        final dp = 0.56 + j * 0.07;
-        if (p < dp) continue;
-        final lq = _c01((p - dp) / 0.14);
-        final dxp = _lerp(318, 560, _easeIn(_c01((dp - 0.5) / 0.5)));
-        final bx = dxp - 36 + lq * 18;
-        final by = gy - 22 + lq * 20 - math.sin(lq * math.pi) * 14;
-        canvas.save();
-        canvas.translate(bx, by);
-        canvas.rotate(lq * 6);
-        _bag(canvas, Offset.zero, 800 + j, scale: 0.85);
-        canvas.restore();
+    // ------------------------------------------------ petugas angkut
+    if (tG < 0) {
+      _workers(canvas, t); // masih bekerja seperti biasa sampai van tiba
+    } else {
+      final walk = _easeOut3(tE / (eMs * 0.9));
+      _workers(
+        canvas,
+        t,
+        freezeT: t - tG / 1000.0,
+        idle: true,
+        shock: _ease(tG / 250.0) * (1 - walk),
+        dx: -dir * 60 * walk,
+        alpha: 1 - _ease((tE - eMs * 0.1) / (eMs * 0.6)),
+      );
+    }
+
+    // ------------------------------------------------ tiba di rumah pembajak
+    if (tS > 0) {
+      final hq = _c01(tS / (sMs * 0.3));
+      final pos = Offset(
+        _lerp(parkT + dir * 28, parkT + dir * 78, _ease(hq)) + roll,
+        _lerp(gy - 18, gy + 4, hq) - math.sin(hq * math.pi) * 20,
+      );
+      _person(
+        canvas,
+        pos,
+        shirt: const Color(0xFF212121),
+        mask: true,
+        rot: hq < 1 ? hq * 6.28 : 0,
+        swing: hq < 1 ? 3 : math.sin(t * 12) * 3,
+        alpha: vehAlpha,
+      );
+      for (var k = 0; k < 10; k++) {
+        final ph = _c01((tS - k * 35) / 900.0);
+        if (ph <= 0 || ph >= 1) continue;
+        final cx = parkT + dir * 28 + (k - 4.5) * 7.0 * ph;
+        final cy = gy - 34 - math.sin(ph * math.pi) * (24 + (k % 3) * 6);
+        _p.color = const Color(0xFFFFD54F).withValues(alpha: (1 - ph) * 0.95);
+        canvas.drawCircle(Offset(cx, cy), 2.6, _p);
+        _p.color = const Color(0xFFFFF59D).withValues(alpha: (1 - ph) * 0.95);
+        canvas.drawCircle(Offset(cx - 0.7, cy - 0.7), 0.9, _p);
       }
     }
 
-    // Banner besar "slam"
-    if (p > 0.36) {
-      final q = _c01((p - 0.36) / 0.64);
-      final a = q < 0.75 ? 1.0 : (1 - q) / 0.25;
-      final slam = _easeOutBack(_c01(q / 0.18));
+    // ------------------------------------------------ spanduk
+    final bq = _c01((ms - (aMs + gMs * 0.36)) / (gMs * 0.64 + eMs * 0.25));
+    if (bq > 0 && bq < 1) {
+      final a = bq < 0.75 ? 1.0 : (1 - bq) / 0.25;
+      final slam = _easeOutBack(_c01(bq / 0.12));
       _drawBannerText(
         canvas,
         'TRUK DIBAJAK!',
-        Offset(250, 232 - q * 20),
+        Offset(victimX - 68, 232 - bq * 20),
         const Color(0xFFFF5252),
         scale: 0.8 + slam * 0.7,
         alpha: a,
       );
     }
-  }
-
-  void _hijackThiefView(Canvas canvas, double t, double p) {
-    const gy = 297.0;
-    final m = _ease(p);
-    final vanX = _lerp(560, -190, m);
-    final truckX = vanX + 112;
-
-    // Garis kecepatan
-    _p
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2
-      ..strokeCap = StrokeCap.round
-      ..color = Colors.white.withValues(alpha: 0.4);
-    for (var k = 0; k < 7; k++) {
-      final yy = gy - 6 - k * 5.0;
-      final sx = truckX + 52 + (k % 2) * 10;
-      canvas.drawLine(Offset(sx, yy), Offset(sx + 30 + (k % 3) * 14, yy), _p);
-    }
-    _p
-      ..style = PaintingStyle.fill
-      ..strokeCap = StrokeCap.butt;
-
-    _raiderVan(canvas, vanX, gy, t, right: false);
-    canvas.save();
-    canvas.translate(truckX, gy);
-    _hijackTruck(canvas, t, moving: true, stolen: true);
-    canvas.restore();
-
-    // Koin rampasan beterbangan
-    for (var k = 0; k < 8; k++) {
-      final ph = (t * 1.6 + k * 0.125) % 1.0;
-      final x = truckX + 50 + ph * 46 + k * 2;
-      final y = gy - 26 - math.sin(ph * math.pi) * 26;
-      _p.color = const Color(0xFFFFD54F).withValues(alpha: (1 - ph) * 0.95);
-      canvas.drawCircle(Offset(x, y), 2.6, _p);
-      _p.color = const Color(0xFFFFF59D).withValues(alpha: (1 - ph) * 0.95);
-      canvas.drawCircle(Offset(x - 0.7, y - 0.7), 0.9, _p);
-    }
-
-    if (p > 0.15 && p < 0.95) {
-      final q = _c01((p - 0.15) / 0.8);
-      final a = q < 0.8 ? 1.0 : (1 - q) / 0.2;
-      final slam = _easeOutBack(_c01(q / 0.15));
+    final tq = _c01((ms - (aMs + gMs + eMs * 0.88)) / (eMs * 0.12 + sMs));
+    if (tq > 0 && tq < 1) {
+      final a = tq < 0.8 ? 1.0 : (1 - tq) / 0.2;
+      final slam = _easeOutBack(_c01(tq / 0.15));
       _drawBannerText(
         canvas,
         'BAJAK BERHASIL!',
-        Offset(200, 220 - q * 14),
+        Offset(parkT, 216 - tq * 14),
         const Color(0xFFFFD54F),
         scale: 0.8 + slam * 0.55,
         alpha: a,
@@ -4864,71 +5289,14 @@ class KostPainter extends CustomPainter {
     }
   }
 
-  void _hijackTruck(Canvas canvas, double t,
-      {required bool moving, required bool stolen}) {
-    _p
-      ..style = PaintingStyle.fill
-      ..color = Colors.black.withValues(alpha: 0.25);
-    canvas.drawOval(
-        Rect.fromCenter(center: Offset.zero, width: 88, height: 6), _p);
-
-    _p.color = const Color(0xFF43A047);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          const Rect.fromLTWH(-16, -36, 56, 30), const Radius.circular(3)),
-      _p,
-    );
-    _p.color = Colors.white.withValues(alpha: 0.5);
-    canvas.drawRect(const Rect.fromLTWH(-16, -22, 56, 4), _p);
-
-    _p.color = stolen ? const Color(0xFFB71C1C) : const Color(0xFF2E9E5B);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-          const Rect.fromLTWH(-40, -30, 24, 24), const Radius.circular(4)),
-      _p,
-    );
-    _p.color = const Color(0xFFB3E5FC);
-    canvas.drawRect(const Rect.fromLTWH(-38, -27, 12, 10), _p);
-    _p.color = const Color(0xFFFFF176);
-    canvas.drawRect(const Rect.fromLTWH(-41, -15, 3, 4), _p);
-
-    // Lampu strobo merah-biru saat dibajak
-    final blink = math.sin(t * 18) > 0;
-    final sirenC = stolen
-        ? (blink ? const Color(0xFFFF1744) : const Color(0xFF2979FF))
-        : const Color(0xFFFFA000);
-    _p.color = sirenC.withValues(alpha: 0.35);
-    canvas.drawCircle(const Offset(-29, -33), 10, _p);
-    _p.color = sirenC;
-    canvas.drawRect(const Rect.fromLTWH(-32, -33, 6, 3), _p);
-
-    final wa = moving ? t * 30 : 0.0;
-    for (final wx in const [-26.0, 18.0]) {
-      _p
-        ..style = PaintingStyle.fill
-        ..color = const Color(0xFF212121);
-      canvas.drawCircle(Offset(wx, -6), 6.5, _p);
-      _p.color = const Color(0xFF9E9E9E);
-      canvas.drawCircle(Offset(wx, -6), 2.6, _p);
-      _p
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1
-        ..color = const Color(0xFF9E9E9E);
-      canvas.drawLine(
-        Offset(wx + math.cos(wa) * 5, -6 + math.sin(wa) * 5),
-        Offset(wx - math.cos(wa) * 5, -6 - math.sin(wa) * 5),
-        _p,
-      );
-      _p.style = PaintingStyle.fill;
-    }
-  }
-
+  /// [face]: +1 menghadap kanan, -1 kiri, di antaranya = sedang putar balik
+  /// (bodi memipih lalu membalik). [wheelA] = sudut putar roda.
   void _raiderVan(Canvas canvas, double x, double y, double t,
-      {required bool right, bool braking = false}) {
+      {required double face, bool braking = false, double wheelA = 0}) {
     canvas.save();
     canvas.translate(x, y);
-    if (!right) canvas.scale(-1, 1);
-    if (braking) canvas.rotate(-0.04);
+    canvas.scale(face, 1);
+    if (braking) canvas.rotate(0.045);
 
     _p
       ..style = PaintingStyle.fill
@@ -4996,7 +5364,7 @@ class KostPainter extends CustomPainter {
         .withValues(alpha: 0.9);
     canvas.drawRect(const Rect.fromLTWH(-4, -36, 8, 3), _p);
 
-    final wa = t * 28;
+    final wa = wheelA;
     for (final wx in const [-17.0, 17.0]) {
       _p
         ..style = PaintingStyle.fill
@@ -5193,10 +5561,14 @@ class KostPainter extends CustomPainter {
   }
 
   void _drawCinematic(Canvas canvas, double t) {
-    final fx = _fxActive(FxType.hijack, _hijackMs);
+    final fx = _hijackFx();
     if (fx != null && fx.amount.round() != 1) {
-      final p = fx.age / _hijackMs;
-      final env = p < 0.08 ? p / 0.08 : (p > 0.9 ? (1 - p) / 0.1 : 1.0);
+      final hl = _hijackTimes(fx);
+      final ms = fx.age.toDouble();
+      // p = kemajuan fase perebutan (0..1); sorotan hanya di sekitar fase itu
+      final p = (ms - hl.a) / hl.g;
+      final env = _c01((ms - (hl.a - 500)) / 500) *
+          (1 - _c01((ms - (hl.a + hl.g + 500)) / 800));
       final e = _ease(env);
 
       // Sorotan sinematik: sekitar truk terang, sisanya digelapkan
@@ -5227,7 +5599,7 @@ class KostPainter extends CustomPainter {
       }
 
       // Kilatan putih tepat saat maling merebut kemudi
-      final fl = 1 - (p - 0.40).abs() / 0.06;
+      final fl = 1 - (p - 0.42).abs() / 0.12;
       if (fl > 0) {
         _p
           ..style = PaintingStyle.fill
@@ -5531,6 +5903,39 @@ class KostStreetPainter extends CustomPainter {
       canvas.save();
       canvas.translate(x0, 0);
       kp.paintStreetHouse(canvas, Rect.fromLTRB(0, vt, _w, vb), t);
+      canvas.restore();
+    }
+
+    // 2a) truk sampah & adegan pembajakan: lapisan dunia (di atas semua rumah)
+    // supaya truk melintasi batas rumah dan masuk/keluar dari luar layar.
+    for (var i = 0; i < houses.length; i++) {
+      final hd = houses[i];
+      final hauling = hd.haulProgress != null;
+      final hjVictim = hd.fx.any((f) =>
+      f.type == FxType.hijack && f.amount.round() != 1 && f.age >= 0);
+      if (!hauling && !hjVictim) continue;
+      final x0 = i * _w;
+      final kp =
+          painters[i] ?? KostPainter(hd.withView(compact: compact), _repaint);
+      double? thiefDx;
+      var thiefHauling = false;
+      final peer = kp.activeHijackThief();
+      if (peer != null) {
+        final ti = ids.indexOf(peer);
+        if (ti >= 0 && ti != i) {
+          thiefDx = (ti - i) * _w;
+          thiefHauling = houses[ti].haulProgress != null;
+        }
+      }
+      canvas.save();
+      canvas.translate(x0, 0);
+      kp.paintStreetTruck(
+        canvas,
+        t,
+        Rect.fromLTRB(vl - x0, vt, vr - x0, vb),
+        thiefDx: thiefDx,
+        thiefHauling: thiefHauling,
+      );
       canvas.restore();
     }
 
