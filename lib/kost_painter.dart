@@ -1150,15 +1150,6 @@ extension KostPainterBuilding on KostPainter {
       ..color = Colors.black.withValues(alpha: 0.18);
     canvas.drawOval(Rect.fromLTWH(_bl - 12, _gy + 1, 214, 11), _p);
 
-    if (d.kostTier >= 2) {
-      final postTop = floorBuild
-          ? _lerp(roofY + _fh, roofY, _ease(_c01((bp - 0.17) / 0.25)))
-          : roofY;
-      _p.color = const Color(0xFFFFD54F);
-      canvas.drawRect(Rect.fromLTWH(_bl - 5, postTop, 5, _gy - postTop), _p);
-      canvas.drawRect(Rect.fromLTWH(_bl + 190, postTop, 5, _gy - postTop), _p);
-    }
-
     for (var idx = 0; idx < floors * 4; idx++) {
       final r = _cell(idx);
       if (floorBuild && idx ~/ 4 == floors - 1) {
@@ -1198,6 +1189,17 @@ extension KostPainterBuilding on KostPainter {
       }
     }
 
+    // fasad khas tiap kelas (dinding, pelat, pilaster, taman depan)
+    if (d.kostTier == 1) {
+      _facadeModern(canvas, t,
+          floorBuild: floorBuild,
+          bp: bp,
+          newest: newest,
+          renovating: buildP != null);
+    } else if (d.kostTier >= 2) {
+      _facadeClassic(canvas, t, floorBuild: floorBuild, bp: bp);
+    }
+
     // atap ikut terangkat & berayun saat tambah lantai
     canvas.save();
     if (floorBuild) {
@@ -1211,27 +1213,10 @@ extension KostPainterBuilding on KostPainter {
         canvas.translate(-200, -pl);
       }
     }
-    if (d.kostTier == 2) {
-      _p
-        ..style = PaintingStyle.fill
-        ..color = d.style?.roofColor ?? const Color(0xFF263238);
-      canvas.drawRect(Rect.fromLTWH(_bl - 8, roofY - 8, 206, 8), _p);
-      _p.color = const Color(0xFFFFD54F);
-      canvas.drawRect(Rect.fromLTWH(_bl - 8, roofY - 10, 206, 2.5), _p);
-
-      _p.color = const Color(0xFF80DEEA).withValues(alpha: 0.45);
-      canvas.drawRect(Rect.fromLTWH(_bl, roofY - 17, 190, 7), _p);
-
-      _p.color = const Color(0xFFECEFF1);
-      canvas.drawRect(Rect.fromLTWH(204, roofY - 34, 2, 18), _p);
-      _p.color = const Color(0xFFE53935);
-      canvas.drawPath(
-        Path()
-          ..moveTo(188, roofY - 30)
-          ..quadraticBezierTo(205, roofY - 42, 222, roofY - 30)
-          ..close(),
-        _p,
-      );
+    if (d.kostTier >= 2) {
+      _roofSultan(canvas, roofY, t);
+    } else if (d.kostTier == 1) {
+      _roofModern(canvas, roofY, t);
     } else {
       final roofColor = d.style?.roofColor ??
           (d.kostTier == 1
@@ -1276,71 +1261,79 @@ extension KostPainterBuilding on KostPainter {
       canvas.drawRect(Rect.fromLTWH(_bl, roofY, 190, 4.5), _p);
     }
 
-    _p.color =
-    d.kostTier >= 1 ? const Color(0xFF0288D1) : const Color(0xFF78909C);
-    canvas.drawRect(Rect.fromLTWH(238, roofY - 40, 24, 18), _p);
-    _p.color = const Color(0xFF546E7A);
-    canvas.drawPath(
-      Path()
-        ..moveTo(236, roofY - 40)
-        ..lineTo(250, roofY - 47)
-        ..lineTo(264, roofY - 40)
-        ..close(),
-      _p,
-    );
-
-    final signBg = d.style?.signColor ??
-        (d.kostTier == 2
-            ? const Color(0xFF212121)
-            : (d.kostTier == 1
-            ? const Color(0xFF0D47A1)
-            : const Color(0xFF477A62)));
-    if (!d.compact) {
-      final glow = 0.5 + 0.5 * math.sin(t * 2.4);
-      _p
-        ..style = PaintingStyle.fill
-        ..color = _mix(signBg, Colors.white, 0.5)
-            .withValues(alpha: 0.08 + 0.08 * glow);
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(116, roofY - 42, 68, 20).inflate(4),
-          const Radius.circular(8),
-        ),
+    if (d.kostTier == 0) {
+      _p.color = const Color(0xFF78909C);
+      canvas.drawRect(Rect.fromLTWH(238, roofY - 40, 24, 18), _p);
+      _p.color = const Color(0xFF546E7A);
+      canvas.drawPath(
+        Path()
+          ..moveTo(236, roofY - 40)
+          ..lineTo(250, roofY - 47)
+          ..lineTo(264, roofY - 40)
+          ..close(),
         _p,
       );
     }
-    _p
-      ..style = PaintingStyle.fill
-      ..color = signBg;
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(116, roofY - 42, 68, 20),
-        const Radius.circular(4),
-      ),
-      _p,
-    );
-    _p
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2
-      ..color = d.kostTier == 2
-          ? const Color(0xFFFFD54F)
-          : Colors.white.withValues(alpha: 0.75);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(117.5, roofY - 40.5, 65, 17),
-        const Radius.circular(3),
-      ),
-      _p,
-    );
-    _p.style = PaintingStyle.fill;
 
+    final signBg = d.style?.signColor ??
+        (d.kostTier == 2
+            ? const Color(0xFF1A237E)
+            : (d.kostTier == 1
+            ? const Color(0xFF0D47A1)
+            : const Color(0xFF477A62)));
     final customName = d.style?.name ?? '';
     final tp = customName.isNotEmpty
         ? _customSign(customName)
         : (d.kostTier == 2
         ? _signSul
         : (d.kostTier == 1 ? _signExc : _signReg));
-    tp.paint(canvas, Offset(150 - tp.width / 2, roofY - 36));
+    if (d.kostTier >= 2) {
+      // Sultan: nama ada di tympanum pedimen emas.
+      _sultanPlaque(canvas, roofY, t, signBg, tp);
+    } else {
+      // Eksklusif: papan berdiri di atas dua kaki baja. Reguler: di atap.
+      final sr = d.kostTier == 1
+          ? Rect.fromLTWH(112, roofY - 37, 68, 17)
+          : Rect.fromLTWH(116, roofY - 42, 68, 20);
+      if (d.kostTier == 1) {
+        _p
+          ..style = PaintingStyle.fill
+          ..color = const Color(0xFF90A4AE);
+        for (final lx in const [124.0, 170.0]) {
+          final top = sr.bottom - 1;
+          final base = roofY - 8 - (lx - (_bl - 12)) / 216 * 15;
+          canvas.drawRect(Rect.fromLTRB(lx - 1, top, lx + 1, base + 1), _p);
+        }
+      }
+      if (!d.compact) {
+        final glow = 0.5 + 0.5 * math.sin(t * 2.4);
+        _p
+          ..style = PaintingStyle.fill
+          ..color = _mix(signBg, Colors.white, 0.5)
+              .withValues(alpha: 0.08 + 0.08 * glow);
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(sr.inflate(4), const Radius.circular(8)),
+          _p,
+        );
+      }
+      _p
+        ..style = PaintingStyle.fill
+        ..color = signBg;
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(sr, const Radius.circular(4)),
+        _p,
+      );
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.2
+        ..color = Colors.white.withValues(alpha: 0.75);
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(sr.deflate(1.5), const Radius.circular(3)),
+        _p,
+      );
+      _p.style = PaintingStyle.fill;
+      tp.paint(canvas, sr.center - Offset(tp.width / 2, tp.height / 2));
+    }
 
     canvas.restore();
 
@@ -1373,6 +1366,438 @@ extension KostPainterBuilding on KostPainter {
       _p.color = const Color(0xFFFF1744);
       canvas.drawCircle(Offset(205, roofY - 27), 4.5, _p);
     }
+  }
+
+  // ------------------------------------------------ desain per kelas kost
+  //
+  // Reguler   : kost biasa, atap pelana genteng, kotak tandon di atap.
+  // Eksklusif : modern minimalis - atap miring satu sisi + panel surya, pelat
+  //             beton menjorok, dinding batu & kayu, railing kaca, pot tanaman.
+  // Sultan    : istana klasik - pedimen emas bernama, pilaster, sabuk emas,
+  //             balustrade, tangga karpet merah, pot topiary.
+
+  double _facadeTop(bool floorBuild, double bp) => floorBuild
+      ? _lerp(_roofY + _fh, _roofY, _ease(_c01((bp - 0.17) / 0.25)))
+      : _roofY;
+
+  /// Pelat/sabuk antar-lantai ke-[k] tampil, kecuali lantai yang masih dibangun.
+  bool _slabVisible(int k, int floors, bool floorBuild) =>
+      !floorBuild || k < floors - 1;
+
+  void _facadeModern(
+      Canvas canvas,
+      double t, {
+        required bool floorBuild,
+        required double bp,
+        required int newest,
+        required bool renovating,
+      }) {
+    final floors = _floors;
+    final top = _facadeTop(floorBuild, bp);
+    final h = _gy - top;
+
+    // dinding batu hitam (kiri)
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFF3B4146);
+    canvas.drawRect(Rect.fromLTWH(_bl, top, 8, h), _p);
+    if (!d.compact) {
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.6
+        ..color = const Color(0xFF262B2F);
+      for (var y = top + 5; y < _gy; y += 6) {
+        canvas.drawLine(Offset(_bl, y), Offset(_bl + 8, y), _p);
+      }
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF626A72);
+      canvas.drawRect(Rect.fromLTWH(_bl + 7, top, 1, h), _p);
+    }
+
+    // panel kayu bersirip (kanan)
+    const wx = _bl + 190 - 8;
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFFB07A4A);
+    canvas.drawRect(Rect.fromLTWH(wx, top, 8, h), _p);
+    if (!d.compact) {
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.7
+        ..color = const Color(0xFF7B4E2B);
+      for (var x = wx + 1.6; x < wx + 8; x += 2.2) {
+        canvas.drawLine(Offset(x, top), Offset(x, _gy), _p);
+      }
+    }
+    _p.style = PaintingStyle.fill;
+
+    // pelat beton putih yang menjorok di tiap batas lantai
+    for (var k = 1; k < floors; k++) {
+      if (!_slabVisible(k, floors, floorBuild)) continue;
+      final y = _gy - k * _fh;
+      _p.color = const Color(0xFFF1F3F4);
+      canvas.drawRect(Rect.fromLTWH(_bl - 8, y - 1.6, 206, 3.4), _p);
+      _p.color = Colors.black.withValues(alpha: 0.14);
+      canvas.drawRect(Rect.fromLTWH(_bl - 8, y + 1.8, 206, 2.2), _p);
+    }
+    _p.color = const Color(0xFF455A64);
+    canvas.drawRect(Rect.fromLTWH(_bl - 3, _gy - 2.5, 196, 2.5), _p);
+
+    // railing kaca: pegangan baja tipis di tiap kamar yang sudah jadi
+    final built = math.min(d.rooms, floors * 4);
+    for (var idx = 0; idx < built; idx++) {
+      if (renovating && idx >= newest) continue;
+      if (floorBuild && idx ~/ 4 == floors - 1) continue;
+      final r = _cell(idx);
+      final y = r.bottom - 13;
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1
+        ..color = const Color(0xFF90A4AE);
+      canvas.drawLine(
+        Offset(r.left + (idx % 4 == 0 ? 8 : 0), y),
+        Offset(r.right - (idx % 4 == 3 ? 8 : 0), y),
+        _p,
+      );
+      if (idx % 4 != 0) {
+        canvas.drawLine(Offset(r.left, y), Offset(r.left, r.bottom - 3), _p);
+      }
+    }
+    _p.style = PaintingStyle.fill;
+
+    if (d.compact) return;
+
+    // pot beton memanjang berisi semak di halaman depan
+    _p.color = const Color(0xFF8E979D);
+    canvas.drawRect(Rect.fromLTWH(126, _gy - 6, 46, 6), _p);
+    _p.color = const Color(0xFF6C757B);
+    canvas.drawRect(Rect.fromLTWH(126, _gy - 6, 46, 1.4), _p);
+    for (var i = 0; i < 6; i++) {
+      final sw = math.sin(t * 1.5 + i) * 0.6;
+      _p.color = i.isEven ? const Color(0xFF4CAF50) : const Color(0xFF2E7D32);
+      canvas.drawCircle(
+          Offset(130 + i * 7.6 + sw, _gy - 9 - (i % 2) * 2), 4.2, _p);
+    }
+
+    // sorot dinding hangat saat malam
+    final n = _night;
+    if (n > 0.05) {
+      for (final x in const [_bl + _cw, _bl + 3 * _cw]) {
+        final rect = Rect.fromLTWH(x - 7, _gy - 36, 14, 34);
+        _p.shader = LinearGradient(
+          begin: Alignment.bottomCenter,
+          end: Alignment.topCenter,
+          colors: [
+            const Color(0xFFFFE9A8).withValues(alpha: 0.38 * n),
+            const Color(0xFFFFE9A8).withValues(alpha: 0),
+          ],
+        ).createShader(rect);
+        canvas.drawRect(rect, _p);
+        _p.shader = null;
+      }
+    }
+  }
+
+  void _roofModern(Canvas canvas, double roofY, double t) {
+    final roofColor = d.style?.roofColor ?? const Color(0xFF37474F);
+    const x0 = _bl - 12.0;
+    const x1 = _bl + 204.0;
+    double slopeY(double x) => roofY - 8 - (x - x0) / (x1 - x0) * 15;
+
+    // atap miring satu sisi (tinggi di kanan) dengan overhang
+    final slab = Path()
+      ..moveTo(x0, roofY)
+      ..lineTo(x0, slopeY(x0))
+      ..lineTo(x1, slopeY(x1))
+      ..lineTo(x1, roofY)
+      ..close();
+    _p
+      ..style = PaintingStyle.fill
+      ..color = roofColor;
+    canvas.drawPath(slab, _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeCap = StrokeCap.round
+      ..color = _mix(roofColor, Colors.white, 0.5).withValues(alpha: 0.85);
+    canvas.drawLine(Offset(x0, slopeY(x0)), Offset(x1, slopeY(x1)), _p);
+
+    // fasia putih tebal + bayangan jatuh di dinding
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeCap = StrokeCap.butt
+      ..color = const Color(0xFFF1F3F4);
+    canvas.drawRect(Rect.fromLTWH(x0, roofY - 3.6, x1 - x0, 3.6), _p);
+    _p.color = Colors.black.withValues(alpha: 0.16);
+    canvas.drawRect(Rect.fromLTWH(_bl, roofY, 190, 4.5), _p);
+
+    // tiga panel surya sejajar kemiringan atap
+    for (var i = 0; i < 3; i++) {
+      final a = 128.0 + i * 46;
+      final b = a + 40;
+      final quad = Path()
+        ..moveTo(a, slopeY(a) - 1.5)
+        ..lineTo(b, slopeY(b) - 1.5)
+        ..lineTo(b, slopeY(b) - 8)
+        ..lineTo(a, slopeY(a) - 8)
+        ..close();
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF12306B);
+      canvas.drawPath(quad, _p);
+      if (!d.compact) {
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.6
+          ..color = const Color(0xFF90CAF9).withValues(alpha: 0.8);
+        for (var k = 1; k < 4; k++) {
+          final x = a + (b - a) * k / 4;
+          canvas.drawLine(
+              Offset(x, slopeY(x) - 1.5), Offset(x, slopeY(x) - 8), _p);
+        }
+        canvas.save();
+        canvas.clipPath(quad);
+        final gl = (t * 0.22 + i * 0.3) % 1.0;
+        final gx = a - 8 + gl * (b - a + 16);
+        _p
+          ..style = PaintingStyle.fill
+          ..color = Colors.white.withValues(alpha: 0.28);
+        canvas.drawPath(
+          Path()
+            ..moveTo(gx, slopeY(gx) - 1.5)
+            ..lineTo(gx + 4, slopeY(gx + 4) - 1.5)
+            ..lineTo(gx + 9, slopeY(gx + 9) - 8)
+            ..lineTo(gx + 5, slopeY(gx + 5) - 8)
+            ..close(),
+          _p,
+        );
+        canvas.restore();
+      }
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 0.9
+        ..color = const Color(0xFFB0BEC5);
+      canvas.drawPath(quad, _p);
+    }
+    _p.style = PaintingStyle.fill;
+  }
+
+  void _facadeClassic(
+      Canvas canvas,
+      double t, {
+        required bool floorBuild,
+        required double bp,
+      }) {
+    final floors = _floors;
+    final top = _facadeTop(floorBuild, bp);
+    const cream = Color(0xFFFFF3DC);
+    const gold = Color(0xFFFFD54F);
+    const goldD = Color(0xFFB8860B);
+    final doneFloors = floorBuild ? floors - 1 : floors;
+
+    // plinth marmer
+    _p
+      ..style = PaintingStyle.fill
+      ..color = cream;
+    canvas.drawRect(Rect.fromLTWH(_bl - 6, _gy - 5, 202, 5), _p);
+    _p.color = goldD;
+    canvas.drawRect(Rect.fromLTWH(_bl - 6, _gy - 5, 202, 1.2), _p);
+
+    // sabuk emas antar-lantai
+    for (var k = 1; k < floors; k++) {
+      if (!_slabVisible(k, floors, floorBuild)) continue;
+      final y = _gy - k * _fh;
+      _p.color = gold;
+      canvas.drawRect(Rect.fromLTWH(_bl - 4, y - 1.3, 198, 2.6), _p);
+      _p.color = goldD;
+      canvas.drawRect(Rect.fromLTWH(_bl - 4, y + 1.3, 198, 1), _p);
+    }
+
+    // pilaster di batas tiap kolom kamar: kepala & kaki emas per lantai
+    for (var i = 0; i <= 4; i++) {
+      final x = _bl + i * _cw;
+      final w = (i == 0 || i == 4) ? 6.0 : 4.6;
+      _p.color = cream;
+      canvas.drawRect(Rect.fromLTWH(x - w / 2, top, w, _gy - top), _p);
+      _p.color = Colors.black.withValues(alpha: 0.08);
+      canvas.drawRect(Rect.fromLTWH(x + w / 2 - 1.4, top, 1.4, _gy - top), _p);
+      if (!d.compact) {
+        _p
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 0.5
+          ..color = goldD.withValues(alpha: 0.35);
+        canvas.drawLine(Offset(x - w / 6, top), Offset(x - w / 6, _gy), _p);
+        canvas.drawLine(Offset(x + w / 6, top), Offset(x + w / 6, _gy), _p);
+        _p.style = PaintingStyle.fill;
+      }
+      for (var f = 0; f < doneFloors; f++) {
+        final yTop = _gy - (f + 1) * _fh;
+        final yBot = _gy - f * _fh - (f == 0 ? 7.6 : 3.0);
+        _p.color = gold;
+        canvas.drawRect(
+            Rect.fromLTWH(x - w / 2 - 1.2, yTop, w + 2.4, 2.6), _p);
+        canvas.drawRect(
+            Rect.fromLTWH(x - w / 2 - 1.2, yBot, w + 2.4, 2.4), _p);
+      }
+    }
+
+    // tangga + karpet merah di pintu
+    _p.color = cream;
+    canvas.drawRect(Rect.fromLTWH(_doorX - 17, _gy, 34, 2.6), _p);
+    _p.color = const Color(0xFFE0D2B4);
+    canvas.drawRect(Rect.fromLTWH(_doorX - 13, _gy + 2.6, 26, 2.6), _p);
+    _p.color = const Color(0xFFB71C1C);
+    canvas.drawRect(Rect.fromLTWH(_doorX - 5, _gy, 10, 5.2), _p);
+    _p.color = gold;
+    canvas.drawRect(Rect.fromLTWH(_doorX - 5, _gy, 0.9, 5.2), _p);
+    canvas.drawRect(Rect.fromLTWH(_doorX + 4.1, _gy, 0.9, 5.2), _p);
+
+    if (d.compact) return;
+
+    // pot emas berisi topiary bulat di kiri-kanan pintu
+    for (final x in [_doorX - 31, _doorX + 31]) {
+      final sw = math.sin(t * 1.4 + x) * 0.5;
+      _p.color = gold;
+      canvas.drawPath(
+        Path()
+          ..moveTo(x - 4.5, _gy - 6)
+          ..lineTo(x + 4.5, _gy - 6)
+          ..lineTo(x + 3, _gy)
+          ..lineTo(x - 3, _gy)
+          ..close(),
+        _p,
+      );
+      _p.color = const Color(0xFF2E7D32);
+      canvas.drawCircle(Offset(x + sw, _gy - 12), 5.6, _p);
+      _p.color = const Color(0xFF66BB6A);
+      canvas.drawCircle(Offset(x - 1.6 + sw, _gy - 13.6), 2, _p);
+    }
+  }
+
+  void _roofSultan(Canvas canvas, double roofY, double t) {
+    final roofC = d.style?.roofColor ?? const Color(0xFF263238);
+    const cream = Color(0xFFFFF3DC);
+    const gold = Color(0xFFFFD54F);
+    const goldD = Color(0xFFB8860B);
+
+    // korniche gelap + bibir emas + gigi dentil
+    _p
+      ..style = PaintingStyle.fill
+      ..color = roofC;
+    canvas.drawRect(Rect.fromLTWH(_bl - 10, roofY - 8, 210, 8), _p);
+    _p.color = gold;
+    canvas.drawRect(Rect.fromLTWH(_bl - 10, roofY - 10, 210, 2.5), _p);
+    if (!d.compact) {
+      _p.color = cream;
+      for (var x = _bl - 8; x < _bl + 196; x += 5.5) {
+        canvas.drawRect(Rect.fromLTWH(x, roofY - 5.6, 2.6, 2.6), _p);
+      }
+    }
+
+    // balustrade di kedua sayap
+    void balu(double xa, double xb) {
+      _p.color = gold;
+      canvas.drawRect(Rect.fromLTWH(xa, roofY - 19, xb - xa, 2), _p);
+      _p.color = cream;
+      for (var x = xa + 1; x < xb - 1; x += 4.5) {
+        canvas.drawRect(Rect.fromLTWH(x, roofY - 17, 2.2, 7), _p);
+      }
+      // guci emas di ujung luar
+    }
+
+    balu(_bl - 8, 116);
+    balu(284, _bl + 198);
+    for (final x in const [_bl - 8.0, _bl + 196.0]) {
+      _p.color = gold;
+      canvas.drawRect(Rect.fromLTWH(x, roofY - 23, 4, 4), _p);
+      canvas.drawCircle(Offset(x + 2, roofY - 25), 2.6, _p);
+    }
+
+    // pedimen segitiga besar di tengah
+    final outer = Path()
+      ..moveTo(116, roofY - 11)
+      ..lineTo(284, roofY - 11)
+      ..lineTo(200, roofY - 38)
+      ..close();
+    _p.color = cream;
+    canvas.drawPath(outer, _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeJoin = StrokeJoin.round
+      ..color = gold;
+    canvas.drawPath(outer, _p);
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeJoin = StrokeJoin.miter
+      ..color = goldD;
+    canvas.drawRect(Rect.fromLTWH(116, roofY - 12.4, 168, 1.6), _p);
+
+    // akroterion emas: ujung kiri, kanan, dan puncak berhias mahkota kecil
+    _p.color = gold;
+    canvas.drawCircle(Offset(116, roofY - 13), 2.4, _p);
+    canvas.drawCircle(Offset(284, roofY - 13), 2.4, _p);
+    canvas.drawRect(Rect.fromLTWH(198.6, roofY - 42, 2.8, 4), _p);
+    canvas.drawCircle(Offset(200, roofY - 43.5), 2.6, _p);
+    canvas.drawPath(
+      Path()
+        ..moveTo(196.6, roofY - 45)
+        ..lineTo(197.8, roofY - 49)
+        ..lineTo(200, roofY - 46.5)
+        ..lineTo(202.2, roofY - 49)
+        ..lineTo(203.4, roofY - 45)
+        ..close(),
+      _p,
+    );
+
+    // kilau berkeliling di bibir emas
+    if (!d.compact) {
+      final gx = _bl - 8 + (t * 34) % 204;
+      final a = 0.5 + 0.5 * math.sin(t * 6);
+      _p.color = Colors.white.withValues(alpha: 0.35 + 0.5 * a);
+      canvas.drawCircle(Offset(gx, roofY - 8.8), 1.7, _p);
+      canvas.drawRect(Rect.fromLTWH(gx - 4, roofY - 9.2, 8, 0.8), _p);
+      canvas.drawRect(Rect.fromLTWH(gx - 0.4, roofY - 12.8, 0.8, 8), _p);
+    }
+  }
+
+  /// Papan nama Sultan: tympanum pedimen berwarna papan, bingkai emas.
+  void _sultanPlaque(Canvas canvas, double roofY, double t, Color bg,
+      TextPainter tp) {
+    final inner = Path()
+      ..moveTo(128, roofY - 13)
+      ..lineTo(272, roofY - 13)
+      ..lineTo(200, roofY - 34.5)
+      ..close();
+    if (!d.compact) {
+      final glow = 0.5 + 0.5 * math.sin(t * 2.4);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 5
+        ..strokeJoin = StrokeJoin.round
+        ..color = const Color(0xFFFFE082).withValues(alpha: 0.08 + 0.1 * glow);
+      canvas.drawPath(inner, _p);
+    }
+    _p
+      ..style = PaintingStyle.fill
+      ..color = bg;
+    canvas.drawPath(inner, _p);
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..strokeJoin = StrokeJoin.round
+      ..color = const Color(0xFFFFD54F);
+    canvas.drawPath(inner, _p);
+    _p
+      ..style = PaintingStyle.fill
+      ..strokeJoin = StrokeJoin.miter;
+    final k = math.min(1.0, 60.0 / tp.width);
+    canvas.save();
+    canvas.translate(200, roofY - 19.5);
+    canvas.scale(k);
+    tp.paint(canvas, Offset(-tp.width / 2, -tp.height / 2));
+    canvas.restore();
   }
 
   /// Kamar yang belum dibangun: rangka beton (kolom + pelat lantai + pelat
@@ -1635,6 +2060,29 @@ extension KostPainterBuilding on KostPainter {
     canvas.drawLine(
         Offset(win.center.dx, win.top), Offset(win.center.dx, win.bottom), _p);
     _p.style = PaintingStyle.fill;
+
+    if (d.kostTier >= 2) {
+      // Sultan: pedimen segitiga emas di atas tiap jendela.
+      final tri = Path()
+        ..moveTo(win.left - 2.5, r.top + 7.4)
+        ..lineTo(win.right + 2.5, r.top + 7.4)
+        ..lineTo(win.center.dx, r.top + 1.2)
+        ..close();
+      _p.color = const Color(0xFFFFF3DC);
+      canvas.drawPath(tri, _p);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.0
+        ..strokeJoin = StrokeJoin.round
+        ..color = const Color(0xFFFFB300);
+      canvas.drawPath(tri, _p);
+      _p
+        ..style = PaintingStyle.fill
+        ..strokeJoin = StrokeJoin.miter
+        ..color = const Color(0xFFFFB300);
+      canvas.drawRect(
+          Rect.fromLTWH(win.left - 2.5, r.top + 7.4, win.width + 5, 1.6), _p);
+    }
 
     if (!d.compact) {
       // kilau kaca yang menyapu pelan
