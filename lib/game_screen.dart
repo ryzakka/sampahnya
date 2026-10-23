@@ -101,7 +101,11 @@ class _GameScreenState extends State<GameScreen>
   final List<KostShot> _shots = []; // lemparan yang sedang terbang antar rumah
   double _atkTotal = 0; // total jendela Tangkis serangan masuk (untuk cincin)
   final Map<String, double> _haulTotal = {};
-  int _lastEventMs = -100000;
+  // Pemberitahuan singkat (kabar, galat, info). Satu slot di atas layar,
+  // hilang sendiri; riwayat lengkap tetap ada di tombol "Kabar terbaru".
+  _Notice? _notice;
+  Timer? _noticeTimer;
+  int _noticeSeq = 0;
   int _lastEmojiSentMs = -10000;
   bool _emojiBarOpen = false;
   bool _tangkisBusy = false;
@@ -189,6 +193,7 @@ class _GameScreenState extends State<GameScreen>
   void dispose() {
     _uiTimer?.cancel();
     _tickTimer?.cancel();
+    _noticeTimer?.cancel();
     _anim.dispose();
     if (_channel != null) _db.removeChannel(_channel!);
     super.dispose();
@@ -269,10 +274,14 @@ class _GameScreenState extends State<GameScreen>
         final ev = Map<String, dynamic>.from(r);
         _addFx(ev);
         setState(() {
-          _lastEventMs = sceneNowMs();
           _events.insert(0, ev);
           if (_events.length > 25) _events.removeLast();
         });
+        final txt = _eventText(ev);
+        if (txt.isNotEmpty) {
+          final ic = _eventIcon(ev['type']);
+          _showNotice(txt, icon: ic.$1, color: ic.$2);
+        }
       },
     )
         .onPostgresChanges(
@@ -333,9 +342,9 @@ class _GameScreenState extends State<GameScreen>
         _toast('Tawaran sudah kedaluwarsa.');
       }
     } on PostgrestException catch (e) {
-      _toast(e.message);
+      _toast(e.message, error: true);
     } catch (e) {
-      _toast('$e');
+      _toast('$e', error: true);
     } finally {
       if (mounted) setState(() => _offerBusy = false);
     }
@@ -353,9 +362,9 @@ class _GameScreenState extends State<GameScreen>
       });
       _toast('Tawaran dikirim ke ${_name(target)} (berlaku 10 dtk).');
     } on PostgrestException catch (e) {
-      _toast(e.message);
+      _toast(e.message, error: true);
     } catch (e) {
-      _toast('$e');
+      _toast('$e', error: true);
     } finally {
       if (mounted) setState(() => _offerBusy = false);
     }
@@ -730,7 +739,7 @@ class _GameScreenState extends State<GameScreen>
         'p_code': code,
       });
     } catch (e) {
-      _toast('Gagal mengirim reaksi: $e');
+      _toast('Gagal mengirim reaksi: $e', error: true);
     }
   }
 
@@ -784,7 +793,7 @@ class _GameScreenState extends State<GameScreen>
       });
       _maybePlayIntro();
     } catch (e) {
-      _toast('Gagal memuat: $e');
+      _toast('Gagal memuat: $e', error: true);
     }
   }
 
@@ -807,24 +816,43 @@ class _GameScreenState extends State<GameScreen>
     try {
       await _db.rpc(fn, params: {'p_room': widget.roomId, ...extra});
     } on PostgrestException catch (e) {
-      _toast(e.message);
+      _toast(e.message, error: true);
     } catch (e) {
-      _toast('$e');
+      _toast('$e', error: true);
     } finally {
       if (mounted) setState(() => _activeRpc = null);
     }
   }
 
-  void _toast(String m) {
+  /// Semua pesan singkat lewat sini (tidak lagi SnackBar yang menutupi bilah
+  /// aksi). Tampil sebagai pil kecil di bawah HUD.
+  void _toast(String m, {bool error = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          behavior: SnackBarBehavior.floating,
-          content: Text(m),
-        ),
-      );
+    _showNotice(
+      m.replaceFirst(RegExp(r'^Exception:\s*'), ''),
+      icon: error ? Icons.error_outline_rounded : Icons.info_outline_rounded,
+      color: error ? const Color(0xFFE53935) : const Color(0xFF546E7A),
+      ms: error ? 4200 : 3200,
+    );
+  }
+
+  void _showNotice(
+      String text, {
+        IconData icon = Icons.info_outline_rounded,
+        Color color = const Color(0xFF546E7A),
+        int ms = 3600,
+      }) {
+    if (!mounted) return;
+    _noticeTimer?.cancel();
+    setState(() => _notice = _Notice(++_noticeSeq, text, icon, color));
+    _noticeTimer = Timer(Duration(milliseconds: ms), () {
+      if (mounted) setState(() => _notice = null);
+    });
+  }
+
+  void _dismissNotice() {
+    _noticeTimer?.cancel();
+    if (mounted) setState(() => _notice = null);
   }
 
   // ------------------------------------------------------------- helpers
@@ -906,9 +934,9 @@ class _GameScreenState extends State<GameScreen>
     try {
       await _db.rpc('tangkis', params: {'p_room': widget.roomId});
     } on PostgrestException catch (e) {
-      _toast(e.message);
+      _toast(e.message, error: true);
     } catch (e) {
-      _toast('$e');
+      _toast('$e', error: true);
     } finally {
       if (mounted) setState(() => _tangkisBusy = false);
     }
@@ -1370,11 +1398,16 @@ class _GameScreenState extends State<GameScreen>
         builder: (context, c) {
           final pad = MediaQuery.of(context).padding;
           final short = c.maxHeight < 540;
-          final wide = c.maxWidth >= 760 && c.maxWidth >= c.maxHeight * 1.1;
+          final wide = c.maxWidth >= 700 && c.maxWidth >= c.maxHeight * 1.1;
+          // Bilah aksi selalu SATU baris; HP sempit memakai tombol ringkas.
+          final compactBar = c.maxWidth < 520;
+          final showStats = c.maxWidth >= 980;
+          final showRate = c.maxWidth >= 860;
 
-          final hudH = wide ? (short ? 52.0 : 64.0) : 104.0;
-          final barH = wide ? (short ? 64.0 : 94.0) : 132.0;
+          final hudH = wide ? (short ? 50.0 : 58.0) : 78.0;
+          final barH = compactBar ? 72.0 : (short ? 58.0 : 88.0);
           final hasBar = me != null;
+          final offerShown = _incomingOffer != null && alive && !finished;
 
           final topInset = pad.top + 8 + hudH + 8;
           final bottomInset = (hasBar ? barH + 8 : 0.0) + pad.bottom + 8;
@@ -1549,21 +1582,8 @@ class _GameScreenState extends State<GameScreen>
                         top: pad.top + 8,
                         left: 12 + pad.left,
                         right: 12 + pad.right,
-                        child: _hud(wide, short, tagState),
-                      ),
-
-                      // 4) Tag Status & World Event
-                      Positioned(
-                        left: 12 + pad.left,
-                        top: topInset + (dockedShown ? _dockH + 12 : 0),
-                        child: IgnorePointer(
-                          child: ConstrainedBox(
-                            constraints: BoxConstraints(
-                              maxWidth: min(c.maxWidth * 0.74, 340.0),
-                            ),
-                            child: _statusTags(tagState, me == null),
-                          ),
-                        ),
+                        child: _hud(wide, short, tagState,
+                            showStats: showStats, showRate: showRate),
                       ),
 
                       // 5) Kartu nama + sabotase menempel di atas atap tiap rumah.
@@ -1585,16 +1605,40 @@ class _GameScreenState extends State<GameScreen>
                               ),
                               if (myAttackLeft > 0 && me != null)
                                 _parryRing(me, myAttackLeft, order, stage, focusId,
-                                    topInset, dockedShown),
+                                    topInset, dockedShown,
+                                    reserve: 30.0 + (offerShown ? 80.0 : 0.0)),
                             ],
                           ),
                         ),
                       ),
 
-                      // 5b) DOK BAWAH: semua yang melayang di atas bilah aksi
-                      //     (emoji, kabar singkat, tawaran loket, kontrol zoom)
-                      //     ditumpuk dalam SATU kolom agar tidak saling menimpa.
-                      //     Saat ada serangan masuk, emoji & kabar disembunyikan
+                      // 4) TUMPUKAN ATAS (satu kolom, urutan prioritas):
+                      //    tawaran loket → pemberitahuan singkat → chip status.
+                      //    Semua di bawah HUD, bukan di tengah/bawah layar.
+                      //    Pemberitahuan disembunyikan saat ada serangan masuk
+                      //    supaya cincin TANGKIS tidak tertutup.
+                      Positioned(
+                        left: 12 + pad.left,
+                        right: 12 + pad.right,
+                        top: topInset - 4 + (dockedShown ? _dockH + 12 : 0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (offerShown)
+                              Padding(
+                                padding: const EdgeInsets.only(bottom: 6),
+                                child: _offerCard(me),
+                              ),
+                            _noticeSlot(myAttackLeft <= 0),
+                            _statusStrip(tagState, me == null),
+                          ],
+                        ),
+                      ),
+
+                      // 5b) DOK BAWAH: hanya yang bersifat kontrol (emoji, zoom),
+                      //     ditumpuk dalam SATU kolom di atas bilah aksi.
+                      //     Saat ada serangan masuk, emoji disembunyikan
                       //     supaya cincin TANGKIS tidak tertutup.
                       if (n > 0 || hasBar)
                         Positioned(
@@ -1604,31 +1648,18 @@ class _GameScreenState extends State<GameScreen>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (hasBar && myAttackLeft <= 0) ...[
-                                if (_emojiBarOpen)
-                                  Padding(
-                                    padding: const EdgeInsets.only(bottom: 6),
-                                    child: _emojiPickerBar(),
-                                  ),
-                                IgnorePointer(
-                                  child: Center(child: _eventToast()),
-                                ),
-                              ],
-                              if (_incomingOffer != null && alive && !finished)
+                              if (hasBar && myAttackLeft <= 0 && _emojiBarOpen)
                                 Padding(
-                                  padding: const EdgeInsets.only(top: 6),
-                                  child: _offerCard(me),
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: _emojiPickerBar(),
                                 ),
                               if (n > 0)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 6),
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: _zoomPanel(
-                                      hasHome: me != null,
-                                      focusId: focusId,
-                                      count: n,
-                                    ),
+                                Align(
+                                  alignment: Alignment.centerRight,
+                                  child: _zoomPanel(
+                                    hasHome: me != null,
+                                    focusId: focusId,
+                                    count: n,
                                   ),
                                 ),
                             ],
@@ -1644,7 +1675,7 @@ class _GameScreenState extends State<GameScreen>
                           child: Center(
                             child: ConstrainedBox(
                               constraints: const BoxConstraints(maxWidth: 820),
-                              child: _actionBar(me, canAct, wide: wide, short: short),
+                              child: _actionBar(me, canAct, compact: compactBar, short: short),
                             ),
                           ),
                         ),
@@ -1720,8 +1751,9 @@ class _GameScreenState extends State<GameScreen>
       Rect stage,
       String? focusId,
       double topInset,
-      bool docked,
-      ) {
+      bool docked, {
+        double reserve = 0,
+      }) {
     final i = order.indexOf(_me);
     if (i < 0) return const SizedBox.shrink();
     const d = 84.0;
@@ -1741,7 +1773,7 @@ class _GameScreenState extends State<GameScreen>
     var top = roofY - 34 * sc - tagRoom - boxH + 10;
     // Ada emoji di rumah sendiri: naikkan cincin agar tidak saling menimpa.
     if (kostActiveEmoji(_fx[_me]) != null) top -= kEmojiBoxH + 4;
-    top = max(top, topInset + (docked ? _dockH + 12 : 4));
+    top = max(top, topInset + (docked ? _dockH + 12 : 4) + reserve);
     top = min(top, stage.bottom - boxH - 70);
 
     final cd = _remaining(me['parry_cooldown_until']);
@@ -1862,23 +1894,26 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _emojiPickerBar() {
     return _glass(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          for (var i = 0; i < kEmojiList.length; i++)
-            InkWell(
-              onTap: () => _sendEmoji(i + 1),
-              borderRadius: BorderRadius.circular(12),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 4),
-                child: Text(
-                  kEmojiList[i],
-                  style: const TextStyle(fontSize: 22),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (var i = 0; i < kEmojiList.length; i++)
+              InkWell(
+                onTap: () => _sendEmoji(i + 1),
+                borderRadius: BorderRadius.circular(12),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  child: Text(
+                    kEmojiList[i],
+                    style: const TextStyle(fontSize: 22),
+                  ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1903,25 +1938,26 @@ class _GameScreenState extends State<GameScreen>
     ),
   );
 
-  Widget _moneyChip(Map<String, dynamic> s, {bool stacked = false}) {
+  Widget _moneyChip(Map<String, dynamic> s,
+      {bool stacked = false, bool showRate = true}) {
     final live = _live(s);
     final out = s['eliminated_at'] != null;
     final trRate = _num(s['trash_rate']);
     final amount = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.payments, size: 22, color: Color(0xFFFFC107)),
+        const Icon(Icons.payments, size: 20, color: Color(0xFFFFC107)),
         const SizedBox(width: 6),
         Text(live.money.floor().toString(),
             style: const TextStyle(
                 color: Colors.white,
-                fontSize: 21,
+                fontSize: 19,
                 fontWeight: FontWeight.w800)),
       ],
     );
     final rate = Text(
       '+${_num(s['income_rate']).toStringAsFixed(1)}/s · ${trRate >= 0 ? '+' : ''}${trRate.toStringAsFixed(2)}🗑️',
-      style: const TextStyle(color: Colors.white70, fontSize: 11),
+      style: const TextStyle(color: Colors.white70, fontSize: 10.5),
     );
     if (stacked) {
       // Potret: angka uang besar, laju di bawahnya (tidak ikut mengecil).
@@ -1935,7 +1971,7 @@ class _GameScreenState extends State<GameScreen>
       mainAxisSize: MainAxisSize.min,
       children: [
         amount,
-        if (!out) ...[
+        if (!out && showRate) ...[
           const SizedBox(width: 6),
           rate,
         ],
@@ -1953,8 +1989,8 @@ class _GameScreenState extends State<GameScreen>
   }) {
     return Row(
       children: [
-        Icon(icon, size: 18, color: color),
-        const SizedBox(width: 8),
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 6),
         Expanded(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1964,17 +2000,17 @@ class _GameScreenState extends State<GameScreen>
                 children: [
                   Text(label,
                       style:
-                      const TextStyle(color: Colors.white70, fontSize: 11)),
+                      const TextStyle(color: Colors.white70, fontSize: 10.5)),
                   const Spacer(),
                   Text(value,
                       style: const TextStyle(
                           color: Colors.white,
-                          fontSize: 11,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w700)),
                 ],
               ),
-              const SizedBox(height: 3),
-              _meter(v, maxV, color, height: 8),
+              const SizedBox(height: 2),
+              _meter(v, maxV, color, height: 6),
             ],
           ),
         ),
@@ -1982,46 +2018,55 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _hud(bool wide, bool short, Map<String, dynamic>? s) {
+  Widget _hudIcon({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onTap,
+    Color color = Colors.white,
+  }) =>
+      IconButton(
+        onPressed: onTap,
+        icon: Icon(icon, color: color),
+        iconSize: 20,
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+        visualDensity: VisualDensity.compact,
+        tooltip: tooltip,
+      );
+
+  Widget _hud(bool wide, bool short, Map<String, dynamic>? s,
+      {required bool showStats, required bool showRate}) {
     final p = _pollution;
     final pc = _pollutionLevel(p).$2;
 
-    final back = IconButton(
-      onPressed: () => Navigator.of(context).maybePop(),
-      icon: const Icon(Icons.arrow_back, color: Colors.white),
-      visualDensity: VisualDensity.compact,
+    final back = _hudIcon(
+      icon: Icons.arrow_back,
       tooltip: 'Kembali',
+      onTap: () => Navigator.of(context).maybePop(),
     );
-    final emojiBtn = IconButton(
-      onPressed: () => setState(() => _emojiBarOpen = !_emojiBarOpen),
-      icon: Icon(
-        _emojiBarOpen ? Icons.emoji_emotions : Icons.emoji_emotions_outlined,
-        color: const Color(0xFFFFCA28),
-      ),
-      visualDensity: VisualDensity.compact,
+    final emojiBtn = _hudIcon(
+      icon: _emojiBarOpen ? Icons.emoji_emotions : Icons.emoji_emotions_outlined,
+      color: const Color(0xFFFFCA28),
       tooltip: 'Kirim Emoji Reaksi',
+      onTap: () => setState(() => _emojiBarOpen = !_emojiBarOpen),
     );
     final myS = _states[_me];
     final boothOpen = myS != null && _remaining(myS['booth_until']) > 0;
     final boothBtn = (myS == null || myS['eliminated_at'] != null)
         ? const SizedBox.shrink()
-        : IconButton(
-      onPressed: _openBooth,
-      icon: Icon(
-        boothOpen ? Icons.storefront : Icons.storefront_outlined,
-        color: boothOpen ? const Color(0xFF69F0AE) : Colors.white,
-      ),
-      visualDensity: VisualDensity.compact,
+        : _hudIcon(
+      icon: boothOpen ? Icons.storefront : Icons.storefront_outlined,
+      color: boothOpen ? const Color(0xFF69F0AE) : Colors.white,
       tooltip: 'Loket Sampah',
+      onTap: _openBooth,
     );
-    final history = IconButton(
-      onPressed: _showFeed,
-      icon: const Icon(Icons.history, color: Colors.white),
-      visualDensity: VisualDensity.compact,
+    final history = _hudIcon(
+      icon: Icons.history,
       tooltip: 'Kabar terbaru',
+      onTap: _showFeed,
     );
     final code = Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
@@ -2029,8 +2074,8 @@ class _GameScreenState extends State<GameScreen>
       child: Text(widget.roomCode,
           style: const TextStyle(
               color: Colors.white,
-              fontSize: 12,
-              letterSpacing: 1.4,
+              fontSize: 11.5,
+              letterSpacing: 1.2,
               fontWeight: FontWeight.w800)),
     );
 
@@ -2076,24 +2121,27 @@ class _GameScreenState extends State<GameScreen>
       color: pc,
     );
 
+    // Lebar: SATU baris (kembali · kode · uang · [status] · meter · tombol).
     if (wide) {
       return _glass(
-        padding: EdgeInsets.symmetric(horizontal: 8, vertical: short ? 4 : 8),
+        padding: EdgeInsets.symmetric(horizontal: 6, vertical: short ? 3 : 6),
         child: Row(
           children: [
             back,
             code,
-            const SizedBox(width: 12),
+            const SizedBox(width: 10),
             if (s != null) ...[
-              _moneyChip(s),
+              _moneyChip(s, showRate: showRate),
               const SizedBox(width: 12),
-              stats!,
-              const SizedBox(width: 14),
+              if (showStats) ...[
+                stats!,
+                const SizedBox(width: 12),
+              ],
               Expanded(child: trashMeter!),
-              const SizedBox(width: 14),
+              const SizedBox(width: 12),
             ],
             Expanded(child: polMeter),
-            const SizedBox(width: 4),
+            const SizedBox(width: 2),
             boothBtn,
             emojiBtn,
             history,
@@ -2102,12 +2150,12 @@ class _GameScreenState extends State<GameScreen>
       );
     }
 
+    // Sempit/potret: baris 1 = identitas & tombol, baris 2 = dua meter ramping.
     return _glass(
-      padding: const EdgeInsets.fromLTRB(4, 4, 8, 8),
+      padding: const EdgeInsets.fromLTRB(2, 3, 8, 6),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Baris 1: kembali · uang (besar, terbaca) · kode ruang · 3 tombol
           Row(
             children: [
               back,
@@ -2122,19 +2170,20 @@ class _GameScreenState extends State<GameScreen>
               ),
               const SizedBox(width: 6),
               code,
-              const SizedBox(width: 4),
+              const SizedBox(width: 2),
               boothBtn,
               emojiBtn,
               history,
             ],
           ),
+          const SizedBox(height: 2),
           Padding(
             padding: const EdgeInsets.only(left: 8),
             child: Row(
               children: [
                 if (trashMeter != null) ...[
                   Expanded(child: trashMeter),
-                  const SizedBox(width: 14),
+                  const SizedBox(width: 12),
                 ],
                 Expanded(child: polMeter),
               ],
@@ -2145,59 +2194,41 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _tag(IconData icon, String text, Color color) => Container(
-    margin: const EdgeInsets.only(bottom: 4),
-    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-    decoration: BoxDecoration(
-      color: color.withValues(alpha: 0.94),
-      borderRadius: BorderRadius.circular(10),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 14, color: Colors.white),
-        const SizedBox(width: 5),
-        Flexible(
-          child: Text(text,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700)),
-        ),
-      ],
-    ),
-  );
-
-  Widget _statusTags(Map<String, dynamic>? s, bool spectator) {
-    final tags = <Widget>[];
-    Widget? timerTag;
+  /// Daftar status aktif, urut dari yang paling mendesak. `short` dipakai di
+  /// chip (ringkas), `long` dipakai di lembar rincian.
+  List<_StatusItem> _statusItems(Map<String, dynamic>? s, bool spectator) {
+    final items = <_StatusItem>[];
+    _StatusItem? timer;
     if (spectator) {
-      tags.add(_tag(Icons.visibility, 'Mode penonton', Colors.blueGrey));
+      items.add(_StatusItem(Icons.visibility, 'Penonton', 'Mode penonton',
+          Colors.blueGrey));
     }
     if (_room['started_at'] != null && _room['status'] == 'playing') {
       final el = _elapsedSec;
       final pr = _pressure;
       final next = 120 - (el % 120);
-      timerTag = (_tag(
+      timer = _StatusItem(
         Icons.timer,
+        pr > 1.0 ? '${_clock(el)} · ×${pr.toStringAsFixed(1)}' : _clock(el),
         pr > 1.0
-            ? '${_clock(el)} · TEKANAN SAMPAH ×${pr.toStringAsFixed(1)} (naik lagi ${_clock(next)})'
+            ? '${_clock(el)} · Tekanan sampah ×${pr.toStringAsFixed(1)} (naik lagi ${_clock(next)})'
             : '${_clock(el)} · Tekanan sampah naik tiap 2 menit (${_clock(next)})',
         pr > 1.0 ? Colors.deepOrange.shade800 : Colors.blueGrey.shade700,
-      ));
+      );
     }
     final ev = _activeWorldEvent;
     if (ev != null) {
       final info = _worldEventInfo(ev);
       final left = _remaining(_room['world_event_until']).ceil();
-      tags.add(_tag(info.$2, '${info.$1} (${left}s)', info.$3));
+      items.add(_StatusItem(info.$2, '${info.$1} ${left}s',
+          '${info.$1} (${left}s)', info.$3));
     }
-    if (_remaining(_room['smog_until']) > 0) {
-      tags.add(_tag(
+    final smog = _remaining(_room['smog_until']);
+    if (smog > 0) {
+      items.add(_StatusItem(
         Icons.masks,
-        'KABUT ASAP! Bakar diblokir · ${_remaining(_room['smog_until']).ceil()} dtk',
+        'Kabut ${smog.ceil()}s',
+        'KABUT ASAP! Bakar diblokir · ${smog.ceil()} dtk',
         Colors.red.shade700,
       ));
     }
@@ -2209,59 +2240,67 @@ class _GameScreenState extends State<GameScreen>
       final wl = _num(s['waste_level']).toInt();
       final sealed = _remaining(s['sealed_until']);
       if (!out && sealed > 0) {
-        tags.add(_tag(
+        items.add(_StatusItem(
           Icons.policy,
+          'Disegel ${sealed.ceil()}s',
           'KOST DISEGEL DINAS · Income -50% (${sealed.ceil()} dtk)',
           Colors.redAccent.shade700,
         ));
       }
       if (out) {
-        tags.add(_tag(
+        items.add(_StatusItem(
           Icons.blur_on,
+          'Arwah',
           'ARWAH · Ketuk layar untuk melayang · emoji tiap 5 dtk',
           Colors.deepPurple.shade300,
         ));
       }
       final smoked = _remaining(s['smoked_until']);
       if (!out && smoked > 0) {
-        tags.add(_tag(
+        items.add(_StatusItem(
           Icons.cloud,
+          'Gas −35% ${smoked.ceil()}s',
           'GAS BERACUN · Income -35% (${smoked.ceil()} dtk)',
           Colors.green.shade800,
         ));
       }
       final booth = _remaining(s['booth_until']);
       if (!out && booth > 0) {
-        tags.add(_tag(Icons.storefront, 'Loket Sampah buka · ${booth.ceil()} dtk',
-            Colors.teal.shade700));
+        items.add(_StatusItem(Icons.storefront, 'Loket ${booth.ceil()}s',
+            'Loket Sampah buka · ${booth.ceil()} dtk', Colors.teal.shade700));
       }
       if (!out && (ratio >= 0.5 || (wl > 0 && ratio > 1.0 / 3.0))) {
-        tags.add(_tag(Icons.warning_amber_rounded, _trashStage(ratio, wl),
-            _trashColor(ratio)));
+        final t = _trashStage(ratio, wl);
+        items.add(_StatusItem(
+            Icons.warning_amber_rounded, t, t, _trashColor(ratio)));
       }
       if (!out && (wl == 8 || wl == 9)) {
-        tags.add(_tag(
+        items.add(_StatusItem(
           Icons.factory,
+          'Insinerator',
           'Insinerator Berpolusi aktif (+Polusi, rawan disidak lawan!)',
           Colors.brown.shade700,
         ));
       }
       final penalty = _remaining(s['burn_penalty_until']);
       if (!out && penalty > 0) {
-        tags.add(_tag(
+        final st = _num(s['burn_stacks']).toInt();
+        items.add(_StatusItem(
           Icons.local_fire_department,
-          'Penalti bakar x${_num(s['burn_stacks']).toInt()} · ${penalty.ceil()} dtk',
+          'Bakar ×$st ${penalty.ceil()}s',
+          'Penalti bakar x$st · ${penalty.ceil()} dtk',
           Colors.deepOrange,
         ));
       }
       final prot = _remaining(s['protected_until']);
       if (!out && prot > 0) {
-        tags.add(_tag(Icons.shield, 'Dilindungi ${prot.ceil()} dtk',
-            Colors.amber.shade800));
+        items.add(_StatusItem(Icons.shield, 'Lindung ${prot.ceil()}s',
+            'Dilindungi ${prot.ceil()} dtk', Colors.amber.shade800));
       }
       if (!out && s['player_id']?.toString() == _bountyId) {
-        tags.add(_tag(
+        items.add(_StatusItem(
           Icons.my_location,
+          'Buronan',
           'BURONAN! Lawan dapat +40 & Sidak murah bila menyerangmu',
           Colors.amber.shade900,
         ));
@@ -2269,8 +2308,9 @@ class _GameScreenState extends State<GameScreen>
       final revT = s['revenge_target']?.toString();
       final revLeft = _remaining(s['revenge_until']);
       if (!out && revT != null && revLeft > 0) {
-        tags.add(_tag(
+        items.add(_StatusItem(
           Icons.whatshot,
+          'Dendam ${revLeft.ceil()}s',
           'DENDAM! Balas ${_name(revT)}: sabotase 50% & tanpa jeda · ${revLeft.ceil()} dtk',
           Colors.red.shade800,
         ));
@@ -2279,18 +2319,132 @@ class _GameScreenState extends State<GameScreen>
     final p = _pollution;
     if (p >= 30) {
       final (label, color) = _pollutionLevel(p);
-      tags.add(_tag(Icons.cloud, label, color));
+      items.add(_StatusItem(Icons.cloud, label, label, color));
     }
-    // Penghitung waktu paling tidak mendesak: taruh paling akhir, lalu batasi
-    // jumlah tag agar tidak menutupi pemandangan.
-    if (timerTag != null) tags.add(timerTag);
-    const maxTags = 4;
-    if (tags.length > maxTags) {
-      final extra = tags.length - (maxTags - 1);
-      tags.removeRange(maxTags - 1, tags.length);
-      tags.add(_tag(Icons.more_horiz, '+$extra info lain', Colors.blueGrey.shade700));
-    }
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: tags);
+    // Penghitung waktu paling tidak mendesak: taruh paling akhir.
+    if (timer != null) items.add(timer);
+    return items;
+  }
+
+  /// Satu baris chip kecil di bawah HUD (maks 3 + "+N"). Ketuk = rincian.
+  Widget _statusStrip(Map<String, dynamic>? s, bool spectator) {
+    final items = _statusItems(s, spectator);
+    if (items.isEmpty) return const SizedBox.shrink();
+    const maxChips = 3;
+    final shown = items.take(maxChips).toList();
+    final extra = items.length - shown.length;
+
+    Widget chip(IconData icon, String text, Color color) => Padding(
+      padding: const EdgeInsets.only(right: 5),
+      child: Material(
+        color: color.withValues(alpha: 0.94),
+        borderRadius: BorderRadius.circular(13),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(13),
+          onTap: _showStatusSheet,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 24, maxWidth: 190),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, size: 13, color: Colors.white),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      text,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return SizedBox(
+      height: 26,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            for (final it in shown) chip(it.icon, it.short, it.color),
+            if (extra > 0)
+              chip(Icons.more_horiz, '+$extra', Colors.blueGrey.shade700),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showStatusSheet() {
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      builder: (ctx) => SafeArea(
+        child: AnimatedBuilder(
+          animation: _anim,
+          builder: (_, __) {
+            final me = _states[_me];
+            final fid = _focusId;
+            final st = me ??
+                (fid != null
+                    ? _states[fid]
+                    : (_order.isNotEmpty ? _states[_order.first] : null));
+            final items = _statusItems(st, me == null);
+            return ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 440),
+              child: ListView(
+                shrinkWrap: true,
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 16),
+                children: [
+                  const Text('Status saat ini',
+                      style:
+                      TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                  const SizedBox(height: 10),
+                  if (items.isEmpty) const Text('Tidak ada status aktif.'),
+                  for (final it in items)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            width: 26,
+                            height: 26,
+                            decoration: BoxDecoration(
+                              color: it.color,
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Icon(it.icon, size: 15, color: Colors.white),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.only(top: 3),
+                              child: Text(it.long),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 
   Widget _stamp() => Transform.rotate(
@@ -2311,42 +2465,88 @@ class _GameScreenState extends State<GameScreen>
     ),
   );
 
-  Widget _eventToast() {
-    final recent = sceneNowMs() - _lastEventMs < 6000;
-    String text = '';
-    IconData icon = Icons.info_outline;
-    Color color = Colors.grey;
-    if (_events.isNotEmpty) {
-      text = _eventText(_events.first);
-      final ic = _eventIcon(_events.first['type']);
-      icon = ic.$1;
-      color = ic.$2;
-    }
-    return AnimatedOpacity(
-      opacity: recent && text.isNotEmpty ? 1 : 0,
-      duration: const Duration(milliseconds: 300),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-          color: _ink.withValues(alpha: 0.88),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withValues(alpha: 0.55)),
+  /// Slot pemberitahuan di bawah HUD. Mengecil jadi 0 tinggi saat kosong,
+  /// jadi tidak memakan tempat. Ketuk pil untuk menutupnya.
+  Widget _noticeSlot(bool allowed) {
+    final n = allowed ? _notice : null;
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: AnimatedSwitcher(
+        duration: const Duration(milliseconds: 220),
+        transitionBuilder: (child, anim) => FadeTransition(
+          opacity: anim,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, -0.35),
+              end: Offset.zero,
+            ).animate(anim),
+            child: child,
+          ),
         ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: Color.lerp(color, Colors.white, 0.4)),
-            const SizedBox(width: 8),
-            Flexible(
-              child: Text(text,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w600)),
+        child: n == null
+            ? const SizedBox.shrink(key: ValueKey('notice-none'))
+            : _noticePill(n),
+      ),
+    );
+  }
+
+  Widget _noticePill(_Notice n) {
+    return Padding(
+      key: ValueKey('notice-${n.id}'),
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Align(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _dismissNotice,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(7, 6, 12, 6),
+              decoration: BoxDecoration(
+                color: _ink.withValues(alpha: 0.92),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: n.color.withValues(alpha: 0.6)),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.28),
+                    blurRadius: 10,
+                    offset: const Offset(0, 3),
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: n.color.withValues(alpha: 0.28),
+                    ),
+                    child: Icon(n.icon,
+                        size: 14, color: Color.lerp(n.color, Colors.white, 0.5)),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(
+                    child: Text(
+                      n.text,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -2463,7 +2663,7 @@ class _GameScreenState extends State<GameScreen>
   // ------------------------------------------------------- bilah aksi (6 tombol)
 
   Widget _actionBar(Map<String, dynamic>? s, bool canAct,
-      {required bool wide, required bool short}) {
+      {required bool compact, required bool short}) {
     if (s == null) return const SizedBox.shrink();
     final live = _live(s);
     final rooms = _num(s['rooms_count']).toInt();
@@ -2491,7 +2691,8 @@ class _GameScreenState extends State<GameScreen>
         (flood ? 1.5 : 1.0))
         .ceil();
 
-    final mode = (short || !wide) ? 2 : 0;
+    // 1 = ringkas vertikal (HP), 2 = baris (landscape pendek), 0 = lega.
+    final mode = compact ? 1 : (short ? 2 : 0);
 
     final buttons = <Widget>[
       _ActionButton(
@@ -2499,6 +2700,10 @@ class _GameScreenState extends State<GameScreen>
         icon: Icons.add_home_work,
         color: Colors.lightBlue,
         title: rooms >= _maxRooms ? 'Kamar Penuh' : 'Bangun Kamar',
+        shortTitle: 'Kamar',
+        shortSub: sealed
+            ? 'Disegel'
+            : (rooms >= _maxRooms ? 'Penuh' : '$buildCost'),
         subtitle: sealed
             ? 'Disegel!'
             : (rooms >= _maxRooms ? 'Maks $_maxRooms' : 'Biaya $buildCost'),
@@ -2515,6 +2720,8 @@ class _GameScreenState extends State<GameScreen>
             : Colors.lightGreenAccent.shade700,
         title:
         wasteLv >= _maxWaste ? 'Limbah Maks' : _wasteNames[nextWasteLv],
+        shortTitle: 'Limbah',
+        shortSub: wasteLv >= _maxWaste ? 'Maks' : '$wasteCost',
         subtitle: wasteLv >= _maxWaste
             ? 'Lv 12/12 Eco'
             : 'Lv $nextWasteLv · $wasteCost',
@@ -2529,6 +2736,10 @@ class _GameScreenState extends State<GameScreen>
         color: Colors.amber,
         title:
         tier >= _maxTier ? 'Kost Sultan' : 'Kost ${_tierNames[nextTier]}',
+        shortTitle: 'Kelas',
+        shortSub: tier >= _maxTier
+            ? 'Maks'
+            : (rooms < tierMinRooms ? '$tierMinRooms kmr' : '$tierCost'),
         subtitle: tier >= _maxTier
             ? 'Kelas Maks'
             : (rooms < tierMinRooms
@@ -2547,6 +2758,10 @@ class _GameScreenState extends State<GameScreen>
         icon: Icons.local_shipping,
         color: Colors.green,
         title: 'Truk Sampah',
+        shortTitle: 'Truk',
+        shortSub: strike
+            ? 'Mogok'
+            : (haulLeft > 0 ? '${haulLeft.ceil()}s' : '~$haulCost'),
         subtitle: strike
             ? 'Mogok kerja!'
             : (haulLeft > 0
@@ -2566,6 +2781,10 @@ class _GameScreenState extends State<GameScreen>
         icon: Icons.local_fire_department,
         color: Colors.deepOrangeAccent,
         title: 'Bakar Sampah',
+        shortTitle: 'Bakar',
+        shortSub: burnLeft > 0
+            ? '${burnLeft.ceil()}s'
+            : (smog ? 'Kabut' : (wasteLv >= 10 ? 'Eco' : 'Polusi')),
         subtitle: burnLeft > 0
             ? 'Jeda ${burnLeft.ceil()}s'
             : smog
@@ -2581,6 +2800,8 @@ class _GameScreenState extends State<GameScreen>
         icon: Icons.shield,
         color: Colors.tealAccent.shade700,
         title: defense >= _maxDefense ? 'Perisai Maks' : 'Pertahanan',
+        shortTitle: 'Perisai',
+        shortSub: defense >= _maxDefense ? 'Maks' : '$defCost',
         subtitle: defense >= _maxDefense
             ? 'Lv $_maxDefense/$_maxDefense · -${_maxDefense * 10}% lemparan'
             : 'Lv ${defense + 1} · $defCost',
@@ -2591,53 +2812,19 @@ class _GameScreenState extends State<GameScreen>
       ),
     ];
 
-    if (wide) {
-      final h = short ? 52.0 : 78.0;
-      return _glass(
-        padding: const EdgeInsets.all(8),
-        child: SizedBox(
-          height: h,
-          child: Row(
-            children: [
-              for (var i = 0; i < buttons.length; i++) ...[
-                if (i > 0) const SizedBox(width: 6),
-                Expanded(child: buttons[i]),
-              ],
-            ],
-          ),
-        ),
-      );
-    }
-
+    // Selalu satu baris enam tombol; tinggi mengikuti mode.
+    final h = mode == 1 ? 60.0 : (short ? 46.0 : 76.0);
+    final gap = mode == 1 ? 4.0 : 6.0;
     return _glass(
       padding: const EdgeInsets.all(6),
       child: SizedBox(
-        height: 112,
-        child: Column(
+        height: h,
+        child: Row(
           children: [
-            Expanded(
-              child: Row(
-                children: [
-                  Expanded(child: buttons[0]),
-                  const SizedBox(width: 6),
-                  Expanded(child: buttons[1]),
-                  const SizedBox(width: 6),
-                  Expanded(child: buttons[2]),
-                ],
-              ),
-            ),
-            const SizedBox(height: 6),
-            Expanded(
-              child: Row(
-                children: [
-                  Expanded(child: buttons[3]),
-                  const SizedBox(width: 6),
-                  Expanded(child: buttons[4]),
-                  const SizedBox(width: 6),
-                  Expanded(child: buttons[5]),
-                ],
-              ),
-            ),
+            for (var i = 0; i < buttons.length; i++) ...[
+              if (i > 0) SizedBox(width: gap),
+              Expanded(child: buttons[i]),
+            ],
           ],
         ),
       ),
@@ -3282,58 +3469,71 @@ class _GameScreenState extends State<GameScreen>
     final live = me == null ? null : _live(me);
     final cap = me == null ? 1.0 : _num(me['trash_capacity']);
     final fatal = live != null && live.trash + amt >= cap;
+    final btnPad = ButtonStyle(
+      padding: WidgetStateProperty.all(
+          const EdgeInsets.symmetric(horizontal: 12)),
+      minimumSize: WidgetStateProperty.all(const Size(0, 34)),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
     return Align(
-      child: Center(
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: _glass(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '🏪 ${_name(o['sender_id'])} menitip $amt sampah',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  'Kamu dibayar $price uang${fatal ? ' · AKAN MENIMBUN KOSTMU!' : ''}',
-                  style: TextStyle(
-                    color: fatal
-                        ? Colors.red.shade300
-                        : const Color(0xFFFFCA28),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                _meter(left, 10, const Color(0xFF69F0AE), height: 4),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: _offerBusy ? null : () => _respondOffer(false),
-                        child: const Text('Tolak'),
-                      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: _glass(
+          padding: const EdgeInsets.fromLTRB(12, 8, 8, 7),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '🏪 ${_name(o['sender_id'])} menitip $amt sampah',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        Text(
+                          fatal ? 'Akan menimbun kostmu!' : 'Dibayar $price uang',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: fatal
+                                ? Colors.red.shade300
+                                : const Color(0xFFFFCA28),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton(
-                        onPressed: (_offerBusy || fatal)
-                            ? null
-                            : () => _respondOffer(true),
-                        child: Text('Terima +$price'),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    style: btnPad,
+                    onPressed: _offerBusy ? null : () => _respondOffer(false),
+                    child: const Text('Tolak'),
+                  ),
+                  const SizedBox(width: 6),
+                  FilledButton(
+                    style: btnPad,
+                    onPressed:
+                    (_offerBusy || fatal) ? null : () => _respondOffer(true),
+                    child: Text('+$price'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              _meter(left, 10, const Color(0xFF69F0AE), height: 3),
+            ],
           ),
         ),
       ),
@@ -3360,11 +3560,11 @@ class _GameScreenState extends State<GameScreen>
             customBorder: const CircleBorder(),
             onTap: onTap,
             child: SizedBox(
-              width: 40,
-              height: 40,
+              width: 36,
+              height: 36,
               child: Icon(
                 icon,
-                size: 22,
+                size: 20,
                 color: active
                     ? Colors.black87
                     : (onTap == null ? Colors.white30 : Colors.white),
@@ -3376,7 +3576,7 @@ class _GameScreenState extends State<GameScreen>
     }
 
     return _glass(
-      padding: const EdgeInsets.all(4),
+      padding: const EdgeInsets.all(3),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -3483,9 +3683,13 @@ class _ActionButton extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.shortTitle,
+    this.shortSub,
     this.busy = false,
   });
 
+  final String? shortTitle;
+  final String? shortSub;
   final int mode;
   final IconData icon;
   final Color color;
@@ -3498,9 +3702,11 @@ class _ActionButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final enabled = onTap != null || busy;
     final c = enabled ? color : Colors.blueGrey;
-    final avatarR = mode == 0 ? 15.0 : 12.5;
-    final titleSize = mode == 0 ? 12.0 : 11.0;
-    final subSize = mode == 0 ? 10.5 : 9.5;
+    final avatarR = mode == 0 ? 15.0 : (mode == 1 ? 11.0 : 12.5);
+    final titleSize = mode == 0 ? 12.0 : (mode == 1 ? 10.5 : 11.0);
+    final subSize = mode == 0 ? 10.5 : (mode == 1 ? 9.5 : 9.5);
+    final titleText = mode == 1 ? (shortTitle ?? title) : title;
+    final subText = mode == 1 ? (shortSub ?? subtitle) : subtitle;
 
     final avatar = CircleAvatar(
       radius: avatarR,
@@ -3523,7 +3729,7 @@ class _ActionButton extends StatelessWidget {
       children: [
         FittedBox(
           fit: BoxFit.scaleDown,
-          child: Text(title,
+          child: Text(titleText,
               maxLines: 1,
               style: TextStyle(
                   color: Colors.white,
@@ -3532,7 +3738,7 @@ class _ActionButton extends StatelessWidget {
         ),
         FittedBox(
           fit: BoxFit.scaleDown,
-          child: Text(subtitle,
+          child: Text(subText,
               maxLines: 1,
               style: TextStyle(color: Colors.white70, fontSize: subSize)),
         ),
@@ -3553,7 +3759,7 @@ class _ActionButton extends StatelessWidget {
           onTap: busy ? null : onTap,
           child: Padding(
             padding: EdgeInsets.symmetric(
-                horizontal: mode == 2 ? 7 : 4, vertical: mode == 2 ? 3 : 5),
+                horizontal: mode == 2 ? 7 : 3, vertical: mode == 2 ? 3 : 4),
             child: mode == 2
                 ? Row(
               children: [
@@ -3566,7 +3772,7 @@ class _ActionButton extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 avatar,
-                const SizedBox(height: 4),
+                SizedBox(height: mode == 1 ? 2 : 4),
                 texts,
               ],
             ),
@@ -3575,4 +3781,22 @@ class _ActionButton extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Satu pemberitahuan singkat (kabar, info, galat) di bawah HUD.
+class _Notice {
+  const _Notice(this.id, this.text, this.icon, this.color);
+  final int id;
+  final String text;
+  final IconData icon;
+  final Color color;
+}
+
+/// Satu status aktif: ringkas untuk chip, lengkap untuk lembar rincian.
+class _StatusItem {
+  const _StatusItem(this.icon, this.short, this.long, this.color);
+  final IconData icon;
+  final String short;
+  final String long;
+  final Color color;
 }
