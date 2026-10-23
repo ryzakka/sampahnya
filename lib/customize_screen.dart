@@ -60,6 +60,16 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   final TextEditingController _nameCtl = TextEditingController();
   final math.Random _rnd = math.Random();
 
+  /// Pemilik kost tiap rumah, supaya pratinjau bangunan menampilkan
+  /// karakter yang sedang beraktivitas di halaman.
+  final Map<String, KostOwner> _owners = {};
+
+  KostOwner _ownerFor(_Entry e) {
+    final o = _owners.putIfAbsent(e.id, () => KostOwner(seed: kostSeedFor(e.id)));
+    o.look = kostLookFor(e.id, e.style);
+    return o;
+  }
+
   SupabaseClient get _db => Supabase.instance.client;
   String? get _myId => _db.auth.currentUser?.id;
 
@@ -407,15 +417,28 @@ class _CustomizeScreenState extends State<CustomizeScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Text(
-            '${e.name}${e.isMe ? ' (Anda)' : ''}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: e.isMe ? _amber : Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.w800,
-            ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              KostHeadIcon(
+                look: kostLookFor(e.id, e.style),
+                size: 18,
+                ring: e.isMe ? _amber : null,
+              ),
+              const SizedBox(width: 5),
+              Flexible(
+                child: Text(
+                  '${e.name}${e.isMe ? ' (Anda)' : ''}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: e.isMe ? _amber : Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
           ),
           const SizedBox(height: 2),
           Row(
@@ -448,9 +471,10 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     pollution: 4,
     wall: e.style.wallColor ??
         KostPalette.walls[i % 4], // sama dengan warna bawaan di game
-    seed: e.id.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
+    seed: kostSeedFor(e.id),
     lights: 1.0,
     style: e.style.isEmpty ? null : e.style,
+    owner: _ownerFor(e),
   );
 
   Widget _streetView(List<_Entry> list) {
@@ -573,10 +597,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                             Expanded(
                               child: CustomPaint(
                                 painter: _AvatarPainter(
-                                  look: list[i].style.look(
-                                    fallbackShirt: KostPalette
-                                        .shirts[i % 4], // = baju bawaan
-                                  ),
+                                  look: kostLookFor(list[i].id, list[i].style),
                                   anim: _anim,
                                   waving: list[i].isMe,
                                   phase: i * 1.3,
@@ -1080,7 +1101,7 @@ class _AvatarPainter extends CustomPainter {
     canvas.translate(fx, fy);
     canvas.scale(faceRight ? s : -s, s);
     paintKostCharacter(canvas, _p, look,
-        t: t, pose: waving ? 1 : 0, phase: phase);
+        t: t, pose: waving ? KostPose.wave : KostPose.stand, phase: phase);
     canvas.restore();
 
     canvas.restore();

@@ -346,7 +346,10 @@ class CineDirector {
     final intro = _intro;
     if (intro != null) {
       final t = (now - intro.start).toDouble();
-      out = out.copyWith(lights: _c01((t - (700 + index * 750)) / 1400));
+      out = out.copyWith(
+        lights: _c01((t - (700 + index * 750)) / 1400),
+        clearDayPhase: true, // intro selalu pagi cerah
+      );
     }
 
     final ps = _policeStart[id];
@@ -392,6 +395,7 @@ class CineDirector {
         pollution: math.min(d.pollution, 6.0),
         smog: false,
         clearWorldEvent: true,
+        clearDayPhase: true,
       );
     }
     final b = _buried;

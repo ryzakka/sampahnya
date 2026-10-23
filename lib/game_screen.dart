@@ -81,6 +81,15 @@ class _GameScreenState extends State<GameScreen>
   /// Kustomisasi bangunan & karakter tiap pemain (diatur di lobi, tetap
   /// selama permainan). Kosong = tampilan bawaan.
   final Map<String, KostStyle> _styles = {};
+
+  /// Pemilik kost tiap rumah (state gerak & mood; digambar painter rumah).
+  final Map<String, KostOwner> _owners = {};
+
+  KostOwner _ownerFor(String id) {
+    final o = _owners.putIfAbsent(id, () => KostOwner(seed: kostSeedFor(id)));
+    o.look = kostLookFor(id, _styles[id]);
+    return o;
+  }
   final List<Map<String, dynamic>> _events = [];
 
   final Map<String, int> _prevRooms = {};
@@ -858,6 +867,19 @@ class _GameScreenState extends State<GameScreen>
   /// Pengali laju sampah: +20% tiap 2 menit (harus sama dengan sync_room_state).
   double get _pressure => 1.0 + 0.2 * (_elapsedSec / 120).floor();
 
+  /// Siklus siang-malam: satu hari penuh = [_dayCycleSec] detik. Diturunkan
+  /// dari waktu server (started_at) sehingga SAMA di semua pemain. Murni visual.
+  static const double _dayCycleSec = 300;
+
+  /// Mulai di pagi hari (0.25 = matahari terbit, 0.5 = tengah hari).
+  static const double _dayStartPhase = 0.30;
+
+  /// 0..1 (0 = tengah malam, 0.5 = tengah hari); null sebelum ronde dimulai.
+  double? get _dayPhase {
+    if (_room['started_at'] == null) return null;
+    return (_dayStartPhase + _elapsedSec / _dayCycleSec) % 1.0;
+  }
+
   String _clock(double sec) {
     final s = sec.floor();
     return '${s ~/ 60}:${(s % 60).toString().padLeft(2, '0')}';
@@ -1204,6 +1226,7 @@ class _GameScreenState extends State<GameScreen>
       fx: _fx[id] ?? const <KostFx>[],
       wall: _wallFor(id),
       style: _styles[id],
+      owner: compact ? null : _ownerFor(id),
       compact: compact,
       facingRight: facingRight ?? !compact,
       isBounty: id == _bountyId,
@@ -1212,6 +1235,7 @@ class _GameScreenState extends State<GameScreen>
       chargeLeft: _chargeInfo(id).$2,
       // 0..999, stabil di semua perangkat (tanpa hashCode bawaan Dart)
       seed: id.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
+      dayPhase: _dayPhase,
     );
   }
 
@@ -1426,6 +1450,7 @@ class _GameScreenState extends State<GameScreen>
             pollution: _pollution,
             worldEvent: _activeWorldEvent,
             smog: _remaining(_room['smog_until']) > 0,
+            dayPhase: _dayPhase,
           ));
 
           final focusOut =
@@ -2708,15 +2733,13 @@ class _GameScreenState extends State<GameScreen>
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
-            Container(
-              width: 8,
-              height: 8,
-              decoration: BoxDecoration(
-                color: _wallFor(id),
-                shape: BoxShape.circle,
-              ),
+            // ikon kepala pemilik kost (terbaca walau kamera menjauh)
+            KostHeadIcon(
+              look: kostLookFor(id, _styles[id]),
+              size: 20,
+              ring: isMe ? const Color(0xFFFFCA28) : _wallFor(id),
             ),
-            const SizedBox(width: 5),
+            const SizedBox(width: 6),
             Flexible(
               child: Text(
                 '${isBounty ? '👑 ' : ''}${revenge ? '🔥 ' : ''}${_name(id)}',

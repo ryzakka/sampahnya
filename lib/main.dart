@@ -1980,6 +1980,13 @@ class _RoomLobbyState extends State<RoomLobby>
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              KostHeadIcon(
+                look: kostLookFor(
+                    p['player_id'].toString(), KostStyle.fromJson(p['style'])),
+                size: 18,
+                ring: isMe ? _Ui.amber : null,
+              ),
+              const SizedBox(width: 5),
               if (isHost)
                 const Padding(
                   padding: EdgeInsets.only(right: 4),
