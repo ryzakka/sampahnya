@@ -5,6 +5,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'game_screen.dart';
 import 'kost_scene.dart';
@@ -18,6 +19,9 @@ const supabaseAnonKey = String.fromEnvironment(
   defaultValue:
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRia29pdXlkaXF2ZmVkamlxbGloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2NTQ1MTgsImV4cCI6MjEwODIzMDUxOH0.JC_xoqEn2YMQnayqbxMtSMPjzdtxsJ7dc0nMj4SwVJQ',
 );
+
+/// Gim lain buatan Anda, ditampilkan di beranda.
+const linguistifyUrl = 'https://linguistify.vercel.app/';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,6 +38,325 @@ Future<void> main() async {
 
   runApp(const SampahnyaApp());
 }
+
+// ====================================================================
+//  TOKEN DESAIN
+// ====================================================================
+
+/// Palet dan ukuran dipusatkan di sini supaya seluruh layar konsisten.
+class _Ui {
+  // Warna
+  static const bg = Color(0xFF0A140F);
+  static const surface = Color(0xFF12221A);
+  static const surfaceHigh = Color(0xFF1B3226);
+  static const green = Color(0xFF2E7D32);
+  static const greenBright = Color(0xFF43A047);
+  static const greenSoft = Color(0xFF81C784);
+  static const amber = Color(0xFFFFCA28);
+  static const danger = Color(0xFFEF5350);
+  static const violet = Color(0xFF9FA8FF); // aksen khusus tautan gim lain
+
+  // Titik patah layout
+  static const wideBreakpoint = 860.0;
+
+  // Jarak
+  static const gap8 = SizedBox(height: 8);
+  static const gap12 = SizedBox(height: 12);
+  static const gap16 = SizedBox(height: 16);
+  static const gap24 = SizedBox(height: 24);
+
+  // Skala teks
+  static const title = TextStyle(
+    color: Colors.white,
+    fontWeight: FontWeight.w900,
+    letterSpacing: 2,
+    height: 1.05,
+    shadows: [Shadow(color: Colors.black87, blurRadius: 16, offset: Offset(0, 5))],
+  );
+  static const heading = TextStyle(
+    color: Colors.white,
+    fontSize: 20,
+    fontWeight: FontWeight.w900,
+  );
+  static const label = TextStyle(
+    color: greenSoft,
+    fontSize: 12.5,
+    fontWeight: FontWeight.w800,
+    letterSpacing: 0.4,
+  );
+  static TextStyle body([double alpha = 0.78]) => TextStyle(
+    color: Colors.white.withValues(alpha: alpha),
+    fontSize: 13.5,
+    height: 1.4,
+  );
+
+  static Future<void> openLink(BuildContext context, String url) async {
+    var ok = false;
+    try {
+      ok = await launchUrl(
+        Uri.parse(url),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {}
+    if (!ok && context.mounted) {
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            content: Text('Tidak bisa membuka $url'),
+          ),
+        );
+    }
+  }
+}
+
+// ====================================================================
+//  KOMPONEN UMUM
+// ====================================================================
+
+/// Panel kaca: dipakai untuk kartu utama.
+class _GlassPanel extends StatelessWidget {
+  const _GlassPanel({
+    required this.child,
+    this.padding = const EdgeInsets.all(24),
+    this.radius = 28,
+  });
+
+  final Widget child;
+  final EdgeInsets padding;
+  final double radius;
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(radius),
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: padding,
+          decoration: BoxDecoration(
+            color: _Ui.surface.withValues(alpha: 0.8),
+            borderRadius: BorderRadius.circular(radius),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.16),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.45),
+                blurRadius: 30,
+                offset: const Offset(0, 14),
+              ),
+            ],
+          ),
+          child: child,
+        ),
+      ),
+    );
+  }
+}
+
+/// Tombol aksi utama / sekunder dengan status sibuk.
+class _ActionButton extends StatelessWidget {
+  const _ActionButton({
+    required this.label,
+    required this.icon,
+    required this.onPressed,
+    this.background = _Ui.amber,
+    this.foreground = Colors.black87,
+    this.busy = false,
+    this.height = 54,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback? onPressed;
+  final Color background;
+  final Color foreground;
+  final bool busy;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: height,
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: background,
+          foregroundColor: foreground,
+          disabledBackgroundColor: Colors.white.withValues(alpha: 0.1),
+          disabledForegroundColor: Colors.white38,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          textStyle: const TextStyle(
+            fontSize: 15.5,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        onPressed: onPressed,
+        icon: busy
+            ? SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(
+            strokeWidth: 2.5,
+            color: foreground,
+          ),
+        )
+            : Icon(icon),
+        label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+      ),
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  const _ErrorBanner(this.message);
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFD32F2F).withValues(alpha: 0.22),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _Ui.danger.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.error_outline, color: Color(0xFFFF8A80), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(
+                color: Color(0xFFFFCDD2),
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Kartu tautan ke gim lain (Linguistify).
+class _MoreGamesCard extends StatelessWidget {
+  const _MoreGamesCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Buka gim Linguistify di browser',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: () => _Ui.openLink(context, linguistifyUrl),
+          borderRadius: BorderRadius.circular(22),
+          child: Ink(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  const Color(0xFF1E2350).withValues(alpha: 0.9),
+                  const Color(0xFF14283A).withValues(alpha: 0.9),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(
+                color: _Ui.violet.withValues(alpha: 0.45),
+                width: 1.5,
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: _Ui.violet.withValues(alpha: 0.18),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Icon(Icons.translate_rounded,
+                      color: _Ui.violet, size: 26),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Gim lain dari kami',
+                        style: TextStyle(
+                          color: _Ui.violet,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Linguistify',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        'Strategi ala Plague Inc dan Eco Inc, tapi tentang bahasa dan politik.',
+                        style: _Ui.body(0.72).copyWith(fontSize: 12.5),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _Ui.violet,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'Main',
+                        style: TextStyle(
+                          color: Color(0xFF14183A),
+                          fontWeight: FontWeight.w900,
+                          fontSize: 13,
+                        ),
+                      ),
+                      SizedBox(width: 5),
+                      Icon(Icons.open_in_new_rounded,
+                          size: 15, color: Color(0xFF14183A)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ====================================================================
+//  APLIKASI
+// ====================================================================
 
 class MissingKeyApp extends StatelessWidget {
   const MissingKeyApp({super.key});
@@ -68,7 +391,7 @@ class SampahnyaApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF2E7D32),
+          seedColor: _Ui.green,
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
@@ -262,12 +585,17 @@ class _LobbyHomeState extends State<LobbyHome>
     super.dispose();
   }
 
+  // ------------------------------------------------------------------
+  //  UI
+  // ------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       body: Stack(
         children: [
-          // Latar belakang animasi kost langsung hidup di belakang layar login
+          // Latar kost beranimasi di belakang layar masuk.
           const Positioned.fill(
             child: KostBackdrop(
               rooms: 10,
@@ -276,187 +604,26 @@ class _LobbyHomeState extends State<LobbyHome>
               trashRatio: 0.15,
             ),
           ),
-          // Vignette gelap agar panel kaca terlihat kontras dan dramatis
+          // Vignette agar panel di depan terbaca.
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
                 gradient: RadialGradient(
-                  center: Alignment.center,
                   radius: 1.1,
                   colors: [
                     Colors.black.withValues(alpha: 0.25),
-                    const Color(0xFF0A140F).withValues(alpha: 0.78),
+                    _Ui.bg.withValues(alpha: 0.78),
                   ],
                 ),
               ),
             ),
           ),
           SafeArea(
-            child: Center(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(24),
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 440),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Logo / Judul Game Bergaya Arkade
-                      _buildHeroBadge(),
-                      const SizedBox(height: 24),
-                      // Panel Glassmorphism Utama
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(28),
-                        child: BackdropFilter(
-                          filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
-                          child: Container(
-                            padding: const EdgeInsets.all(26),
-                            decoration: BoxDecoration(
-                              color: const Color(0xFF12221A)
-                                  .withValues(alpha: 0.78),
-                              borderRadius: BorderRadius.circular(28),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.16),
-                                width: 1.5,
-                              ),
-                              boxShadow: [
-                                BoxShadow(
-                                  color: Colors.black.withValues(alpha: 0.45),
-                                  blurRadius: 30,
-                                  offset: const Offset(0, 14),
-                                ),
-                              ],
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                const Text(
-                                  'Nama Pemain',
-                                  style: TextStyle(
-                                    color: Color(0xFF81C784),
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 1.8,
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                TextField(
-                                  controller: _nameController,
-                                  maxLength: 18,
-                                  textCapitalization: TextCapitalization.words,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                  decoration: InputDecoration(
-                                    hintText: 'Mama Kos',
-                                    hintStyle: TextStyle(
-                                      color:
-                                      Colors.white.withValues(alpha: 0.35),
-                                    ),
-                                    prefixIcon: const Icon(
-                                      Icons.badge_outlined,
-                                      color: Color(0xFFFFCA28),
-                                    ),
-                                    counterText: '',
-                                    filled: true,
-                                    fillColor:
-                                    Colors.black.withValues(alpha: 0.28),
-                                    border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                      borderSide: BorderSide.none,
-                                    ),
-                                    focusedBorder: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                      borderSide: const BorderSide(
-                                        color: Color(0xFFFFCA28),
-                                        width: 2,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                                // Pemilih Mode (Buat vs Gabung)
-                                Container(
-                                  padding: const EdgeInsets.all(4),
-                                  decoration: BoxDecoration(
-                                    color: Colors.black.withValues(alpha: 0.35),
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  child: Row(
-                                    children: [
-                                      Expanded(
-                                        child: _modeTab(
-                                          index: 0,
-                                          icon: Icons.add_business_rounded,
-                                          label: 'Buat Host',
-                                        ),
-                                      ),
-                                      Expanded(
-                                        child: _modeTab(
-                                          index: 1,
-                                          icon: Icons.meeting_room_rounded,
-                                          label: 'Bergabung',
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                const SizedBox(height: 20),
-                                AnimatedSize(
-                                  duration: const Duration(milliseconds: 250),
-                                  curve: Curves.easeOutCubic,
-                                  child: _tab == 0
-                                      ? _buildCreateSection()
-                                      : _buildJoinSection(),
-                                ),
-                                if (_error != null) ...[
-                                  const SizedBox(height: 16),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 14,
-                                      vertical: 10,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0xFFD32F2F)
-                                          .withValues(alpha: 0.22),
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: const Color(0xFFEF5350)
-                                            .withValues(alpha: 0.6),
-                                      ),
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        const Icon(
-                                          Icons.error_outline,
-                                          color: Color(0xFFFF8A80),
-                                          size: 20,
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Text(
-                                            _error!,
-                                            style: const TextStyle(
-                                              color: Color(0xFFFFCDD2),
-                                              fontSize: 12.5,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+            child: LayoutBuilder(
+              builder: (context, c) {
+                final wide = c.maxWidth >= _Ui.wideBreakpoint;
+                return wide ? _buildWide(c) : _buildNarrow(c);
+              },
             ),
           ),
         ],
@@ -464,17 +631,102 @@ class _LobbyHomeState extends State<LobbyHome>
     );
   }
 
-  Widget _buildHeroBadge() {
+  /// Ponsel / jendela sempit: satu kolom, urutan = judul → form → gim lain.
+  Widget _buildNarrow(BoxConstraints c) {
+    final compact = c.maxWidth < 380;
+    return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 16 : 24,
+        vertical: 24,
+      ),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 460,
+            minHeight: c.maxHeight - 48,
+          ),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildHero(center: true, titleSize: compact ? 34 : 42),
+              _Ui.gap24,
+              _buildFormPanel(compact: compact),
+              _Ui.gap16,
+              const _MoreGamesCard(),
+              _Ui.gap16,
+              _buildFooter(),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Tablet / desktop: judul di kiri, form di kanan.
+  Widget _buildWide(BoxConstraints c) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+      child: Center(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxWidth: 1040,
+            minHeight: c.maxHeight - 64,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                flex: 5,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildHero(center: false, titleSize: 56),
+                    const SizedBox(height: 28),
+                    ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 460),
+                      child: const _MoreGamesCard(),
+                    ),
+                    _Ui.gap16,
+                    _buildFooter(left: true),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 48),
+              Expanded(
+                flex: 4,
+                child: Align(
+                  alignment: Alignment.center,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 440),
+                    child: _buildFormPanel(compact: false),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHero({required bool center, required double titleSize}) {
+    final align = center ? CrossAxisAlignment.center : CrossAxisAlignment.start;
+    final textAlign = center ? TextAlign.center : TextAlign.left;
     return Column(
+      crossAxisAlignment: align,
+      mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFFFFCA28),
+            color: _Ui.amber,
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: const Color(0xFFFFCA28).withValues(alpha: 0.4),
+                color: _Ui.amber.withValues(alpha: 0.4),
                 blurRadius: 12,
               ),
             ],
@@ -485,48 +737,139 @@ class _LobbyHomeState extends State<LobbyHome>
               Icon(Icons.delete_sweep_rounded, size: 16, color: Colors.black87),
               SizedBox(width: 6),
               Text(
-                'v1.4.5 (2210:6)',
+                'Gim multipemain 2–4 orang',
                 style: TextStyle(
                   color: Colors.black87,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 1.5,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 10),
-        const Text(
-          'SAMPAHNYA!',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 40,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 3,
-            height: 1.05,
-            shadows: [
-              Shadow(
-                color: Colors.black87,
-                blurRadius: 16,
-                offset: Offset(0, 5),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 6),
+        const SizedBox(height: 14),
         Text(
-          'Bangun kamar, kelola limbah, atau timbun kost tetangga!',
-          textAlign: TextAlign.center,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.85),
-            fontSize: 13.5,
-            fontWeight: FontWeight.w500,
-            shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+          'SAMPAHNYA!',
+          textAlign: textAlign,
+          style: _Ui.title.copyWith(fontSize: titleSize),
+        ),
+        const SizedBox(height: 10),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Text(
+            'Bangun kamar, kelola limbah, atau timbun kost tetangga!',
+            textAlign: textAlign,
+            style: _Ui.body(0.88).copyWith(
+              fontSize: 15,
+              shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+            ),
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildFooter({bool left = false}) {
+    return Text(
+      'Sampahnya! v1.4.5 (2210:6)',
+      textAlign: left ? TextAlign.left : TextAlign.center,
+      style: TextStyle(
+        color: Colors.white.withValues(alpha: 0.4),
+        fontSize: 11,
+      ),
+    );
+  }
+
+  /// Panel form: 1) nama → 2) pilih mode → 3) aksi → (error).
+  Widget _buildFormPanel({required bool compact}) {
+    return _GlassPanel(
+      padding: EdgeInsets.all(compact ? 18 : 26),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Nama pemain', style: _Ui.label),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _nameController,
+            maxLength: 18,
+            textCapitalization: TextCapitalization.words,
+            textInputAction: TextInputAction.next,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
+            ),
+            decoration: _inputDecoration(
+              hint: 'Mama Kos',
+              icon: Icons.badge_outlined,
+            ),
+          ),
+          const SizedBox(height: 16),
+          _buildModeSwitcher(),
+          const SizedBox(height: 16),
+          AnimatedSize(
+            duration: const Duration(milliseconds: 250),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: _tab == 0 ? _buildCreateSection() : _buildJoinSection(),
+          ),
+          if (_error != null) ...[
+            _Ui.gap16,
+            _ErrorBanner(_error!),
+          ],
+        ],
+      ),
+    );
+  }
+
+  InputDecoration _inputDecoration({
+    required String hint,
+    required IconData icon,
+  }) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
+      prefixIcon: Icon(icon, color: _Ui.amber),
+      counterText: '',
+      filled: true,
+      fillColor: Colors.black.withValues(alpha: 0.28),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(16),
+        borderSide: const BorderSide(color: _Ui.amber, width: 2),
+      ),
+    );
+  }
+
+  Widget _buildModeSwitcher() {
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.35),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _modeTab(
+              index: 0,
+              icon: Icons.add_business_rounded,
+              label: 'Buat ruangan',
+            ),
+          ),
+          Expanded(
+            child: _modeTab(
+              index: 1,
+              icon: Icons.meeting_room_rounded,
+              label: 'Gabung',
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -536,45 +879,51 @@ class _LobbyHomeState extends State<LobbyHome>
     required String label,
   }) {
     final selected = _tab == index;
-    return GestureDetector(
-      onTap: () => setState(() {
-        _tab = index;
-        _error = null;
-      }),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 11),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF2E7D32) : Colors.transparent,
-          borderRadius: BorderRadius.circular(12),
-          boxShadow: selected
-              ? [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.25),
-              blurRadius: 6,
-              offset: const Offset(0, 2),
-            )
-          ]
-              : null,
-        ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 18,
-              color: selected ? Colors.white : Colors.white60,
-            ),
-            const SizedBox(width: 7),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? Colors.white : Colors.white60,
-                fontWeight: FontWeight.w800,
-                fontSize: 13,
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() {
+          _tab = index;
+          _error = null;
+        }),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          decoration: BoxDecoration(
+            color: selected ? _Ui.green : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            boxShadow: selected
+                ? [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.25),
+                blurRadius: 6,
+                offset: const Offset(0, 2),
+              )
+            ]
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 18, color: selected ? Colors.white : Colors.white60),
+              const SizedBox(width: 7),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: selected ? Colors.white : Colors.white60,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -591,48 +940,26 @@ class _LobbyHomeState extends State<LobbyHome>
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
           ),
-          child: const Row(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.info_outline, color: Color(0xFF81C784), size: 20),
-              SizedBox(width: 10),
+              const Icon(Icons.info_outline, color: _Ui.greenSoft, size: 20),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
-                  'Buat ruangan baru untuk 2–4 pemain dan bagikan kode uniknya ke teman-temanmu.',
-                  style: TextStyle(color: Colors.white70, fontSize: 12.5),
+                  'Buat ruangan baru untuk 2–4 pemain, lalu bagikan kodenya ke teman-temanmu.',
+                  style: _Ui.body(0.72).copyWith(fontSize: 12.5),
                 ),
               ),
             ],
           ),
         ),
-        const SizedBox(height: 18),
-        SizedBox(
-          height: 52,
-          child: FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFFFCA28),
-              foregroundColor: Colors.black87,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              textStyle: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.5,
-              ),
-            ),
-            onPressed: _busy ? null : _createRoom,
-            icon: _busy
-                ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: Colors.black87,
-              ),
-            )
-                : const Icon(Icons.rocket_launch_rounded),
-            label: Text(_busy ? 'MEMBUKA LAHAN…' : 'BUAT RUANGAN BARU'),
-          ),
+        const SizedBox(height: 16),
+        _ActionButton(
+          label: _busy ? 'Membuka lahan…' : 'Buat ruangan baru',
+          icon: Icons.rocket_launch_rounded,
+          busy: _busy,
+          onPressed: _busy ? null : _createRoom,
         ),
       ],
     );
@@ -647,21 +974,26 @@ class _LobbyHomeState extends State<LobbyHome>
           maxLength: 6,
           textAlign: TextAlign.center,
           textCapitalization: TextCapitalization.characters,
+          textInputAction: TextInputAction.done,
+          onSubmitted: (_) {
+            if (!_busy) _joinRoom();
+          },
           inputFormatters: [
             FilteringTextInputFormatter.allow(RegExp('[a-zA-Z0-9]')),
           ],
           style: const TextStyle(
-            color: Color(0xFFFFCA28),
+            color: _Ui.amber,
             fontSize: 24,
             fontWeight: FontWeight.w900,
             letterSpacing: 8,
           ),
           decoration: InputDecoration(
-            hintText: 'KODE 6 DIGIT',
+            hintText: 'Kode 6 digit',
             hintStyle: TextStyle(
-              color: Colors.white.withValues(alpha: 0.25),
+              color: Colors.white.withValues(alpha: 0.28),
               fontSize: 15,
-              letterSpacing: 3,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 1,
             ),
             counterText: '',
             filled: true,
@@ -672,42 +1004,18 @@ class _LobbyHomeState extends State<LobbyHome>
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(16),
-              borderSide: const BorderSide(
-                color: Color(0xFF4CAF50),
-                width: 2,
-              ),
+              borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 2),
             ),
           ),
         ),
         const SizedBox(height: 16),
-        SizedBox(
-          height: 52,
-          child: FilledButton.icon(
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFF43A047),
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              textStyle: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w900,
-                letterSpacing: 0.5,
-              ),
-            ),
-            onPressed: _busy ? null : _joinRoom,
-            icon: _busy
-                ? const SizedBox(
-              width: 18,
-              height: 18,
-              child: CircularProgressIndicator(
-                strokeWidth: 2.5,
-                color: Colors.white,
-              ),
-            )
-                : const Icon(Icons.login_rounded),
-            label: Text(_busy ? 'MENYAMBUNGKAN…' : 'GABUNG SEKARANG'),
-          ),
+        _ActionButton(
+          label: _busy ? 'Menyambungkan…' : 'Gabung sekarang',
+          icon: Icons.login_rounded,
+          busy: _busy,
+          background: _Ui.greenBright,
+          foreground: Colors.white,
+          onPressed: _busy ? null : _joinRoom,
         ),
       ],
     );
@@ -937,12 +1245,14 @@ class _RoomLobbyState extends State<RoomLobby>
       ..showSnackBar(
         SnackBar(
           behavior: SnackBarBehavior.floating,
-          backgroundColor: const Color(0xFF2E7D32),
+          backgroundColor: _Ui.green,
           content: Row(
             children: [
               const Icon(Icons.check_circle, color: Colors.white, size: 18),
               const SizedBox(width: 8),
-              Text('Kode ruangan ${widget.roomCode} berhasil disalin!'),
+              Expanded(
+                child: Text('Kode ruangan ${widget.roomCode} berhasil disalin!'),
+              ),
             ],
           ),
         ),
@@ -958,6 +1268,10 @@ class _RoomLobbyState extends State<RoomLobby>
     super.dispose();
   }
 
+  // ------------------------------------------------------------------
+  //  UI
+  // ------------------------------------------------------------------
+
   @override
   Widget build(BuildContext context) {
     final userId = _db.auth.currentUser?.id;
@@ -970,7 +1284,7 @@ class _RoomLobbyState extends State<RoomLobby>
     return Scaffold(
       body: Stack(
         children: [
-          // Jumlah kamar di latar belakang bertambah mengikuti jumlah pemain yang siap
+          // Jumlah kamar di latar belakang bertambah mengikuti jumlah pemain.
           Positioned.fill(
             child: KostBackdrop(
               rooms: 4 + _players.length * 2,
@@ -986,208 +1300,43 @@ class _RoomLobbyState extends State<RoomLobby>
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    const Color(0xFF0A140F).withValues(alpha: 0.72),
-                    const Color(0xFF0A140F).withValues(alpha: 0.88),
+                    _Ui.bg.withValues(alpha: 0.72),
+                    _Ui.bg.withValues(alpha: 0.88),
                   ],
                 ),
               ),
             ),
           ),
           SafeArea(
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 620),
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // Baris Atas (Tombol Kembali + Status Lobi)
-                      Row(
+            child: LayoutBuilder(
+              builder: (context, c) {
+                // Lebar, atau lanskap ponsel: jalan di kiri, kontrol di kanan.
+                final wide = c.maxWidth >= _Ui.wideBreakpoint ||
+                    (c.maxWidth > c.maxHeight && c.maxWidth >= 640);
+                final pad = c.maxWidth < 380 ? 14.0 : 20.0;
+                return Center(
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxWidth: wide ? 1100 : 620),
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(pad, 12, pad, pad),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          IconButton.filledTonal(
-                            style: IconButton.styleFrom(
-                              backgroundColor:
-                              Colors.white.withValues(alpha: 0.12),
-                              foregroundColor: Colors.white,
-                            ),
-                            onPressed: () => Navigator.of(context).maybePop(),
-                            icon: const Icon(Icons.arrow_back_rounded),
-                          ),
-                          const SizedBox(width: 12),
-                          const Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  'Ruang Tunggu',
-                                  style: TextStyle(
-                                    color: Color(0xFF81C784),
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 1.6,
-                                  ),
-                                ),
-                                Text(
-                                  'Menunggu Pemain Lain...',
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 20,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(
-                                  Icons.people_alt_rounded,
-                                  size: 16,
-                                  color: Color(0xFFFFCA28),
-                                ),
-                                const SizedBox(width: 6),
-                                Text(
-                                  '${_players.length}/4',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // Kartu Tiket Kode Ruangan
-                      _buildRoomCodeBanner(),
-                      const SizedBox(height: 18),
-
-                      // Jalan kost: satu rumah per pemain yang bergabung.
-                      // Jendela menyala saat pemain menekan SIAP.
-                      Expanded(
-                        child: _loading
-                            ? const Center(child: CircularProgressIndicator())
-                            : _buildStreet(userId),
-                      ),
-
-                      if (_error != null) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: Colors.red.shade900.withValues(alpha: 0.5),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            _error!,
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-
-                      // Bilah Tombol Bawah
-                      Row(
-                        children: [
+                          _buildTopBar(),
+                          const SizedBox(height: 14),
                           Expanded(
-                            child: SizedBox(
-                              height: 54,
-                              child: FilledButton.icon(
-                                style: FilledButton.styleFrom(
-                                  backgroundColor: ready
-                                      ? const Color(0xFF37474F)
-                                      : const Color(0xFF43A047),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(16),
-                                  ),
-                                  textStyle: const TextStyle(
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                                onPressed:
-                                _busy || me == null ? null : _toggleReady,
-                                icon: Icon(
-                                  ready
-                                      ? Icons.pause_circle_outline
-                                      : Icons.check_circle_rounded,
-                                ),
-                                label: Text(
-                                  _busy
-                                      ? 'MEMPROSES…'
-                                      : ready
-                                      ? 'BATAL SIAP'
-                                      : 'SAYA SIAP!',
-                                ),
-                              ),
-                            ),
+                            child: wide
+                                ? _buildWideBody(
+                                userId, ready, me, isHost, allReady)
+                                : _buildNarrowBody(
+                                userId, ready, me, isHost, allReady),
                           ),
-                          if (isHost) ...[
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: SizedBox(
-                                height: 54,
-                                child: FilledButton.icon(
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: allReady
-                                        ? const Color(0xFFFFCA28)
-                                        : Colors.white.withValues(alpha: 0.15),
-                                    foregroundColor: allReady
-                                        ? Colors.black87
-                                        : Colors.white54,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(16),
-                                    ),
-                                    textStyle: const TextStyle(
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.w900,
-                                    ),
-                                  ),
-                                  onPressed: _busy ? null : _startGame,
-                                  icon: const Icon(Icons.play_arrow_rounded),
-                                  label: const Text('MULAI GAME'),
-                                ),
-                              ),
-                            ),
-                          ],
                         ],
                       ),
-                      const SizedBox(height: 8),
-                      Text(
-                        isHost
-                            ? (allReady
-                            ? 'Semua pemain sudah siap! Tekan MULAI GAME.'
-                            : 'Menunggu minimal 2 pemain & semuanya menekan SAYA SIAP.')
-                            : 'Menunggu Host memulai pertandingan…',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.65),
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -1195,83 +1344,313 @@ class _RoomLobbyState extends State<RoomLobby>
     );
   }
 
-  Widget _buildRoomCodeBanner() {
-    return InkWell(
-      onTap: _copyCode,
-      borderRadius: BorderRadius.circular(22),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [Color(0xFF1E3C2B), Color(0xFF14281D)],
-          ),
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: const Color(0xFFFFCA28).withValues(alpha: 0.45),
-            width: 1.5,
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.35),
-              blurRadius: 16,
-              offset: const Offset(0, 8),
+  /// Ponsel: kode → jalan (mengisi sisa layar) → tombol.
+  Widget _buildNarrowBody(
+      String? userId, bool ready, Map<String, dynamic>? me, bool isHost,
+      bool allReady) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildRoomCodeBanner(),
+        const SizedBox(height: 14),
+        Expanded(child: _buildStreetArea(userId)),
+        const SizedBox(height: 12),
+        ..._buildControls(ready, me, isHost, allReady),
+      ],
+    );
+  }
+
+  /// Layar lebar: jalan di kiri; kode + tombol di panel kanan.
+  Widget _buildWideBody(
+      String? userId, bool ready, Map<String, dynamic>? me, bool isHost,
+      bool allReady) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(child: _buildStreetArea(userId)),
+        const SizedBox(width: 20),
+        SizedBox(
+          width: 340,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildRoomCodeBanner(),
+                const SizedBox(height: 16),
+                _buildPlayerSummary(),
+                const SizedBox(height: 16),
+                ..._buildControls(ready, me, isHost, allReady),
+              ],
             ),
-          ],
+          ),
         ),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'KODE RUANGAN (KETUK UNTUK SALIN)',
-                    style: TextStyle(
-                      color: Colors.white70,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 1.4,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    widget.roomCode,
-                    style: const TextStyle(
-                      color: Color(0xFFFFCA28),
-                      fontSize: 32,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: 6,
-                    ),
-                  ),
-                ],
+      ],
+    );
+  }
+
+  Widget _buildTopBar() {
+    return Row(
+      children: [
+        IconButton.filledTonal(
+          tooltip: 'Kembali',
+          style: IconButton.styleFrom(
+            backgroundColor: Colors.white.withValues(alpha: 0.12),
+            foregroundColor: Colors.white,
+          ),
+          onPressed: () => Navigator.of(context).maybePop(),
+          icon: const Icon(Icons.arrow_back_rounded),
+        ),
+        const SizedBox(width: 12),
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Ruang tunggu', style: _Ui.label),
+              Text(
+                'Menunggu pemain lain…',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _Ui.heading,
               ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: const Color(0xFFFFCA28).withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: const Color(0xFFFFCA28).withValues(alpha: 0.4),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.people_alt_rounded, size: 16, color: _Ui.amber),
+              const SizedBox(width: 6),
+              Text(
+                '${_players.length}/4',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
                 ),
               ),
-              child: const Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.copy_rounded, color: Color(0xFFFFCA28), size: 18),
-                  SizedBox(width: 6),
-                  Text(
-                    'SALIN',
-                    style: TextStyle(
-                      color: Color(0xFFFFCA28),
-                      fontWeight: FontWeight.w900,
-                      fontSize: 12,
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Ringkasan pemain (hanya di layout lebar): siapa host, siapa sudah siap.
+  Widget _buildPlayerSummary() {
+    final list = _ordered;
+    final userId = _db.auth.currentUser?.id;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text('Pemain', style: _Ui.label),
+          const SizedBox(height: 8),
+          if (list.isEmpty)
+            Text('Belum ada pemain.', style: _Ui.body(0.6))
+          else
+            for (final p in list)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(
+                  children: [
+                    Icon(
+                      p['is_ready'] == true
+                          ? Icons.check_circle_rounded
+                          : Icons.hourglass_bottom_rounded,
+                      size: 18,
+                      color: p['is_ready'] == true
+                          ? _Ui.greenSoft
+                          : Colors.amber.shade300,
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        '${p['player_name'] ?? 'Pemain'}'
+                            '${p['player_id'].toString() == userId ? ' (Anda)' : ''}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    if (p['player_id'].toString() == _hostId)
+                      const Icon(Icons.workspace_premium_rounded,
+                          size: 16, color: _Ui.amber),
+                  ],
+                ),
               ),
+        ],
+      ),
+    );
+  }
+
+  /// Tombol SIAP + MULAI + status + error. Dipakai di kedua layout.
+  List<Widget> _buildControls(
+      bool ready, Map<String, dynamic>? me, bool isHost, bool allReady) {
+    return [
+      if (_error != null) ...[
+        _ErrorBanner(_error!),
+        const SizedBox(height: 12),
+      ],
+      LayoutBuilder(
+        builder: (context, c) {
+          final readyBtn = _ActionButton(
+            label: _busy
+                ? 'Memproses…'
+                : ready
+                ? 'Batal siap'
+                : 'Saya siap!',
+            icon:
+            ready ? Icons.pause_circle_outline : Icons.check_circle_rounded,
+            background: ready ? const Color(0xFF37474F) : _Ui.greenBright,
+            foreground: Colors.white,
+            onPressed: _busy || me == null ? null : _toggleReady,
+          );
+          final startBtn = _ActionButton(
+            label: 'Mulai game',
+            icon: Icons.play_arrow_rounded,
+            background: allReady ? _Ui.amber : Colors.white.withValues(alpha: 0.15),
+            foreground: allReady ? Colors.black87 : Colors.white54,
+            onPressed: _busy ? null : _startGame,
+          );
+          if (!isHost) return readyBtn;
+          // Di ruang sempit tumpuk vertikal agar teks tombol tidak terpotong.
+          if (c.maxWidth < 340) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [readyBtn, const SizedBox(height: 10), startBtn],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: readyBtn),
+              const SizedBox(width: 12),
+              Expanded(child: startBtn),
+            ],
+          );
+        },
+      ),
+      const SizedBox(height: 8),
+      Text(
+        isHost
+            ? (allReady
+            ? 'Semua pemain sudah siap! Tekan Mulai game.'
+            : 'Menunggu minimal 2 pemain dan semuanya menekan Saya siap.')
+            : 'Menunggu host memulai pertandingan…',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: 0.65),
+          fontSize: 12,
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildStreetArea(String? userId) {
+    return _loading
+        ? const Center(child: CircularProgressIndicator())
+        : _buildStreet(userId);
+  }
+
+  Widget _buildRoomCodeBanner() {
+    return Semantics(
+      button: true,
+      label: 'Kode ruangan ${widget.roomCode}, ketuk untuk menyalin',
+      child: InkWell(
+        onTap: _copyCode,
+        borderRadius: BorderRadius.circular(22),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1E3C2B), Color(0xFF14281D)],
             ),
-          ],
+            borderRadius: BorderRadius.circular(22),
+            border: Border.all(
+              color: _Ui.amber.withValues(alpha: 0.45),
+              width: 1.5,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Kode ruangan',
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.7),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        widget.roomCode,
+                        style: const TextStyle(
+                          color: _Ui.amber,
+                          fontSize: 32,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 6,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Container(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: _Ui.amber.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: _Ui.amber.withValues(alpha: 0.4)),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.copy_rounded, color: _Ui.amber, size: 18),
+                    SizedBox(width: 6),
+                    Text(
+                      'Salin',
+                      style: TextStyle(
+                        color: _Ui.amber,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1403,17 +1782,17 @@ class _RoomLobbyState extends State<RoomLobby>
 
   Widget _nameTag(Map<String, dynamic> p, bool isMe, bool isHost) {
     final ready = p['is_ready'] == true;
-    final accent = ready ? const Color(0xFF81C784) : Colors.amber.shade300;
+    final accent = ready ? _Ui.greenSoft : Colors.amber.shade300;
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
       decoration: BoxDecoration(
-        color: const Color(0xFF12221A).withValues(alpha: 0.9),
+        color: _Ui.surface.withValues(alpha: 0.9),
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: ready
               ? const Color(0xFF66BB6A)
               : (isMe
-              ? const Color(0xFFFFCA28).withValues(alpha: 0.7)
+              ? _Ui.amber.withValues(alpha: 0.7)
               : Colors.white.withValues(alpha: 0.18)),
           width: ready || isMe ? 1.8 : 1,
         ),
@@ -1435,7 +1814,7 @@ class _RoomLobbyState extends State<RoomLobby>
                 const Padding(
                   padding: EdgeInsets.only(right: 4),
                   child: Icon(Icons.workspace_premium_rounded,
-                      size: 13, color: Color(0xFFFFCA28)),
+                      size: 13, color: _Ui.amber),
                 ),
               Flexible(
                 child: Text(
@@ -1443,7 +1822,7 @@ class _RoomLobbyState extends State<RoomLobby>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: isMe ? const Color(0xFFFFCA28) : Colors.white,
+                    color: isMe ? _Ui.amber : Colors.white,
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
                   ),
@@ -1462,7 +1841,7 @@ class _RoomLobbyState extends State<RoomLobby>
               ),
               const SizedBox(width: 3),
               Text(
-                ready ? 'SIAP' : 'Belum siap',
+                ready ? 'Siap' : 'Belum siap',
                 style: TextStyle(
                   color: accent,
                   fontSize: 10.5,
