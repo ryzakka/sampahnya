@@ -94,6 +94,15 @@ class _GameScreenState extends State<GameScreen>
   // kunci "pemilik|waktu" serangan tertunda yang sudah memicu tick penyelesaian
   final Set<String> _tickedPending = {};
 
+  // --- arwah (pemain tertimbun melayang di jalan; murni visual) ---
+  final Map<String, KostGhost> _ghosts = {};
+  int _lastGhostSendMs = -10000;
+
+  // --- loket sampah ---
+  Map<String, dynamic>? _incomingOffer; // tawaran masuk yang menunggu jawaban
+  final Set<int> _seenOffers = {};
+  bool _offerBusy = false;
+
   // --- jalan (kost berderet) & kamera zoom ---
   final KostStreetCamera _cam = KostStreetCamera();
   String? _focusId; // rumah yang di-zoom; null = lihat semua tetangga
@@ -130,6 +139,7 @@ class _GameScreenState extends State<GameScreen>
     // Kamera jalan bergerak halus menuju targetnya di setiap frame.
     _anim.addListener(_cam.step);
     _anim.addListener(_cineStep);
+    _anim.addListener(_ghostStep);
     _subscribe();
     _loadAll();
     _tickServer();
@@ -141,6 +151,10 @@ class _GameScreenState extends State<GameScreen>
         now - f.startMs > (f.durMs > 0 ? f.durMs + 800 : 6000));
       }
       _shots.removeWhere((sh) => sh.age > sh.durMs + 400);
+      if (_incomingOffer != null &&
+          _remaining(_incomingOffer!['expires_at']) <= 0) {
+        _incomingOffer = null;
+      }
       // Jendela Tangkis habis -> minta server menyelesaikan serangan segera
       // (tanpa menunggu tick 4 detik), supaya dampak terasa tepat waktu.
       for (final s in _states.values) {
@@ -247,7 +261,165 @@ class _GameScreenState extends State<GameScreen>
         });
       },
     )
+        .onPostgresChanges(
+      event: PostgresChangeEvent.all,
+      schema: 'public',
+      table: 'trash_offers',
+      filter: roomFilter('room_id'),
+      callback: _onOfferChange,
+    )
+        .onBroadcast(
+      event: 'ghost',
+      callback: _onGhostBroadcast,
+    )
         .subscribe();
+  }
+
+  // ------------------------------------------------------- loket sampah
+
+  void _onOfferChange(PostgresChangePayload p) {
+    final r = p.newRecord;
+    if (r.isEmpty || !mounted) return;
+    final offer = Map<String, dynamic>.from(r);
+    final id = (offer['id'] as num).toInt();
+    final status = offer['status']?.toString();
+    if (offer['receiver_id']?.toString() == _me) {
+      setState(() {
+        if (status == 'pending') {
+          if (_seenOffers.add(id) && _remaining(offer['expires_at']) > 0) {
+            _incomingOffer = offer;
+          }
+        } else if (_incomingOffer != null &&
+            (_incomingOffer!['id'] as num).toInt() == id) {
+          _incomingOffer = null;
+        }
+      });
+    }
+    if (offer['sender_id']?.toString() == _me &&
+        p.eventType == PostgresChangeEvent.update) {
+      final who = _name(offer['receiver_id']);
+      if (status == 'accepted') _toast('$who menerima tawaran sampahmu.');
+      if (status == 'declined') _toast('$who menolak tawaran sampahmu.');
+    }
+  }
+
+  Future<void> _respondOffer(bool accept) async {
+    final o = _incomingOffer;
+    if (o == null || _offerBusy) return;
+    setState(() => _offerBusy = true);
+    try {
+      final res = await _db.rpc('respond_trash_offer',
+          params: {'p_offer': o['id'], 'p_accept': accept});
+      if (!mounted) return;
+      setState(() => _incomingOffer = null);
+      if (res == 'accepted') {
+        _toast(
+            'Kamu menampung ${_num(o['trash_amount']).round()} sampah dan menerima ${_num(o['price']).round()} uang.');
+      } else if (res == 'expired') {
+        _toast('Tawaran sudah kedaluwarsa.');
+      }
+    } on PostgrestException catch (e) {
+      _toast(e.message);
+    } catch (e) {
+      _toast('$e');
+    } finally {
+      if (mounted) setState(() => _offerBusy = false);
+    }
+  }
+
+  Future<void> _sendOffer(String target, int amount, int price) async {
+    if (_offerBusy) return;
+    setState(() => _offerBusy = true);
+    try {
+      await _db.rpc('offer_trash', params: {
+        'p_room': widget.roomId,
+        'p_target': target,
+        'p_amount': amount,
+        'p_price': price,
+      });
+      _toast('Tawaran dikirim ke ${_name(target)} (berlaku 10 dtk).');
+    } on PostgrestException catch (e) {
+      _toast(e.message);
+    } catch (e) {
+      _toast('$e');
+    } finally {
+      if (mounted) setState(() => _offerBusy = false);
+    }
+  }
+
+  // --------------------------------------------------------------- arwah
+
+  bool get _iAmGhost {
+    final s = _states[_me];
+    return s != null && s['eliminated_at'] != null;
+  }
+
+  /// Pastikan tiap pemain tertimbun punya arwah (muncul dari atap rumahnya)
+  /// dan arwah pemain yang hidup lagi (ronde baru) dihapus.
+  void _syncGhosts() {
+    final order = _order;
+    for (final e in _states.entries) {
+      final id = e.key;
+      final out = e.value['eliminated_at'] != null;
+      if (!out) {
+        _ghosts.remove(id);
+        continue;
+      }
+      final g = _ghosts[id];
+      if (g == null) {
+        final idx = max(0, order.indexOf(id));
+        final jitter = (id.codeUnits.fold<int>(0, (a, b) => a + b) % 5 - 2) * 18.0;
+        _ghosts[id] = KostGhost(
+          id: id,
+          name: _names[id] ?? 'Pemain',
+          color: _wallFor(id),
+          x: idx * kStreetSlotW + kStreetSlotW / 2 + jitter,
+          y: 110,
+        );
+      } else {
+        g.name = _names[id] ?? g.name;
+      }
+    }
+  }
+
+  void _ghostStep() {
+    _syncGhosts();
+    for (final g in _ghosts.values) {
+      g.step();
+    }
+  }
+
+  void _moveMyGhost(Offset local, Rect stage, {bool force = false}) {
+    final g = _ghosts[_me];
+    if (g == null) return;
+    final sc = _cam.scale;
+    final o = _cam.origin(stage);
+    final maxX = max(20.0, _order.length * kStreetSlotW - 10.0);
+    final wx = ((local.dx - o.dx) / sc).clamp(10.0, maxX).toDouble();
+    final wy = ((local.dy - o.dy) / sc).clamp(30.0, 215.0).toDouble();
+    g.moveTo(wx, wy);
+    _broadcastGhost(g, force: force);
+  }
+
+  void _broadcastGhost(KostGhost g, {bool force = false}) {
+    final now = sceneNowMs();
+    if (!force && now - _lastGhostSendMs < 200) return; // maks ~5x per detik
+    _lastGhostSendMs = now;
+    try {
+      _channel
+          ?.sendBroadcastMessage(
+          event: 'ghost', payload: {'id': _me, 'x': g.tx, 'y': g.ty})
+          .then((_) {}, onError: (_) {});
+    } catch (_) {}
+  }
+
+  void _onGhostBroadcast(Map<String, dynamic> raw) {
+    final inner = raw['payload'];
+    final p = inner is Map ? Map<String, dynamic>.from(inner) : raw;
+    final id = p['id']?.toString();
+    if (id == null || id == _me) return;
+    _syncGhosts();
+    _ghosts[id]?.moveTo(_num(p['x']), _num(p['y']));
   }
 
   // ------------------------------------------------------------ sinematik
@@ -351,6 +523,34 @@ class _GameScreenState extends State<GameScreen>
       // Alur: pelempar melempar -> kena perisai penangkis -> memantul balik.
         _launchShot(target, actor, amount: amt, bounce: true);
         break;
+      case 'sack_launch':
+      case 'smog_launch':
+      // Jendela Tangkis dibuka (sama seperti throw_launch).
+        break;
+      case 'sack':
+        _launchShot(actor, target, amount: amt, kind: ShotKind.sack);
+        break;
+      case 'parry_sack':
+        _launchShot(target, actor,
+            amount: amt, bounce: true, kind: ShotKind.sack);
+        break;
+      case 'smog':
+        _launchShot(actor, target, amount: 0, kind: ShotKind.smog);
+        break;
+      case 'parry_smog':
+        _launchShot(target, actor,
+            amount: 0, bounce: true, kind: ShotKind.smog);
+        break;
+      case 'firework':
+      // amount 1 = percikan terjadi (sampah -1, polusi +15), 0 = zonk
+        _launchShot(actor, target,
+            amount: 0, kind: ShotKind.firework, spark: amt > 0);
+        break;
+      case 'parry_firework':
+      // actor = penangkis, target = pelempar: kembang api padam di perisai
+        _launchShot(target, actor,
+            amount: 0, kind: ShotKind.firework, fizzle: true);
+        break;
       case 'inspect_launch':
       // Penyerang "menelepon polisi": kartu telepon tampil selama jendela
       // Tangkis (tidak menghalangi tombol Tangkis).
@@ -383,7 +583,18 @@ class _GameScreenState extends State<GameScreen>
         _ensureFx(target, FxType.hijack, amount: 2, peer: actor, durMs: hDur);
         break;
       case 'emoji':
-        _ensureFx(actor, FxType.emoji, amount: amt);
+        _syncGhosts();
+        final eg = actor == null ? null : _ghosts[actor];
+        if (eg != null) {
+          // arwah berseru: gelembung muncul di arwahnya, bukan di rumah
+          if (!(eg.emojiCode == amt.round() &&
+              sceneNowMs() - eg.emojiMs < 900)) {
+            eg.emojiCode = amt.round();
+            eg.emojiMs = sceneNowMs();
+          }
+        } else {
+          _ensureFx(actor, FxType.emoji, amount: amt);
+        }
         break;
       case 'eliminated':
         if (target != null &&
@@ -413,7 +624,11 @@ class _GameScreenState extends State<GameScreen>
   /// lambungan mengikuti jarak (jumlah rumah di antara keduanya); dampak di
   /// rumah tujuan ditunda agar pas saat sampah mendarat.
   void _launchShot(String? from, String? to,
-      {required double amount, bool bounce = false}) {
+      {required double amount,
+        bool bounce = false,
+        ShotKind kind = ShotKind.normal,
+        bool spark = false,
+        bool fizzle = false}) {
     if (from == null || to == null) return;
     final order = _order;
     final a = order.indexOf(from);
@@ -422,8 +637,19 @@ class _GameScreenState extends State<GameScreen>
     final base = min(2600, 1100 + 380 * (dist - 1));
     // Pantulan = dua ruas lintasan (pergi + balik), jadi durasinya lebih panjang.
     final dur = bounce ? (base * 1.6).round() : base;
-    _shots.add(KostShot(fromId: from, toId: to, durMs: dur, bounce: bounce));
+    _shots.add(KostShot(
+      fromId: from,
+      toId: to,
+      durMs: dur,
+      bounce: bounce,
+      kind: kind,
+      spark: spark,
+      fizzle: fizzle,
+      bags: kind == ShotKind.sack ? 3 : (kind == ShotKind.smog ? 5 : 4),
+    ));
     _ensureFx(from, FxType.outgoing, amount: amount, peer: to);
+    // Hanya lemparan yang membawa sampah meninggalkan efek "kena sampah".
+    final lands = kind == ShotKind.normal || kind == ShotKind.sack;
 
     // Kantong ke-j mendarat/menyentuh di (dur - 240) + 80j - ... ; dampak
     // dijadwalkan agar pas dengan itu (lihat KostStreetPainter._paintShots).
@@ -436,13 +662,22 @@ class _GameScreenState extends State<GameScreen>
         delayMs: max(0, flight ~/ 2 - 60),
       ));
       // lalu mendarat di pelempar
-      (_fx[from] ??= <KostFx>[]).add(KostFx(
-        FxType.incoming,
+      if (lands) {
+        (_fx[from] ??= <KostFx>[]).add(KostFx(
+          FxType.incoming,
+          amount: amount,
+          peerId: to,
+          delayMs: max(0, flight - 730),
+        ));
+      }
+    } else if (fizzle) {
+      // kembang api ditangkis: padam di perisai penangkis
+      (_fx[to] ??= <KostFx>[]).add(KostFx(
+        FxType.parry,
         amount: amount,
-        peerId: to,
-        delayMs: max(0, flight - 730),
+        delayMs: max(0, flight - 300),
       ));
-    } else {
+    } else if (lands) {
       (_fx[to] ??= <KostFx>[]).add(KostFx(
         FxType.incoming,
         amount: amount,
@@ -454,11 +689,25 @@ class _GameScreenState extends State<GameScreen>
 
   Future<void> _sendEmoji(int code) async {
     final now = sceneNowMs();
-    if (now - _lastEmojiSentMs < 1200) return; // cegah spam terlalu cepat
+    final ghost = _iAmGhost;
+    // Sama dengan server: pemain hidup 1,5 dtk, arwah 5 dtk.
+    if (now - _lastEmojiSentMs < (ghost ? 5000 : 1500)) {
+      if (ghost) _toast('Arwah perlu 5 detik untuk berseru lagi.');
+      return;
+    }
     _lastEmojiSentMs = now;
 
     // Tampilkan langsung di layar sendiri secara instan (optimistic UI)
-    _ensureFx(_me, FxType.emoji, amount: code.toDouble());
+    if (ghost) {
+      _syncGhosts();
+      final g = _ghosts[_me];
+      if (g != null) {
+        g.emojiCode = code;
+        g.emojiMs = sceneNowMs();
+      }
+    } else {
+      _ensureFx(_me, FxType.emoji, amount: code.toDouble());
+    }
     setState(() => _emojiBarOpen = false);
 
     try {
@@ -762,6 +1011,42 @@ class _GameScreenState extends State<GameScreen>
         return '$a menangkis & memantulkan $amt sampah ke $t!';
       case 'parry_inspect':
         return '$a memantulkan Sidak Dinas! Denda $amt menimpa $t.';
+      case 'sack_launch':
+        return t == 'Anda'
+            ? 'AWAS! $a melempar SEKARUNG sampah ke kost-mu. TANGKIS sekarang!'
+            : '$a menyiapkan sekarung sampah untuk kost $t…';
+      case 'sack':
+        return t == 'Anda'
+            ? '$a menimpakan sekarung $amt sampah ke kost-mu!'
+            : '$a menimpakan sekarung $amt sampah ke kost $t.';
+      case 'parry_sack':
+        return '$a menangkis & memantulkan sekarung $amt sampah ke $t!';
+      case 'smog_launch':
+        return t == 'Anda'
+            ? 'AWAS! $a melempar sampah beracun ke kost-mu. TANGKIS sekarang!'
+            : '$a menyiapkan sampah beracun untuk kost $t…';
+      case 'smog':
+        return t == 'Anda'
+            ? '$a menebar gas beracun ke kost-mu! Income turun sementara.'
+            : '$a menebar gas beracun ke kost $t. Polusi naik.';
+      case 'parry_smog':
+        return '$a memantulkan gas beracun! Asapnya menimpa $t.';
+      case 'firework':
+        return amt > 0
+            ? '$a melempar kembang api ke $t. Percikan membakar sampah & polusi naik!'
+            : '$a melempar kembang api ke $t. Cuma gertakan!';
+      case 'parry_firework':
+        return '$a menangkis… ternyata kembang api gertakan dari $t!';
+      case 'booth_open':
+        return '$a membuka Loket Sampah.';
+      case 'offer_made':
+        return t == 'Anda'
+            ? '$a menawarimu $amt uang untuk menampung sampahnya.'
+            : '$a menawar $t: titip sampah, bayar $amt.';
+      case 'offer_accept':
+        return '$a menerima titipan $amt sampah dari $t.';
+      case 'offer_decline':
+        return '$a menolak tawaran Loket dari $t.';
       case 'haul':
         return '$a menyewa truk pengangkut sampah.';
       case 'build':
@@ -815,6 +1100,22 @@ class _GameScreenState extends State<GameScreen>
       case 'parry':
       case 'parry_inspect':
         return (Icons.security, Colors.lightBlueAccent);
+      case 'sack':
+      case 'sack_launch':
+      case 'parry_sack':
+        return (Icons.shopping_bag, Colors.brown);
+      case 'smog':
+      case 'smog_launch':
+      case 'parry_smog':
+        return (Icons.cloud, Colors.lightGreen.shade700);
+      case 'firework':
+      case 'parry_firework':
+        return (Icons.celebration, Colors.amber);
+      case 'booth_open':
+      case 'offer_made':
+      case 'offer_accept':
+      case 'offer_decline':
+        return (Icons.storefront, Colors.teal);
       case 'haul':
         return (Icons.local_shipping, Colors.green.shade700);
       case 'build':
@@ -1131,6 +1432,11 @@ class _GameScreenState extends State<GameScreen>
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTapUp: (d) {
+                      if (_iAmGhost) {
+                        // Arwah: ketukan menggerakkan arwahmu melayang ke sana.
+                        _moveMyGhost(d.localPosition, stage, force: true);
+                        return;
+                      }
                       final i = _cam.houseAt(d.localPosition.dx, stage, n);
                       if (i != null && order[i] != focusId) {
                         _zoomTo(order[i]);
@@ -1141,6 +1447,8 @@ class _GameScreenState extends State<GameScreen>
                       if (d.pointerCount >= 2) {
                         _pinch = d.scale;
                         _pinchFocal = d.localFocalPoint;
+                      } else if (_iAmGhost) {
+                        _moveMyGhost(d.localFocalPoint, stage);
                       }
                     },
                     onScaleEnd: (_) {
@@ -1160,6 +1468,7 @@ class _GameScreenState extends State<GameScreen>
                       houses: houses,
                       ids: order,
                       shots: _shots,
+                      ghosts: _ghosts.values.toList(),
                       backdrop: backdrop,
                       camera: _cam,
                       repaint: _anim,
@@ -1254,6 +1563,10 @@ class _GameScreenState extends State<GameScreen>
                             count: n,
                           ),
                         ),
+
+                      // 5c) Tawaran Loket Sampah yang masuk (Terima / Tolak)
+                      if (_incomingOffer != null && alive && !finished)
+                        _offerCard(me, bottomInset + 64, pad),
 
                       // 6) Pemilih Emoji Reaksi + Kabar Singkat + Bilah Aksi
                       if (hasBar) ...[
@@ -1622,6 +1935,19 @@ class _GameScreenState extends State<GameScreen>
       visualDensity: VisualDensity.compact,
       tooltip: 'Kirim Emoji Reaksi',
     );
+    final myS = _states[_me];
+    final boothOpen = myS != null && _remaining(myS['booth_until']) > 0;
+    final boothBtn = (myS == null || myS['eliminated_at'] != null)
+        ? const SizedBox.shrink()
+        : IconButton(
+      onPressed: _openBooth,
+      icon: Icon(
+        boothOpen ? Icons.storefront : Icons.storefront_outlined,
+        color: boothOpen ? const Color(0xFF69F0AE) : Colors.white,
+      ),
+      visualDensity: VisualDensity.compact,
+      tooltip: 'Loket Sampah',
+    );
     final history = IconButton(
       onPressed: _showFeed,
       icon: const Icon(Icons.history, color: Colors.white),
@@ -1702,6 +2028,7 @@ class _GameScreenState extends State<GameScreen>
             ],
             Expanded(child: polMeter),
             const SizedBox(width: 4),
+            boothBtn,
             emojiBtn,
             history,
           ],
@@ -1728,6 +2055,7 @@ class _GameScreenState extends State<GameScreen>
                   child: _moneyChip(s),
                 ),
               ),
+              boothBtn,
               emojiBtn,
               history,
             ],
@@ -1818,6 +2146,26 @@ class _GameScreenState extends State<GameScreen>
           'KOST DISEGEL DINAS · Income -50% (${sealed.ceil()} dtk)',
           Colors.redAccent.shade700,
         ));
+      }
+      if (out) {
+        tags.add(_tag(
+          Icons.blur_on,
+          'ARWAH · Ketuk layar untuk melayang · emoji tiap 5 dtk',
+          Colors.deepPurple.shade300,
+        ));
+      }
+      final smoked = _remaining(s['smoked_until']);
+      if (!out && smoked > 0) {
+        tags.add(_tag(
+          Icons.cloud,
+          'GAS BERACUN · Income -35% (${smoked.ceil()} dtk)',
+          Colors.green.shade800,
+        ));
+      }
+      final booth = _remaining(s['booth_until']);
+      if (!out && booth > 0) {
+        tags.add(_tag(Icons.storefront, 'Loket Sampah buka · ${booth.ceil()} dtk',
+            Colors.teal.shade700));
       }
       if (!out && (ratio >= 0.5 || (wl > 0 && ratio > 1.0 / 3.0))) {
         tags.add(_tag(Icons.warning_amber_rounded, _trashStage(ratio, wl),
@@ -2328,6 +2676,10 @@ class _GameScreenState extends State<GameScreen>
     final live = _live(s);
     final cap = max(1.0, _num(s['trash_capacity']));
     final ratio = live.trash / cap;
+    // Bar lawan dibulatkan kelipatan 10% supaya gertakan kembang api (yang
+    // hanya membuang ~3 sampah) tidak bocor lewat penurunan bar.
+    final shownRatio = isMe ? ratio : (ratio * 10).round() / 10.0;
+    final shownTrash = shownRatio * cap;
     final out = s['eliminated_at'] != null;
     final wl = _num(s['waste_level']).toInt();
     final rooms = _num(s['rooms_count']).toInt();
@@ -2403,7 +2755,7 @@ class _GameScreenState extends State<GameScreen>
                   children: [
                     header,
                     const SizedBox(height: 4),
-                    _meter(live.trash, cap, _trashColor(ratio), height: 5),
+                    _meter(shownTrash, cap, _trashColor(shownRatio), height: 5),
                   ],
                 ),
               ),
@@ -2455,7 +2807,7 @@ class _GameScreenState extends State<GameScreen>
           children: [
             header,
             const SizedBox(height: 3),
-            _meter(live.trash, cap, _trashColor(ratio), height: 4),
+            _meter(shownTrash, cap, _trashColor(shownRatio), height: 4),
             if (!isMe) ...[
               const SizedBox(height: 5),
               if (out)
@@ -2516,8 +2868,7 @@ class _GameScreenState extends State<GameScreen>
         !rivalPending &&
         throwLeft == 0 &&
         mine != null &&
-        mine.trash >= 1 &&
-        mine.money >= 10;
+        (mine.money >= 50 || (mine.money >= 10 && mine.trash >= 1));
 
     final canInspect = canAct &&
         !out &&
@@ -2541,13 +2892,13 @@ class _GameScreenState extends State<GameScreen>
             icon: Icons.rocket_launch_rounded,
             label: rivalPending
                 ? '…'
-                : (throwLeft > 0 ? '${throwLeft.ceil()}s' : '10'),
+                : (throwLeft > 0 ? '${throwLeft.ceil()}s' : '10+'),
             tooltip:
-            'Lempar Sampah (Biaya 10). Lawan punya 2,5 dtk untuk Tangkis & memantulkannya.${isBounty ? ' Buronan: +40 koin bila mendarat.' : ''}',
+            'Lempar (pilih jenis: Biasa 10 · Karung 40 · Polusi 50 · Kembang Api 10). Lawan punya 2,5 dtk untuk Tangkis.${isBounty ? ' Buronan: +40 koin bila sampah mendarat.' : ''}',
             color: const Color(0xFFFF7043),
             enabled: canThrow,
             vertical: vertical,
-            onTap: () => _act('throw_trash', {'p_target': id}),
+            onTap: () => _openThrowMenu(id, me),
           ),
         ),
         const SizedBox(width: 4),
@@ -2581,6 +2932,335 @@ class _GameScreenState extends State<GameScreen>
           ),
         ),
       ],
+    );
+  }
+
+  // ------------------------------------------------------ menu lemparan
+
+  void _openThrowMenu(String id, Map<String, dynamic>? me) {
+    if (me == null) return;
+    final mine = _live(me);
+    final base = 18 + _num(me['rooms_count']) * 1.5;
+    final fwLeft = _remaining(me['firework_cooldown_until']);
+    final normalAmt = min(mine.trash, base).floor();
+    final sackAmt = min(mine.trash, base * 2.5).floor();
+
+    final kinds = <({
+    String kind,
+    String icon,
+    String title,
+    String desc,
+    int cost,
+    bool ok,
+    String? why
+    })>[
+      (
+      kind: 'normal',
+      icon: '🗑️',
+      title: 'Lempar Biasa',
+      desc: '~$normalAmt sampah · jeda 4 dtk · Tangkis 2,5 dtk',
+      cost: 10,
+      ok: mine.money >= 10 && mine.trash >= 1,
+      why: null,
+      ),
+      (
+      kind: 'sack',
+      icon: '🛍️',
+      title: 'Sekarung Besar',
+      desc: '~$sackAmt sampah (×2,5) · jeda 10 dtk · Tangkis 3,5 dtk',
+      cost: 40,
+      ok: mine.money >= 40 && mine.trash >= 1,
+      why: null,
+      ),
+      (
+      kind: 'smog',
+      icon: '☣️',
+      title: 'Lemparan Polusi',
+      desc:
+      'Income lawan −35% selama 12 dtk, polusi global +5. Bila ditangkis, asap berbalik ke kamu.',
+      cost: 50,
+      ok: mine.money >= 50,
+      why: null,
+      ),
+      (
+      kind: 'firework',
+      icon: '🎆',
+      title: 'Kembang Api (Gertak)',
+      desc:
+      'Tampak persis seperti lempar biasa. 30%: membakar 1 sampah lawan & polusi +15. Isi ulang 8 dtk.',
+      cost: 10,
+      ok: mine.money >= 10 && mine.trash >= 1 && fwLeft == 0,
+      why: fwLeft > 0 ? 'Isi ulang ${fwLeft.ceil()}s' : null,
+      ),
+    ];
+
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1A2820),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 14, 8, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Lempar ke ${_name(id)}',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 6),
+              for (final k in kinds)
+                ListTile(
+                  enabled: k.ok,
+                  dense: true,
+                  leading: Text(k.icon, style: const TextStyle(fontSize: 26)),
+                  title: Text(
+                    k.title,
+                    style: TextStyle(
+                      color: k.ok ? Colors.white : Colors.white38,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  subtitle: Text(
+                    k.why ?? k.desc,
+                    style: TextStyle(
+                      color: k.ok ? Colors.white70 : Colors.white30,
+                      fontSize: 12,
+                    ),
+                  ),
+                  trailing: Text(
+                    '${k.cost}',
+                    style: TextStyle(
+                      color: k.ok ? const Color(0xFFFFCA28) : Colors.white30,
+                      fontWeight: FontWeight.w900,
+                      fontSize: 16,
+                    ),
+                  ),
+                  onTap: k.ok
+                      ? () {
+                    Navigator.of(ctx).pop();
+                    _act('throw_trash', {'p_target': id, 'p_kind': k.kind});
+                  }
+                      : null,
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ------------------------------------------------------- loket sampah
+
+  void _openBooth() {
+    var amount = 20.0;
+    var price = 40.0;
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF1A2820),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => AnimatedBuilder(
+          animation: _anim,
+          builder: (ctx, _) {
+            final me = _states[_me];
+            if (me == null || me['eliminated_at'] != null) {
+              return const SizedBox(
+                height: 120,
+                child: Center(
+                  child: Text('Loket hanya untuk pemain yang masih hidup.',
+                      style: TextStyle(color: Colors.white70)),
+                ),
+              );
+            }
+            final mine = _live(me);
+            final left = _remaining(me['booth_until']);
+            final open = left > 0;
+            final maxAmt = max(1.0, min(50.0, mine.trash.floorToDouble()));
+            if (amount > maxAmt) amount = maxAmt;
+            final rivals = [
+              for (final e in _states.entries)
+                if (e.key != _me && e.value['eliminated_at'] == null) e.key
+            ];
+
+            return SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Text('🏪 ', style: TextStyle(fontSize: 22)),
+                        const Expanded(
+                          child: Text(
+                            'Loket Sampah',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        if (open)
+                          Text('buka ${left.ceil()} dtk',
+                              style: const TextStyle(
+                                color: Color(0xFF69F0AE),
+                                fontWeight: FontWeight.w800,
+                              )),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (!open) ...[
+                      const Text(
+                        'Buka loket (30 uang, aktif 40 detik) untuk menawar uang kepada pemain lain agar mau menampung sampahmu. Mereka boleh menolak.',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: (mine.money >= 30 && _activeRpc == null)
+                              ? () => _act('open_trash_booth')
+                              : null,
+                          child: Text(mine.money >= 30
+                              ? 'Buka Loket · 30'
+                              : 'Uang belum cukup (30)'),
+                        ),
+                      ),
+                    ] else if (rivals.isEmpty) ...[
+                      const Text('Tidak ada pemain lain yang bisa ditawari.',
+                          style: TextStyle(color: Colors.white70)),
+                    ] else ...[
+                      Text('Jumlah sampah: ${amount.round()}',
+                          style: const TextStyle(color: Colors.white)),
+                      Slider(
+                        value: amount,
+                        min: 1,
+                        max: maxAmt,
+                        divisions: maxAmt > 1 ? (maxAmt - 1).round() : null,
+                        onChanged: mine.trash >= 2
+                            ? (v) => setSheet(() => amount = v)
+                            : null,
+                      ),
+                      Text('Kamu bayar: ${price.round()} uang',
+                          style: const TextStyle(color: Colors.white)),
+                      Slider(
+                        value: price,
+                        min: 0,
+                        max: 300,
+                        divisions: 60,
+                        onChanged: (v) => setSheet(() => price = v),
+                      ),
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 8,
+                        children: [
+                          for (final r in rivals)
+                            FilledButton.icon(
+                              icon: const Icon(Icons.send, size: 16),
+                              label: Text('Tawar ${_name(r)}'),
+                              onPressed: (!_offerBusy &&
+                                  mine.trash >= amount &&
+                                  mine.money >= price)
+                                  ? () => _sendOffer(
+                                  r, amount.round(), price.round())
+                                  : null,
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      const Text(
+                        'Tawaran berlaku 10 detik. Uang berpindah hanya bila lawan menerima.',
+                        style: TextStyle(color: Colors.white38, fontSize: 11),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _offerCard(Map<String, dynamic>? me, double bottom, EdgeInsets pad) {
+    final o = _incomingOffer!;
+    final amt = _num(o['trash_amount']).round();
+    final price = _num(o['price']).round();
+    final left = _remaining(o['expires_at']);
+    final live = me == null ? null : _live(me);
+    final cap = me == null ? 1.0 : _num(me['trash_capacity']);
+    final fatal = live != null && live.trash + amt >= cap;
+    return Positioned(
+      left: 12 + pad.left,
+      right: 12 + pad.right,
+      bottom: bottom,
+      child: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: _glass(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '🏪 ${_name(o['sender_id'])} menitip $amt sampah',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  'Kamu dibayar $price uang${fatal ? ' · AKAN MENIMBUN KOSTMU!' : ''}',
+                  style: TextStyle(
+                    color: fatal
+                        ? Colors.red.shade300
+                        : const Color(0xFFFFCA28),
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                _meter(left, 10, const Color(0xFF69F0AE), height: 4),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _offerBusy ? null : () => _respondOffer(false),
+                        child: const Text('Tolak'),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: (_offerBusy || fatal)
+                            ? null
+                            : () => _respondOffer(true),
+                        child: Text('Terima +$price'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 

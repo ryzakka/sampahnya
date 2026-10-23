@@ -25,6 +25,10 @@ enum FxType {
   parry,
 }
 
+/// Jenis lemparan: biasa, sekarung besar, gas beracun, atau kembang api
+/// (gertakan: selama melayang tampak persis seperti lempar biasa).
+enum ShotKind { normal, sack, smog, firework }
+
 const List<String> kEmojiList = [
   '😂', // 1: Ngakak
   '😎', // 2: Santuy / Sultan
@@ -73,6 +77,9 @@ class KostShot {
     required this.durMs,
     this.bounce = false,
     this.bags = 4,
+    this.kind = ShotKind.normal,
+    this.spark = false,
+    this.fizzle = false,
   }) : startMs = sceneNowMs();
 
   /// Rumah pelempar & rumah tujuan.
@@ -86,7 +93,61 @@ class KostShot {
   final bool bounce;
   final int bags;
 
+  final ShotKind kind;
+
+  /// Kembang api: true bila percikan terjadi saat mendarat.
+  final bool spark;
+
+  /// Kembang api yang ditangkis: terbang ke perisai lalu padam di sana.
+  final bool fizzle;
+
   int get age => sceneNowMs() - startMs;
+}
+
+/// Arwah pemain yang tertimbun: melayang bebas di jalan. MURNI visual,
+/// tidak punya efek gameplay apa pun.
+class KostGhost {
+  KostGhost({
+    required this.id,
+    required this.name,
+    required this.color,
+    required this.x,
+    required this.y,
+  })  : tx = x,
+        ty = y;
+
+  final String id;
+  String name;
+  Color color;
+
+  /// Posisi & tujuan di koordinat dunia jalan.
+  double x, y, tx, ty;
+
+  /// Dorongan sesaat saat terpukul sampah.
+  double vx = 0, vy = 0;
+  int hitMs = -100000;
+  int emojiCode = 0;
+  int emojiMs = -100000;
+  int _lastMs = sceneNowMs();
+
+  void moveTo(double wx, double wy) {
+    tx = wx;
+    ty = wy;
+  }
+
+  /// Dipanggil tiap frame: mengejar tujuan dengan halus (juga berfungsi
+  /// sebagai interpolasi posisi arwah pemain lain yang tiba 5x per detik).
+  void step() {
+    final now = sceneNowMs();
+    final dt = math.min(0.1, math.max(0, now - _lastMs) / 1000.0);
+    _lastMs = now;
+    final k = 1 - math.exp(-dt * 3.2);
+    x += (tx - x) * k + vx * dt;
+    y += (ty - y) * k + vy * dt;
+    final damp = math.exp(-dt * 4.0);
+    vx *= damp;
+    vy *= damp;
+  }
 }
 
 class KostSceneData {
@@ -5722,10 +5783,14 @@ class KostStreet extends StatelessWidget {
     required this.repaint,
     this.ids = const <String>[],
     this.shots = const <KostShot>[],
+    this.ghosts = const <KostGhost>[],
     this.insets = EdgeInsets.zero,
   });
 
   final List<KostSceneData> houses;
+
+  /// Arwah pemain yang sudah tertimbun (melayang di jalan).
+  final List<KostGhost> ghosts;
 
   /// id pemain per rumah (urutan sama dengan [houses]) untuk memetakan [shots].
   final List<String> ids;
@@ -5750,6 +5815,7 @@ class KostStreet extends StatelessWidget {
           repaint,
           ids: ids,
           shots: shots,
+          ghosts: ghosts,
           insets: insets,
         ),
         size: Size.infinite,
@@ -5766,6 +5832,7 @@ class KostStreetPainter extends CustomPainter {
       Listenable repaint, {
         this.ids = const <String>[],
         this.shots = const <KostShot>[],
+        this.ghosts = const <KostGhost>[],
         this.insets = EdgeInsets.zero,
       })  : _repaint = repaint,
         super(repaint: repaint);
@@ -5777,6 +5844,7 @@ class KostStreetPainter extends CustomPainter {
   final Listenable _repaint;
   final List<String> ids;
   final List<KostShot> shots;
+  final List<KostGhost> ghosts;
 
   double _roofOf(int i) {
     final floors = math.min(3, math.max(1, (houses[i].rooms / 4).ceil()));
@@ -5786,6 +5854,8 @@ class KostStreetPainter extends CustomPainter {
   /// Gambar kantong sampah terbang antar rumah. Lambungan & durasi mengikuti
   /// jarak. Lemparan "bounce" (ditangkis): terbang ke perisai penangkis lalu
   /// memantul balik ke pelempar (biru), bukan teleport.
+  /// Jenis: karung (besar), polusi (kepulan gas), kembang api (terbang seperti
+  /// biasa, lalu meledak / padam saat tiba).
   void _paintShots(Canvas canvas, double fxScale, KostPainter painter) {
     for (final sh in shots) {
       final a = ids.indexOf(sh.fromId);
@@ -5800,9 +5870,20 @@ class KostStreetPainter extends CustomPainter {
       final landA = Offset(a * _w + (toRight ? 350.0 : 50.0), 238.0);
       final shield = Offset(b * _w + (toRight ? 130.0 : 270.0), 190.0);
       final peak = (64.0 + 38.0 * dist) * (sh.bounce ? 0.8 : 1.0);
-      const stagger = 80.0;
+      final stagger = sh.kind == ShotKind.sack ? 110.0 : 80.0;
       final flight = math.max(400.0, sh.durMs - stagger * (sh.bags - 1));
       final fxs = math.min(fxScale, 2.2);
+      final end = sh.fizzle ? shield : landB;
+
+      // dampak setelah tiba: ledakan kembang api / padam / awan gas
+      final after = (age - flight) / (sh.kind == ShotKind.smog ? 1100.0 : 700.0);
+      if (after > 0 && after < 1) {
+        if (sh.kind == ShotKind.firework) {
+          _paintFirework(canvas, end, after, sh.spark && !sh.fizzle, sh.fizzle, fxs);
+        } else if (sh.kind == ShotKind.smog) {
+          _paintGasCloud(canvas, sh.bounce ? landA : landB, after, fxs, sh.bounce);
+        }
+      }
 
       for (var j = 0; j < sh.bags; j++) {
         final q = (age - j * stagger) / flight;
@@ -5813,7 +5894,7 @@ class KostStreetPainter extends CustomPainter {
         var back = false;
         if (!sh.bounce) {
           p0 = launch;
-          p1 = landB;
+          p1 = end;
           lq = q;
         } else if (q < 0.5) {
           p0 = launch;
@@ -5829,8 +5910,11 @@ class KostStreetPainter extends CustomPainter {
           _lerp(p0.dx, p1.dx, u) + (j - 1.5) * 3,
           _lerp(p0.dy, p1.dy, u) - 4 * peak * u * (1 - u),
         );
-        final tint =
-        back ? const Color(0xFF40C4FF) : const Color(0xFF78909C);
+        final tint = back
+            ? const Color(0xFF40C4FF)
+            : (sh.kind == ShotKind.smog
+            ? const Color(0xFF6D8B3A)
+            : const Color(0xFF78909C));
 
         // jejak asap mengikuti lintasan
         for (var tr = 1; tr <= 4; tr++) {
@@ -5841,18 +5925,206 @@ class KostStreetPainter extends CustomPainter {
           canvas.drawCircle(pt, (5.0 - tr) * math.min(fxs, 2.0), painter._p);
         }
         final pos = at(lq);
+        _bonkGhosts(pos, toRight ^ back ? 1.0 : -1.0);
         if (back) {
           painter._p
             ..style = PaintingStyle.fill
             ..color = const Color(0xFF40C4FF).withValues(alpha: 0.3);
           canvas.drawCircle(pos, 10 * math.min(fxs, 2.0), painter._p);
         }
-        // kantong berputar searah terbang
-        canvas.save();
-        canvas.translate(pos.dx, pos.dy);
-        canvas.rotate((toRight ^ back ? 1 : -1) * (lq * 9 + j));
-        painter._bag(canvas, Offset.zero, 500 + j, scale: 1.15 * fxs);
-        canvas.restore();
+        if (sh.kind == ShotKind.smog) {
+          _paintGasPuff(canvas, pos, lq, j, fxs, back);
+        } else {
+          // kantong berputar searah terbang (karung = kantong raksasa)
+          canvas.save();
+          canvas.translate(pos.dx, pos.dy);
+          canvas.rotate((toRight ^ back ? 1 : -1) * (lq * 9 + j));
+          painter._bag(
+            canvas,
+            Offset.zero,
+            500 + j,
+            scale: (sh.kind == ShotKind.sack ? 2.2 : 1.15) * fxs,
+          );
+          canvas.restore();
+        }
+      }
+    }
+  }
+
+  /// Arwah terpentok sampah yang lewat: hanya terpental & bintang-bintang.
+  void _bonkGhosts(Offset pos, double dir) {
+    if (ghosts.isEmpty) return;
+    final now = sceneNowMs();
+    for (final g in ghosts) {
+      if (now - g.hitMs < 900) continue;
+      final dx = pos.dx - g.x;
+      final dy = pos.dy - g.y;
+      if (dx * dx + dy * dy < 30 * 30) {
+        g.hitMs = now;
+        g.vx = (dx >= 0 ? -150.0 : 150.0) + dir * 40;
+        g.vy = -80;
+      }
+    }
+  }
+
+  void _paintGasPuff(
+      Canvas canvas, Offset pos, double lq, int j, double fxs, bool back) {
+    final p = Paint();
+    final base = back ? const Color(0xFF40C4FF) : const Color(0xFF6D8B3A);
+    const dark = Color(0xFF2E3B1F);
+    for (var k = 0; k < 3; k++) {
+      final ang = lq * 6 + j + k * 2.1;
+      final off = Offset(math.cos(ang) * 5, math.sin(ang) * 4) * fxs;
+      p.color = (k == 0 ? dark : base).withValues(alpha: 0.55);
+      canvas.drawCircle(pos + off, (10.0 - k * 2) * fxs, p);
+    }
+  }
+
+  void _paintGasCloud(
+      Canvas canvas, Offset at, double q, double fxs, bool back) {
+    final p = Paint();
+    final c = back ? const Color(0xFF40C4FF) : const Color(0xFF7CB342);
+    for (var k = 0; k < 5; k++) {
+      final ox = (k - 2) * 14.0 * fxs * q;
+      final oy = -math.sin(q * math.pi) * (10 + k * 4) * fxs;
+      p.color = (k.isEven ? const Color(0xFF33411F) : c)
+          .withValues(alpha: 0.5 * (1 - q));
+      canvas.drawCircle(at + Offset(ox, oy), (12 + q * 22) * fxs, p);
+    }
+  }
+
+  void _paintFirework(Canvas canvas, Offset at, double q, bool spark,
+      bool fizzle, double fxs) {
+    if (fizzle) {
+      final f = Paint()
+        ..color = const Color(0xFF90A4AE).withValues(alpha: 0.5 * (1 - q));
+      canvas.drawCircle(at + Offset(0, -q * 10), (6 + q * 10) * fxs, f);
+      return;
+    }
+    final p = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    const cols = [0xFFFFD54F, 0xFFFF5252, 0xFF69F0AE, 0xFF40C4FF, 0xFFE040FB];
+    final n = spark ? 14 : 8;
+    final reach = (spark ? 46.0 : 28.0) * fxs * math.sin(q * math.pi / 2);
+    for (var i = 0; i < n; i++) {
+      final ang = i * math.pi * 2 / n + 0.3;
+      p
+        ..color = Color(cols[i % cols.length]).withValues(alpha: 1 - q)
+        ..strokeWidth = (spark ? 3.2 : 2.2) * fxs;
+      canvas.drawLine(
+        at + Offset(math.cos(ang), math.sin(ang)) * (reach * 0.55),
+        at + Offset(math.cos(ang), math.sin(ang)) * reach,
+        p,
+      );
+    }
+    if (spark) {
+      // percikan benar-benar menyambar: kilatan oranye + jelaga
+      final f = Paint()
+        ..color = const Color(0xFFFF9100).withValues(alpha: 0.55 * (1 - q));
+      canvas.drawCircle(at, (10 + q * 16) * fxs, f);
+      f.color = const Color(0xFF455A64).withValues(alpha: 0.4 * q * (1 - q) * 4);
+      canvas.drawCircle(at + Offset(0, -q * 18 * fxs), (8 + q * 10) * fxs, f);
+    }
+  }
+
+  TextPainter _ghostText(String text, double size, Color color,
+      {bool bold = true}) {
+    return TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          fontSize: size,
+          color: color,
+          fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
+          shadows: const [Shadow(color: Colors.black54, blurRadius: 3)],
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+  }
+
+  /// Arwah melayang di atas jalan: badan transparan, bergoyang, bisa
+  /// terpentok sampah (bintang-bintang) dan menyeru lewat emoji.
+  void _paintGhosts(Canvas canvas, double fxScale, double t) {
+    final now = sceneNowMs();
+    final gs = math.min(fxScale, 1.8);
+    for (final g in ghosts) {
+      final bob = math.sin(t * 2.2 + g.id.hashCode % 7) * 5;
+      final hitAge = (now - g.hitMs) / 1000.0;
+      final hit = hitAge >= 0 && hitAge < 0.7;
+      final squash =
+      hit ? 1 + 0.25 * math.sin(hitAge * 22) * (1 - hitAge / 0.7) : 1.0;
+      final c = Offset(g.x, g.y + bob);
+      final faceR = g.tx >= g.x;
+
+      canvas.save();
+      canvas.translate(c.dx, c.dy);
+      canvas.scale(gs / squash, gs * squash);
+      final body = Path()
+        ..moveTo(-15, 4)
+        ..cubicTo(-15, -22, 15, -22, 15, 4)
+        ..lineTo(15, 18)
+        ..quadraticBezierTo(10, 24, 5, 18)
+        ..quadraticBezierTo(0, 12, -5, 18)
+        ..quadraticBezierTo(-10, 24, -15, 18)
+        ..close();
+      final fill = Paint()
+        ..color = Color.lerp(Colors.white, g.color, 0.25)!
+            .withValues(alpha: hit ? 0.95 : 0.78);
+      final line = Paint()
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..color = Colors.white.withValues(alpha: 0.9);
+      canvas.drawPath(body, fill);
+      canvas.drawPath(body, line);
+      final eye = Paint()..color = const Color(0xFF263238);
+      final ex = faceR ? 2.0 : -2.0;
+      canvas.drawOval(
+          Rect.fromCenter(center: Offset(-5 + ex, -2), width: 5, height: 7), eye);
+      canvas.drawOval(
+          Rect.fromCenter(center: Offset(5 + ex, -2), width: 5, height: 7), eye);
+      canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(ex, 7), width: hit ? 7 : 4, height: hit ? 8 : 5),
+        eye,
+      );
+      canvas.restore();
+
+      // bintang-bintang saat terpukul
+      if (hit) {
+        final sp = Paint()..color = const Color(0xFFFFD54F);
+        for (var i = 0; i < 3; i++) {
+          final ang = hitAge * 10 + i * 2.09;
+          canvas.drawCircle(
+            c + Offset(math.cos(ang) * 16, -28 + math.sin(ang) * 5) * gs,
+            3.2 * gs,
+            sp,
+          );
+        }
+      }
+
+      // nama
+      final name = _ghostText('👻 ${g.name}', 10 * gs, Colors.white);
+      name.paint(canvas, Offset(c.dx - name.width / 2, c.dy + 24 * gs));
+
+      // seruan emoji arwah
+      final ea = now - g.emojiMs;
+      if (g.emojiCode > 0 && ea >= 0 && ea < kEmojiLifeMs) {
+        final ep = ea / kEmojiLifeMs;
+        final alpha = ep > 0.8 ? (1 - ep) / 0.2 : 1.0;
+        final pop = ep < 0.12 ? ep / 0.12 : 1.0;
+        final ctr = c + Offset(math.sin(ep * 9) * 5, -44 * gs - ep * 12);
+        final bg = Paint()..color = Colors.white.withValues(alpha: 0.95 * alpha);
+        final bd = Paint()
+          ..style = PaintingStyle.stroke
+          ..strokeWidth = 2
+          ..color = const Color(0xFFFFCA28).withValues(alpha: alpha);
+        canvas.drawCircle(ctr, 17 * gs * pop, bg);
+        canvas.drawCircle(ctr, 17 * gs * pop, bd);
+        final tp = _ghostText(emojiFromCode(g.emojiCode), 20 * gs * pop,
+            Colors.white.withValues(alpha: alpha));
+        tp.paint(canvas, ctr - Offset(tp.width / 2, tp.height / 2));
       }
     }
   }
@@ -5949,6 +6221,9 @@ class KostStreetPainter extends CustomPainter {
         _repaint,
       ),
     );
+
+    // 2b2) arwah pemain yang tertimbun melayang di atas jalan
+    _paintGhosts(canvas, fxScale, t);
 
     // 3) hujan / abu / kabut / vinyet, sekali untuk seluruh layar
     KostPainter(backdrop, _repaint).paintStreetAtmosphere(

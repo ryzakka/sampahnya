@@ -255,7 +255,7 @@ class _MoreGamesCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Semantics(
       button: true,
-      label: 'Buka gim Linguistify di browser',
+      label: 'Buka gim Linguistic Hegemony di browser',
       child: Material(
         color: Colors.transparent,
         child: InkWell(
@@ -305,7 +305,7 @@ class _MoreGamesCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       const Text(
-                        'Linguistify',
+                        'Linguistic Hegemony',
                         style: TextStyle(
                           color: Colors.white,
                           fontSize: 18,
@@ -771,7 +771,7 @@ class _LobbyHomeState extends State<LobbyHome>
 
   Widget _buildFooter({bool left = false}) {
     return Text(
-      'Sampahnya! v1.4.5 (2210:6)',
+      'Sampahnya! v1.4.6 (2210:1)',
       textAlign: left ? TextAlign.left : TextAlign.center,
       style: TextStyle(
         color: Colors.white.withValues(alpha: 0.4),
