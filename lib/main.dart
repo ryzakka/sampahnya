@@ -7,8 +7,10 @@ import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'customize_screen.dart';
 import 'game_screen.dart';
 import 'kost_scene.dart';
+import 'kost_style.dart';
 
 const supabaseUrl = String.fromEnvironment(
   'SUPABASE_URL',
@@ -1119,7 +1121,7 @@ class _RoomLobbyState extends State<RoomLobby>
     try {
       final data = await _db
           .from('room_players')
-          .select('player_id, player_name, is_ready')
+          .select('player_id, player_name, is_ready, style, style_status')
           .eq('room_id', widget.roomId)
           .order('player_name');
 
@@ -1175,13 +1177,16 @@ class _RoomLobbyState extends State<RoomLobby>
       setState(() => _hostId = room['host_id']?.toString());
       if (room['status'] == 'playing' && !_navigated) {
         _navigated = true;
-        Navigator.of(context).pushReplacement(
+        // pushAndRemoveUntil: lobi DAN layar kustomisasi (bila sedang terbuka
+        // di atasnya) sama-sama dibuang; halaman awal tetap di bawah.
+        Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (_) => GameScreen(
               roomId: widget.roomId,
               roomCode: widget.roomCode,
             ),
           ),
+              (route) => route.isFirst,
         );
       }
     } catch (_) {}
@@ -1230,6 +1235,167 @@ class _RoomLobbyState extends State<RoomLobby>
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  /// Pemain lain (bukan saya) yang sedang berkustomisasi.
+  List<Map<String, dynamic>> get _othersEditing {
+    final uid = _db.auth.currentUser?.id;
+    return _players
+        .where((p) =>
+    p['player_id'] != uid && p['style_status'] == 'editing')
+        .toList();
+  }
+
+  Future<void> _chooseDefaultStyle() async {
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _db.rpc('set_style_status',
+          params: {'p_room': widget.roomId, 'p_status': 'default'});
+      await _refreshPlayers();
+    } on PostgrestException catch (e) {
+      setState(() => _error = e.message);
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _openCustomize({bool readOnly = false}) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => CustomizeScreen(
+          roomId: widget.roomId,
+          roomCode: widget.roomCode,
+          readOnly: readOnly,
+        ),
+      ),
+    );
+    if (mounted) _refreshPlayers();
+  }
+
+  /// Kartu pilihan tampilan: bawaan atau masuk ruang kustomisasi bersama.
+  Widget _buildStyleCard(Map<String, dynamic>? me) {
+    final status = (me?['style_status'] ?? 'pending').toString();
+    final others = _othersEditing;
+    final (label, color) = switch (status) {
+      'done' => ('Kustom', _Ui.greenSoft),
+      'default' => ('Bawaan', Colors.white70),
+      'editing' => ('Mengedit', _Ui.amber),
+      _ => ('Belum dipilih', Colors.white54),
+    };
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.palette_rounded, size: 18, color: _Ui.amber),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('Tampilan', style: _Ui.label)),
+              Container(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Pakai tampilan bawaan, atau ubah karakter & bangunanmu di ruang '
+                'kustomisasi bersama pemain lain.',
+            style: _Ui.body(0.6),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _busy ? null : _chooseDefaultStyle,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor:
+                    status == 'default' ? _Ui.amber : Colors.white,
+                    side: BorderSide(
+                      color: status == 'default'
+                          ? _Ui.amber
+                          : Colors.white.withValues(alpha: 0.3),
+                      width: status == 'default' ? 2 : 1,
+                    ),
+                    minimumSize: const Size.fromHeight(46),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  child: const Text('Bawaan',
+                      style: TextStyle(fontWeight: FontWeight.w800)),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _busy || me == null ? null : _openCustomize,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _Ui.greenBright,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(46),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14)),
+                  ),
+                  icon: const Icon(Icons.brush_rounded, size: 18),
+                  label: Text(
+                    status == 'done' ? 'Ubah lagi' : 'Kustomisasi',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (others.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Menunggu ${others.map((p) => p['player_name']).join(', ')} '
+                        'selesai kustomisasi…',
+                    style: _Ui.body(0.7),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => _openCustomize(readOnly: true),
+                  child: const Text('Lihat'),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   Future<void> _copyCode() async {
@@ -1461,9 +1627,11 @@ class _RoomLobbyState extends State<RoomLobby>
                 child: Row(
                   children: [
                     Icon(
-                      p['is_ready'] == true
+                      p['style_status'] == 'editing'
+                          ? Icons.brush_rounded
+                          : (p['is_ready'] == true
                           ? Icons.check_circle_rounded
-                          : Icons.hourglass_bottom_rounded,
+                          : Icons.hourglass_bottom_rounded),
                       size: 18,
                       color: p['is_ready'] == true
                           ? _Ui.greenSoft
@@ -1502,6 +1670,8 @@ class _RoomLobbyState extends State<RoomLobby>
         _ErrorBanner(_error!),
         const SizedBox(height: 12),
       ],
+      _buildStyleCard(me),
+      const SizedBox(height: 12),
       LayoutBuilder(
         builder: (context, c) {
           final readyBtn = _ActionButton(
@@ -1542,7 +1712,9 @@ class _RoomLobbyState extends State<RoomLobby>
       ),
       const SizedBox(height: 8),
       Text(
-        isHost
+        _othersEditing.isNotEmpty
+            ? 'Menunggu pemain lain selesai kustomisasi…'
+            : isHost
             ? (allReady
             ? 'Semua pemain sudah siap! Tekan Mulai game.'
             : 'Menunggu minimal 2 pemain dan semuanya menekan Saya siap.')
@@ -1654,6 +1826,7 @@ class _RoomLobbyState extends State<RoomLobby>
   KostSceneData _houseFor(Map<String, dynamic> p, int i) {
     final pid = p['player_id'].toString();
     final ready = p['is_ready'] == true;
+    final style = KostStyle.fromJson(p['style']);
     return KostSceneData(
       rooms: 4,
       maxRooms: 12,
@@ -1661,7 +1834,8 @@ class _RoomLobbyState extends State<RoomLobby>
       wasteLevel: 1,
       trashRatio: 0,
       pollution: 4,
-      wall: _walls[i % _walls.length],
+      wall: style?.wallColor ?? _walls[i % _walls.length],
+      style: (style == null || style.isEmpty) ? null : style,
       fx: _fx[pid] ?? const <KostFx>[],
       seed: pid.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
       // SIAP -> jendela menyala; belum siap -> gelap.
@@ -1777,6 +1951,7 @@ class _RoomLobbyState extends State<RoomLobby>
 
   Widget _nameTag(Map<String, dynamic> p, bool isMe, bool isHost) {
     final ready = p['is_ready'] == true;
+    final editing = p['style_status'] == 'editing';
     final accent = ready ? _Ui.greenSoft : Colors.amber.shade300;
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
@@ -1830,13 +2005,15 @@ class _RoomLobbyState extends State<RoomLobby>
             mainAxisSize: MainAxisSize.min,
             children: [
               Icon(
-                ready ? Icons.lightbulb_rounded : Icons.lightbulb_outline,
+                editing
+                    ? Icons.brush_rounded
+                    : (ready ? Icons.lightbulb_rounded : Icons.lightbulb_outline),
                 size: 12,
                 color: accent,
               ),
               const SizedBox(width: 3),
               Text(
-                ready ? 'Siap' : 'Belum siap',
+                editing ? 'Kustomisasi…' : (ready ? 'Siap' : 'Belum siap'),
                 style: TextStyle(
                   color: accent,
                   fontSize: 10.5,

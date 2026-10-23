@@ -7,6 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'cinematics.dart';
 import 'kost_scene.dart';
+import 'kost_style.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.roomId, required this.roomCode});
@@ -76,6 +77,10 @@ class _GameScreenState extends State<GameScreen>
   Map<String, dynamic> _room = {};
   final Map<String, Map<String, dynamic>> _states = {};
   final Map<String, String> _names = {};
+
+  /// Kustomisasi bangunan & karakter tiap pemain (diatur di lobi, tetap
+  /// selama permainan). Kosong = tampilan bawaan.
+  final Map<String, KostStyle> _styles = {};
   final List<Map<String, dynamic>> _events = [];
 
   final Map<String, int> _prevRooms = {};
@@ -728,7 +733,7 @@ class _GameScreenState extends State<GameScreen>
       await _db.from('player_state').select().eq('room_id', widget.roomId);
       final names = await _db
           .from('room_players')
-          .select('player_id, player_name')
+          .select('player_id, player_name, style')
           .eq('room_id', widget.roomId);
       final ev = await _db
           .from('game_events')
@@ -751,6 +756,12 @@ class _GameScreenState extends State<GameScreen>
         }
         for (final n in names) {
           _names[n['player_id'] as String] = n['player_name'] as String;
+          final st = KostStyle.fromJson(n['style']);
+          if (st != null && !st.isEmpty) {
+            _styles[n['player_id'] as String] = st;
+          } else {
+            _styles.remove(n['player_id'] as String);
+          }
         }
         if (_events.isEmpty) {
           _events.addAll(ev.map((e) => Map<String, dynamic>.from(e)));
@@ -1140,6 +1151,8 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Color _wallFor(String id) {
+    final custom = _styles[id]?.wallColor;
+    if (custom != null) return custom;
     final ids = _states.keys.toList()..sort();
     final i = ids.indexOf(id);
     return _walls[(i < 0 ? 0 : i) % _walls.length];
@@ -1190,6 +1203,7 @@ class _GameScreenState extends State<GameScreen>
       smog: _remaining(_room['smog_until']) > 0,
       fx: _fx[id] ?? const <KostFx>[],
       wall: _wallFor(id),
+      style: _styles[id],
       compact: compact,
       facingRight: facingRight ?? !compact,
       isBounty: id == _bountyId,

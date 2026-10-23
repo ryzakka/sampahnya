@@ -2,6 +2,8 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import 'kost_style.dart';
+
 // ====================================================================
 //  Adegan visual kost (v5 - Smart Trash Overflow & Animated Emoji)
 // ====================================================================
@@ -206,6 +208,7 @@ class KostSceneData {
     this.lights = 1.0,
     this.policeAgeMs,
     this.buriedAgeMs,
+    this.style,
   });
 
   final int rooms;
@@ -247,6 +250,9 @@ class KostSceneData {
   /// Umur (ms) adegan "tertimbun" di rumah ini; null = tidak sedang diputar.
   final int? buriedAgeMs;
 
+  /// Kustomisasi bangunan & karakter pemain; null = tampilan bawaan.
+  final KostStyle? style;
+
   /// Salinan dengan sebagian nilai diganti (dipakai sutradara sinematik).
   KostSceneData copyWith({
     double? trashRatio,
@@ -286,6 +292,7 @@ class KostSceneData {
         lights: lights ?? this.lights,
         policeAgeMs: policeAgeMs ?? this.policeAgeMs,
         buriedAgeMs: buriedAgeMs ?? this.buriedAgeMs,
+        style: style,
       );
 
   /// Salinan dengan [compact] / [facingRight] diganti (dipakai mode jalan).
@@ -316,6 +323,7 @@ class KostSceneData {
     lights: lights,
     policeAgeMs: policeAgeMs,
     buriedAgeMs: buriedAgeMs,
+    style: style,
   );
 }
 
@@ -640,6 +648,11 @@ class KostPainter extends CustomPainter {
   _makeSign('EKSKLUSIF', const Color(0xFF80D8FF));
   static final TextPainter _signSul =
   _makeSign('SULTAN', const Color(0xFFFFD54F));
+
+  /// Papan nama buatan pemain (di-cache: teks sama = TextPainter sama).
+  static final Map<String, TextPainter> _signCache = <String, TextPainter>{};
+  static TextPainter _customSign(String text) => _signCache.putIfAbsent(
+      text, () => _makeSign(text, Colors.white));
 
   static TextPainter _makeSign(String text, Color color) => TextPainter(
     text: TextSpan(
@@ -1607,7 +1620,7 @@ class KostPainter extends CustomPainter {
     if (d.kostTier == 2) {
       _p
         ..style = PaintingStyle.fill
-        ..color = const Color(0xFF263238);
+        ..color = d.style?.roofColor ?? const Color(0xFF263238);
       canvas.drawRect(Rect.fromLTWH(_bl - 8, roofY - 8, 206, 8), _p);
       _p.color = const Color(0xFFFFD54F);
       canvas.drawRect(Rect.fromLTWH(_bl - 8, roofY - 10, 206, 2.5), _p);
@@ -1626,9 +1639,10 @@ class KostPainter extends CustomPainter {
         _p,
       );
     } else {
-      final roofColor = d.kostTier == 1
-          ? const Color(0xFF37474F)
-          : _mix(d.wall, const Color(0xFF8D4B3B), 0.75);
+      final roofColor = d.style?.roofColor ??
+          (d.kostTier == 1
+              ? const Color(0xFF37474F)
+              : _mix(d.wall, const Color(0xFF8D4B3B), 0.75));
       final roof = Path()
         ..moveTo(_bl - 8, roofY)
         ..lineTo(_bl + 10, roofY - 22)
@@ -1668,9 +1682,12 @@ class KostPainter extends CustomPainter {
       _p,
     );
 
-    final signBg = d.kostTier == 2
-        ? const Color(0xFF212121)
-        : (d.kostTier == 1 ? const Color(0xFF0D47A1) : const Color(0xFF477A62));
+    final signBg = d.style?.signColor ??
+        (d.kostTier == 2
+            ? const Color(0xFF212121)
+            : (d.kostTier == 1
+            ? const Color(0xFF0D47A1)
+            : const Color(0xFF477A62)));
     _p
       ..style = PaintingStyle.fill
       ..color = signBg;
@@ -1696,9 +1713,12 @@ class KostPainter extends CustomPainter {
     );
     _p.style = PaintingStyle.fill;
 
-    final tp = d.kostTier == 2
+    final customName = d.style?.name ?? '';
+    final tp = customName.isNotEmpty
+        ? _customSign(customName)
+        : (d.kostTier == 2
         ? _signSul
-        : (d.kostTier == 1 ? _signExc : _signReg);
+        : (d.kostTier == 1 ? _signExc : _signReg));
     tp.paint(canvas, Offset(150 - tp.width / 2, roofY - 36));
 
     canvas.restore();
@@ -3362,7 +3382,8 @@ class KostPainter extends CustomPainter {
       const xs = [128.0, 160.0, 262.0];
       for (var k = 0; k < 3; k++) {
         final dir = k == 2 ? -1.0 : 1.0;
-        _sitter(canvas, xs[k], 271, k, t, _shirts[(k + 1) % _shirts.length], dir);
+        _sitter(canvas, xs[k], 271, k, t, _shirts[(k + 1) % _shirts.length], dir,
+            look: _resLook(_shirts[(k + 1) % _shirts.length]));
         _resIcon(canvas, xs[k], 271 - 25, '😭', t, k);
       }
       return;
@@ -3387,6 +3408,7 @@ class KostPainter extends CustomPainter {
         s.x,
         s.y,
         shirt: _shirts[_hh(_resRoom(k) + 3) % _shirts.length],
+        look: _resLook(_shirts[_hh(_resRoom(k) + 3) % _shirts.length]),
         pose: pose,
         dir: dir,
         t: t,
@@ -3417,7 +3439,7 @@ class KostPainter extends CustomPainter {
       ..style = PaintingStyle.fill
       ..color = _mix(const Color(0xFF2B1F18), const Color(0xFFFFC860), open * 0.6);
     canvas.drawRect(door, _p);
-    _p.color = const Color(0xFF6D4C41);
+    _p.color = d.style?.doorColor ?? const Color(0xFF6D4C41);
     canvas.drawRect(
       Rect.fromLTWH(door.left, door.top, door.width * (1 - 0.75 * open), door.height),
       _p,
@@ -3456,11 +3478,19 @@ class KostPainter extends CustomPainter {
     canvas.restore();
   }
 
+  /// Tampilan penghuni rumah ini: kustomisasi pemain, atau null (bawaan).
+  KostLook? _resLook(Color fallbackShirt) {
+    final st = d.style;
+    if (st == null || !st.hasLook) return null;
+    return st.look(fallbackShirt: fallbackShirt);
+  }
+
   void _resident(
       Canvas canvas,
       double x,
       double y, {
         required Color shirt,
+        KostLook? look,
         required int pose, // 0 jalan, 1 marah, 2 tutup hidung, 3 batuk
         required double dir,
         required double t,
@@ -3485,7 +3515,8 @@ class KostPainter extends CustomPainter {
     if (cough) lean = 0.32;
     if (walking && mask == 2) lean = 0.16;
     final sw = walking ? math.sin(ph) * 3.0 : 0.0;
-    const skin = Color(0xFFE0AC84);
+    final skin = look?.skin ?? const Color(0xFFE0AC84);
+    if (look != null) shirt = look.shirt;
 
     canvas.save();
     canvas.translate(x, y + hop);
@@ -3528,6 +3559,14 @@ class KostPainter extends CustomPainter {
     );
     _p.color = skin;
     canvas.drawCircle(const Offset(0, -17.5), 3.2, _p);
+    if (look != null) {
+      canvas.save();
+      canvas.translate(0, -17.5);
+      canvas.scale(3.2);
+      paintKostHeadGear(canvas, _p, look);
+      canvas.restore();
+      _p.style = PaintingStyle.fill;
+    }
 
     if (mask == 1) {
       _p.color = const Color(0xFFE3F2FD);
@@ -3603,7 +3642,8 @@ class KostPainter extends CustomPainter {
 
   /// Penghuni duduk lesu di samping kopernya (kost tertimbun).
   void _sitter(Canvas canvas, double x, double y, int k, double t, Color shirt,
-      double dir) {
+      double dir, {KostLook? look}) {
+    if (look != null) shirt = look.shirt;
     canvas.save();
     canvas.translate(x, y + math.sin(t * 14 + k) * 0.4); // terisak
     canvas.scale(dir, 1);
@@ -3635,8 +3675,16 @@ class KostPainter extends CustomPainter {
           const Rect.fromLTWH(-3, -11, 6, 8.5), const Radius.circular(2)),
       _p,
     );
-    _p.color = const Color(0xFFE0AC84);
+    _p.color = look?.skin ?? const Color(0xFFE0AC84);
     canvas.drawCircle(const Offset(1.2, -14.2), 3.2, _p);
+    if (look != null) {
+      canvas.save();
+      canvas.translate(1.2, -14.2);
+      canvas.scale(3.2);
+      paintKostHeadGear(canvas, _p, look);
+      canvas.restore();
+      _p.style = PaintingStyle.fill;
+    }
     canvas.restore();
   }
 
