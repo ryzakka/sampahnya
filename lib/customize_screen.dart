@@ -273,35 +273,66 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                   : (_tab == 0 ? _streetView(entries) : _stageView(entries));
               final panel =
               widget.readOnly ? _watchPanel(entries) : _editPanel();
-              return Padding(
-                padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-                child: Column(
+
+              // Skala jarak & lebar mengikuti ukuran layar; konten dikunci
+              // lebarnya supaya tidak melebar di monitor besar.
+              final t = ((c.maxWidth - 320) / (1100 - 320)).clamp(0.0, 1.0);
+              final pad = 12 + 8 * t;
+              final panelW = 320 + 60 * t; // 320..380
+              final maxW = wide ? 1100.0 : 560.0;
+              // Ponsel pendek (mis. keyboard muncul): gulir seluruh halaman
+              // dan beri tinggi minimum agar tampilan & panel tidak gepeng.
+              final scrollNarrow = !wide && c.maxHeight < 640;
+
+              Widget body;
+              if (wide) {
+                body = Row(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _topBar(entries),
-                    const SizedBox(height: 10),
-                    _tabs(),
-                    const SizedBox(height: 10),
-                    Expanded(
-                      child: wide
-                          ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(child: view),
-                          const SizedBox(width: 16),
-                          SizedBox(width: 380, child: panel),
-                        ],
-                      )
-                          : Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Expanded(flex: 6, child: view),
-                          const SizedBox(height: 10),
-                          Expanded(flex: 5, child: panel),
-                        ],
-                      ),
-                    ),
+                    Expanded(child: view),
+                    const SizedBox(width: 16),
+                    SizedBox(width: panelW, child: panel),
                   ],
+                );
+              } else if (scrollNarrow) {
+                body = SingleChildScrollView(
+                  physics: const ClampingScrollPhysics(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      SizedBox(height: 240, child: view),
+                      const SizedBox(height: 10),
+                      SizedBox(height: 420, child: panel),
+                    ],
+                  ),
+                );
+              } else {
+                body = Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Expanded(flex: 6, child: view),
+                    const SizedBox(height: 10),
+                    Expanded(flex: 5, child: panel),
+                  ],
+                );
+              }
+
+              return Center(
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: maxW),
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(pad, 10, pad, pad),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _topBar(entries),
+                        const SizedBox(height: 10),
+                        _tabs(),
+                        const SizedBox(height: 10),
+                        Expanded(child: body),
+                      ],
+                    ),
+                  ),
                 ),
               );
             },
@@ -391,11 +422,15 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               children: [
                 Icon(icon, size: 18, color: on ? Colors.black87 : Colors.white70),
                 const SizedBox(width: 6),
-                Text(
-                  label,
-                  style: TextStyle(
-                    color: on ? Colors.black87 : Colors.white70,
-                    fontWeight: FontWeight.w900,
+                Flexible(
+                  child: Text(
+                    label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: on ? Colors.black87 : Colors.white70,
+                      fontWeight: FontWeight.w900,
+                    ),
                   ),
                 ),
               ],

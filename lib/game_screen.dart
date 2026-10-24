@@ -8,6 +8,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'cinematics.dart';
 import 'kost_scene.dart';
 import 'kost_style.dart';
+import 'kost_warehouse.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.roomId, required this.roomCode});
@@ -120,6 +121,10 @@ class _GameScreenState extends State<GameScreen>
   Map<String, dynamic>? _incomingOffer; // tawaran masuk yang menunggu jawaban
   final Set<int> _seenOffers = {};
   bool _offerBusy = false;
+
+  // --- gudang sampah (sisi kanan kost) ---
+  /// Baris `player_warehouse` per pemain (tabel dari warehouse.sql).
+  final Map<String, Map<String, dynamic>> _wh = {};
 
   // --- jalan (kost berderet) & kamera zoom ---
   final KostStreetCamera _cam = KostStreetCamera();
@@ -290,6 +295,25 @@ class _GameScreenState extends State<GameScreen>
       table: 'trash_offers',
       filter: roomFilter('room_id'),
       callback: _onOfferChange,
+    )
+        .onPostgresChanges(
+      event: PostgresChangeEvent.all,
+      schema: 'public',
+      table: 'player_warehouse',
+      filter: roomFilter('room_id'),
+      callback: (p) {
+        final r = p.newRecord;
+        if (r.isEmpty || !mounted) return;
+        final row = Map<String, dynamic>.from(r);
+        final pid = row['player_id'] as String;
+        final before = _num(_wh[pid]?['tier']).toInt();
+        final after = _num(row['tier']).toInt();
+        setState(() => _wh[pid] = row);
+        if (pid == _me && after > before && before > 0) {
+          _showNotice('Gudang naik jadi ${Wh.tierNames[after.clamp(0, Wh.maxTier).toInt()]}!',
+              icon: Icons.warehouse_rounded, color: const Color(0xFFFB8C00));
+        }
+      },
     )
         .onBroadcast(
       event: 'ghost',
@@ -753,6 +777,14 @@ class _GameScreenState extends State<GameScreen>
           .from('room_players')
           .select('player_id, player_name, style')
           .eq('room_id', widget.roomId);
+      // Tabel gudang bisa saja belum dibuat (warehouse.sql): jangan gagalkan load.
+      List<dynamic> whRows = const [];
+      try {
+        whRows = await _db
+            .from('player_warehouse')
+            .select()
+            .eq('room_id', widget.roomId);
+      } catch (_) {}
       final ev = await _db
           .from('game_events')
           .select()
@@ -771,6 +803,10 @@ class _GameScreenState extends State<GameScreen>
           _prevDefense[pid] = _num(map['defense']).toInt();
           _prevWaste[pid] = _num(map['waste_level']).toInt();
           _prevTier[pid] = _num(map['kost_tier']).toInt();
+        }
+        for (final r in whRows) {
+          final m = Map<String, dynamic>.from(r as Map);
+          _wh[m['player_id'] as String] = m;
         }
         for (final n in names) {
           _names[n['player_id'] as String] = n['player_name'] as String;
@@ -806,6 +842,19 @@ class _GameScreenState extends State<GameScreen>
       final serverNow = DateTime.parse(res['server_now'] as String);
       final mid = t0.add(t1.difference(t0) ~/ 2);
       _offset = serverNow.difference(mid);
+      // Gudang: bayar hasil pemrosesan ke kas & muat truk yang sudah tiba.
+      final mine = _states[_me];
+      if (_num(_wh[_me]?['tier']) > 0 &&
+          mine != null &&
+          mine['eliminated_at'] == null) {
+        _whSettle();
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _whSettle() async {
+    try {
+      await _db.rpc('warehouse_settle', params: {'p_room': widget.roomId});
     } catch (_) {}
   }
 
@@ -1236,6 +1285,11 @@ class _GameScreenState extends State<GameScreen>
       {required bool compact, bool? facingRight}) {
     final live = _live(s);
     final cap = max(1.0, _num(s['trash_capacity']));
+    final wh = _whLive(id);
+    // Selama gerobak memuat isi kotak, kotak kiri masih tampak penuh.
+    var shownTrash = live.trash;
+    final pa = wh.pourAgeMs;
+    if (pa != null && pa < Wh.pourPickupMs) shownTrash += wh.lastPourAmount;
     return KostSceneData(
       rooms: _num(s['rooms_count']).toInt(),
       maxRooms: _maxRooms,
@@ -1244,7 +1298,7 @@ class _GameScreenState extends State<GameScreen>
       kostTier: _num(s['kost_tier']).toInt(),
       worldEvent: _activeWorldEvent,
       sealedLeft: _remaining(s['sealed_until']),
-      trashRatio: (live.trash / cap).clamp(0.0, 1.0).toDouble(),
+      trashRatio: (shownTrash / cap).clamp(0.0, 1.0).toDouble(),
       pollution: _pollution,
       eliminated: s['eliminated_at'] != null,
       protectedLeft: _remaining(s['protected_until']),
@@ -1264,6 +1318,7 @@ class _GameScreenState extends State<GameScreen>
       // 0..999, stabil di semua perangkat (tanpa hashCode bawaan Dart)
       seed: id.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
       dayPhase: _dayPhase,
+      warehouse: wh,
     );
   }
 
@@ -2660,7 +2715,7 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  // ------------------------------------------------------- bilah aksi (6 tombol)
+  // ------------------------------------------------------- bilah aksi (7 tombol)
 
   Widget _actionBar(Map<String, dynamic>? s, bool canAct,
       {required bool compact, required bool short}) {
@@ -2685,6 +2740,7 @@ class _GameScreenState extends State<GameScreen>
     final smog = _remaining(_room['smog_until']) > 0;
     final strike = _activeWorldEvent == 'hauler_strike';
     final flood = _activeWorldEvent == 'rain_flood';
+    final wh = _whLive(_me);
     final haulMax = 45.0 + wasteLv * 4.0;
     final haulCost = (min(live.trash.floorToDouble(), haulMax) *
         3 *
@@ -2810,9 +2866,28 @@ class _GameScreenState extends State<GameScreen>
             ? () => _act('buy_defense')
             : null,
       ),
+      _ActionButton(
+        mode: mode,
+        icon: Icons.warehouse_rounded,
+        color: Colors.orange,
+        title: wh.built ? Wh.tierNames[wh.tier] : 'Gudang Sampah',
+        shortTitle: 'Gudang',
+        shortSub: wh.built
+            ? (wh.truckProgress != null
+            ? 'Truk ${wh.truckLeft.ceil()}s'
+            : '${wh.stored.floor()}/${wh.cap.floor()}')
+            : '${Wh.tierCost[1]}',
+        subtitle: wh.built
+            ? (wh.truckProgress != null
+            ? 'Truk jalan ${wh.truckLeft.ceil()}s'
+            : 'Isi ${wh.stored.floor()}/${wh.cap.floor()}')
+            : 'Bangun · ${Wh.tierCost[1]}',
+        busy: false,
+        onTap: canAct ? _openWarehouse : null,
+      ),
     ];
 
-    // Selalu satu baris enam tombol; tinggi mengikuti mode.
+    // Selalu satu baris tujuh tombol; tinggi mengikuti mode.
     final h = mode == 1 ? 60.0 : (short ? 46.0 : 76.0);
     final gap = mode == 1 ? 4.0 : 6.0;
     return _glass(
@@ -3317,6 +3392,349 @@ class _GameScreenState extends State<GameScreen>
         ),
       ),
     );
+  }
+
+  // ------------------------------------------------------- gudang sampah
+
+  /// Keadaan gudang pemain [pid] yang dihitung dari baris server + waktu server.
+  WhLive _whLive(String pid) {
+    final r = _wh[pid];
+    if (r == null) return WhLive.none;
+    final tier = _num(r['tier']).toInt();
+    if (tier <= 0) return WhLive.none;
+    final comps = _num(r['comps']).toInt();
+    final now = _serverNow;
+    final upd = _ts(r['updated_at']) ?? now;
+    final dt = max(0.0, now.difference(upd).inMilliseconds / 1000);
+
+    // Pemrosesan (hanya sampah yang belum dipesan truk), lalu pemuatan truk.
+    var stored = _num(r['stored']);
+    final reserved = _num(r['truck_amount']);
+    stored -= min(Wh.procRate(tier, comps) * dt, max(0.0, stored - reserved));
+    final loadAt = _ts(r['truck_load_at']);
+    if (reserved > 0 && loadAt != null && !now.isBefore(loadAt)) {
+      stored = max(0.0, stored - reserved);
+    }
+
+    double? prog;
+    var left = 0.0;
+    final t0 = _ts(r['truck_started_at']);
+    final t1 = _ts(r['truck_until']);
+    if (t0 != null && t1 != null && now.isBefore(t1)) {
+      final total = max(1, t1.difference(t0).inMilliseconds);
+      prog = (now.difference(t0).inMilliseconds / total)
+          .clamp(0.0, 1.0)
+          .toDouble();
+      left = t1.difference(now).inMilliseconds / 1000;
+    }
+
+    int? pourAge;
+    final lp = _ts(r['last_pour_at']);
+    if (lp != null) {
+      final a = now.difference(lp).inMilliseconds;
+      if (a >= 0 && a <= Wh.pourAnimMs) pourAge = a;
+    }
+
+    return WhLive(
+      tier: tier,
+      comps: comps,
+      stored: max(0.0, stored),
+      truckAmount: reserved,
+      truckProgress: prog,
+      truckLeft: left,
+      truckReadyLeft: _remaining(r['truck_ready_at']),
+      pourLeft: _remaining(r['pour_ready_at']),
+      pourAgeMs: pourAge,
+      lastPourAmount: _num(r['last_pour_amount']),
+    );
+  }
+
+  void _openWarehouse() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      backgroundColor: const Color(0xFF1A2820),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => AnimatedBuilder(
+        animation: _anim,
+        builder: (ctx, _) => SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+              child: _warehousePanel(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _warehousePanel() {
+    final me = _states[_me];
+    if (me == null || me['eliminated_at'] != null) {
+      return const SizedBox(
+        height: 120,
+        child: Center(
+          child: Text('Gudang hanya untuk pemain yang masih hidup.',
+              style: TextStyle(color: Colors.white70)),
+        ),
+      );
+    }
+    final w = _whLive(_me);
+    final live = _live(me);
+    final finished = _room['status'] == 'finished';
+    final canAct = !finished && _activeRpc == null && !_cine.blocksInput;
+    final strike = _activeWorldEvent == 'hauler_strike';
+    final wasteLv = _num(me['waste_level']).toInt();
+    final trashCap = _num(me['trash_capacity']);
+    const gold = Color(0xFFFFCA28);
+
+    Widget big({
+      required IconData icon,
+      required Color color,
+      required String title,
+      required String sub,
+      required VoidCallback? onTap,
+      bool busy = false,
+    }) {
+      final on = onTap != null || busy;
+      final c = on ? color : Colors.blueGrey;
+      return Expanded(
+        child: AnimatedOpacity(
+          duration: const Duration(milliseconds: 180),
+          opacity: on ? 1 : 0.5,
+          child: Material(
+            color: c.withValues(alpha: 0.22),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: c.withValues(alpha: 0.6)),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: busy ? null : onTap,
+              child: Padding(
+                padding:
+                const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
+                child: Column(
+                  children: [
+                    busy
+                        ? const SizedBox(
+                        width: 26,
+                        height: 26,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2.5, color: Colors.white))
+                        : Icon(icon, size: 26, color: Colors.white),
+                    const SizedBox(height: 6),
+                    Text(title,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 13)),
+                    const SizedBox(height: 2),
+                    Text(sub,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            color: Colors.white70, fontSize: 11)),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget tile({
+      required String emoji,
+      required String title,
+      required String sub,
+      required String trailing,
+      required bool ok,
+      required VoidCallback? onTap,
+    }) =>
+        ListTile(
+          enabled: ok,
+          dense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 6),
+          leading: Text(emoji, style: const TextStyle(fontSize: 26)),
+          title: Text(title,
+              style: TextStyle(
+                  color: ok ? Colors.white : Colors.white38,
+                  fontWeight: FontWeight.w800)),
+          subtitle: Text(sub,
+              style: TextStyle(
+                  color: ok ? Colors.white70 : Colors.white30, fontSize: 12)),
+          trailing: Text(trailing,
+              style: TextStyle(
+                  color: ok ? gold : Colors.white38,
+                  fontWeight: FontWeight.w900,
+                  fontSize: 15)),
+          onTap: ok ? onTap : null,
+        );
+
+    final children = <Widget>[
+      Row(
+        children: [
+          const Icon(Icons.warehouse_rounded, color: Color(0xFFFFB74D)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              Wh.tierNames[w.tier],
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 16,
+                  fontWeight: FontWeight.w900),
+            ),
+          ),
+          Text('Uang ${live.money.floor()}',
+              style: const TextStyle(
+                  color: gold, fontWeight: FontWeight.w800, fontSize: 13)),
+        ],
+      ),
+      const SizedBox(height: 8),
+    ];
+
+    if (!w.built) {
+      final cost = Wh.tierCost[1];
+      children.addAll([
+        const Text(
+          'Lahan kosong di sisi kanan kost. Gudang punya kapasitas sendiri, '
+              'terpisah dari kotak sampah. Isi kotak kiri bisa dituang ke sini, '
+              'lalu diproses jadi koin atau diangkut truk khusus.',
+          style: TextStyle(color: Colors.white70, fontSize: 12.5),
+        ),
+        const SizedBox(height: 10),
+        tile(
+          emoji: '🏗️',
+          title: 'Bangun ${Wh.tierNames[1]}',
+          sub: 'Kapasitas ${Wh.cap(1).floor()} · proses '
+              '${Wh.procRate(1, 0).toStringAsFixed(2)}/dtk',
+          trailing: '$cost',
+          ok: canAct && live.money >= cost,
+          onTap: () => _act('warehouse_upgrade_tier'),
+        ),
+      ]);
+      return Column(mainAxisSize: MainAxisSize.min, children: children);
+    }
+
+    // --- status ---
+    final rate = Wh.procRate(w.tier, w.comps);
+    children.addAll([
+      _meter(w.stored, w.cap,
+          w.fill < 0.6 ? Colors.lightGreen : (w.fill < 0.85 ? gold : Colors.redAccent),
+          height: 10),
+      const SizedBox(height: 4),
+      Text(
+        'Isi ${w.stored.floor()}/${w.cap.floor()} · diproses ${rate.toStringAsFixed(2)}/dtk '
+            '· ${Wh.coinPerUnit(w.comps).toStringAsFixed(1)} koin/sampah',
+        style: const TextStyle(color: Colors.white70, fontSize: 12),
+      ),
+      const SizedBox(height: 10),
+    ]);
+
+    // --- dua tombol utama ---
+    final pourAmt = Wh.pourAmount(
+      liveTrash: live.trash,
+      trashCapacity: trashCap,
+      stored: w.stored,
+      tier: w.tier,
+      comps: w.comps,
+    );
+    final pourOk = canAct && wasteLv > 0 && pourAmt >= 1 && w.pourLeft == 0;
+    final pourSub = wasteLv <= 0
+        ? 'Butuh kotak sampah'
+        : (w.pourLeft > 0
+        ? 'Jeda ${w.pourLeft.ceil()}s'
+        : (pourAmt >= 1
+        ? '~$pourAmt sampah'
+        : (w.cap - w.stored < 1 ? 'Gudang penuh' : 'Kotak kosong')));
+
+    final truckCost = Wh.truckCost(w.stored.floorToDouble(), w.comps);
+    final truckOk = canAct &&
+        !strike &&
+        w.truckProgress == null &&
+        w.truckReadyLeft == 0 &&
+        w.stored >= 1 &&
+        live.money >= truckCost;
+    final truckSub = strike
+        ? 'Mogok kerja!'
+        : (w.truckProgress != null
+        ? 'Mengangkut ${w.truckLeft.ceil()}s'
+        : (w.truckReadyLeft > 0
+        ? 'Jeda ${w.truckReadyLeft.ceil()}s'
+        : (w.stored < 1
+        ? 'Gudang kosong'
+        : 'Biaya $truckCost · ${w.stored.floor()} sampah')));
+
+    children.add(Row(
+      children: [
+        big(
+          icon: Icons.move_down_rounded,
+          color: Colors.lightGreen,
+          title: 'Tuang ke Gudang',
+          sub: pourSub,
+          busy: _activeRpc == 'warehouse_pour',
+          onTap: pourOk ? () => _act('warehouse_pour') : null,
+        ),
+        const SizedBox(width: 8),
+        big(
+          icon: Icons.local_shipping_rounded,
+          color: Colors.orange,
+          title: 'Panggil Truk Gudang',
+          sub: truckSub,
+          busy: _activeRpc == 'warehouse_call_truck',
+          onTap: truckOk ? () => _act('warehouse_call_truck') : null,
+        ),
+      ],
+    ));
+    children.add(const SizedBox(height: 8));
+
+    // --- naik tier (berurutan) ---
+    if (w.tier < Wh.maxTier) {
+      final nt = w.tier + 1;
+      final cost = Wh.tierCost[nt];
+      children.add(tile(
+        emoji: '🏗️',
+        title: 'Naik ke ${Wh.tierNames[nt]}',
+        sub: 'Kapasitas ${Wh.cap(nt).floor()} · proses dasar '
+            '${Wh.tierProc[nt].toStringAsFixed(2)}/dtk',
+        trailing: '$cost',
+        ok: canAct && live.money >= cost,
+        onTap: () => _act('warehouse_upgrade_tier'),
+      ));
+    } else {
+      children.add(const Padding(
+        padding: EdgeInsets.symmetric(vertical: 6),
+        child: Text('Gudang sudah di tingkat tertinggi.',
+            style: TextStyle(color: Colors.white54, fontSize: 12)),
+      ));
+    }
+
+    // --- komponen (bebas urutan) ---
+    children.add(const Divider(color: Colors.white12, height: 14));
+    children.add(const Padding(
+      padding: EdgeInsets.only(bottom: 2),
+      child: Text('Komponen · beli bebas urutan',
+          style: TextStyle(
+              color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13)),
+    ));
+    for (final c in kWhComps) {
+      final owned = Wh.has(w.comps, c.bit);
+      children.add(tile(
+        emoji: c.emoji,
+        title: owned ? '${c.name} ✓' : c.name,
+        sub: c.desc,
+        trailing: owned ? 'Terpasang' : '${c.cost}',
+        ok: !owned && canAct && live.money >= c.cost,
+        onTap: () => _act('warehouse_buy_comp', {'p_comp': c.bit}),
+      ));
+    }
+
+    return Column(mainAxisSize: MainAxisSize.min, children: children);
   }
 
   // ------------------------------------------------------- loket sampah

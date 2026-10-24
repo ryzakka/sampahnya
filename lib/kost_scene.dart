@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import 'kost_style.dart';
 import 'kost_traffic.dart';
+import 'kost_warehouse.dart';
 
 
 // ====================================================================
@@ -14,6 +15,7 @@ part 'kost_painter.dart';
 part 'kost_painter_events.dart';
 part 'kost_painter_life.dart';
 part 'kost_street.dart';
+part 'kost_painter_warehouse.dart';
 
 final Stopwatch _clock = Stopwatch()..start();
 
@@ -218,7 +220,11 @@ class KostSceneData {
     this.style,
     this.owner,
     this.dayPhase,
+    this.warehouse,
   });
+
+  /// Gudang sampah di sisi kanan kost; null = tidak digambar (lobi dll).
+  final WhLive? warehouse;
 
   /// Fase siang-malam 0..1 (0 = tengah malam, 0.25 = matahari terbit,
   /// 0.5 = tengah hari, 0.75 = matahari terbenam). null = siang tetap
@@ -313,6 +319,7 @@ class KostSceneData {
         style: style,
         owner: owner,
         dayPhase: clearDayPhase ? null : dayPhase,
+        warehouse: warehouse,
       );
 
   /// Salinan dengan [compact] / [facingRight] diganti (dipakai mode jalan).
@@ -346,6 +353,7 @@ class KostSceneData {
     style: style,
     owner: owner,
     dayPhase: dayPhase,
+    warehouse: warehouse,
   );
 }
 

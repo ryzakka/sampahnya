@@ -956,6 +956,7 @@ extension KostPainterTruck on KostPainter {
 
   void _truckLayer(Canvas canvas, double t, double vl, double vr,
       {double? thiefDx, bool thiefHauling = false}) {
+    _whTruckLayer(canvas, t, vl, vr);
     final hj = _hijackFx();
     final hp = d.haulProgress;
     if (hj != null) {

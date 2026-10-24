@@ -321,6 +321,7 @@ class KostPainter extends CustomPainter {
     _drawBuilding(canvas, t);
     _drawBountyCrown(canvas, t);
     _drawWasteFacility(canvas, t);
+    _drawWarehouse(canvas, t);
     _drawFleeing(canvas, t);
     _drawDefense(canvas, t);
     _drawBags(canvas);
@@ -594,6 +595,7 @@ extension KostPainterScenery on KostPainter {
     _drawBuilding(canvas, t);
     _drawBountyCrown(canvas, t);
     _drawWasteFacility(canvas, t);
+    _drawWarehouse(canvas, t);
     _drawFleeing(canvas, t);
     _drawDefense(canvas, t);
     _drawBags(canvas);
