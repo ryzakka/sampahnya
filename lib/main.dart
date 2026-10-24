@@ -77,6 +77,12 @@ class _Ui {
   // Jarak
   static const gap16 = SizedBox(height: 16);
   static const gap24 = SizedBox(height: 24);
+  static const gap8 = SizedBox(height: 8);
+  static const gap12 = SizedBox(height: 12);
+
+  // Radius
+  static const radiusButton = 16.0;
+  static const radiusField = 14.0;
 
   // Skala teks
   static const title = TextStyle(
@@ -124,6 +130,7 @@ class _Ui {
   }
 }
 
+
 // ====================================================================
 //  KOMPONEN UMUM
 // ====================================================================
@@ -132,33 +139,33 @@ class _Ui {
 class _GlassPanel extends StatelessWidget {
   const _GlassPanel({
     required this.child,
-    this.padding = const EdgeInsets.all(24),
+    this.padding = const EdgeInsets.all(22),
   });
 
   final Widget child;
   final EdgeInsets padding;
-  static const double radius = 28;
+  static const double radius = 24;
 
   @override
   Widget build(BuildContext context) {
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: _Ui.surface.withValues(alpha: 0.8),
+            color: _Ui.surface.withValues(alpha: 0.84),
             borderRadius: BorderRadius.circular(radius),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.16),
-              width: 1.5,
+              color: Colors.white.withValues(alpha: 0.10),
+              width: 1,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: 0.45),
-                blurRadius: 30,
-                offset: const Offset(0, 14),
+                color: Colors.black.withValues(alpha: 0.40),
+                blurRadius: 28,
+                offset: const Offset(0, 12),
               ),
             ],
           ),
@@ -169,7 +176,96 @@ class _GlassPanel extends StatelessWidget {
   }
 }
 
-/// Tombol aksi utama / sekunder dengan status sibuk.
+/// Kartu datar untuk mengelompokkan isi di dalam layar (pemain, tampilan).
+class _SurfaceCard extends StatelessWidget {
+  const _SurfaceCard({required this.child});
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: child,
+    );
+  }
+}
+
+/// Label status kecil berwarna.
+class _Pill extends StatelessWidget {
+  const _Pill({required this.label, required this.color, this.icon});
+  final String label;
+  final Color color;
+  final IconData? icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Garis pemisah dengan teks di tengah.
+class _OrDivider extends StatelessWidget {
+  const _OrDivider(this.label);
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final line = Expanded(
+      child: Divider(
+        height: 1,
+        thickness: 1,
+        color: Colors.white.withValues(alpha: 0.10),
+      ),
+    );
+    return Row(
+      children: [
+        line,
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.45),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+        line,
+      ],
+    );
+  }
+}
+
+/// Tombol aksi: utama (terisi) atau sekunder ([outlined]) dengan status sibuk.
 class _ActionButton extends StatelessWidget {
   const _ActionButton({
     required this.label,
@@ -178,6 +274,8 @@ class _ActionButton extends StatelessWidget {
     this.background = _Ui.amber,
     this.foreground = Colors.black87,
     this.busy = false,
+    this.outlined = false,
+    this.height = 54,
   });
 
   final String label;
@@ -186,23 +284,30 @@ class _ActionButton extends StatelessWidget {
   final Color background;
   final Color foreground;
   final bool busy;
-  static const double height = 54;
+  final bool outlined;
+  final double height;
 
   @override
   Widget build(BuildContext context) {
+    final bg = outlined ? Colors.white.withValues(alpha: 0.07) : background;
+    final fg = outlined ? Colors.white : foreground;
     return SizedBox(
       height: height,
       child: FilledButton.icon(
         style: FilledButton.styleFrom(
-          backgroundColor: background,
-          foregroundColor: foreground,
-          disabledBackgroundColor: Colors.white.withValues(alpha: 0.1),
+          backgroundColor: bg,
+          foregroundColor: fg,
+          disabledBackgroundColor: Colors.white.withValues(alpha: 0.08),
           disabledForegroundColor: Colors.white38,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          side: outlined
+              ? BorderSide(color: Colors.white.withValues(alpha: 0.16))
+              : null,
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(_Ui.radiusButton),
           ),
-          textStyle: const TextStyle(
-            fontSize: 15.5,
+          textStyle: TextStyle(
+            fontSize: outlined ? 14 : 15.5,
             fontWeight: FontWeight.w800,
           ),
         ),
@@ -211,12 +316,9 @@ class _ActionButton extends StatelessWidget {
             ? SizedBox(
           width: 18,
           height: 18,
-          child: CircularProgressIndicator(
-            strokeWidth: 2.5,
-            color: foreground,
-          ),
+          child: CircularProgressIndicator(strokeWidth: 2.5, color: fg),
         )
-            : Icon(icon),
+            : Icon(icon, size: 20),
         label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
@@ -230,16 +332,16 @@ class _ErrorBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFFD32F2F).withValues(alpha: 0.22),
+        color: const Color(0xFFD32F2F).withValues(alpha: 0.18),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: _Ui.danger.withValues(alpha: 0.6)),
+        border: Border.all(color: _Ui.danger.withValues(alpha: 0.5)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.error_outline, color: Color(0xFFFF8A80), size: 20),
+          const Icon(Icons.error_outline, color: Color(0xFFFF8A80), size: 18),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -271,37 +373,36 @@ class _MoreGamesCard extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: () => _Ui.openLink(context, linguistifyUrl),
-          borderRadius: BorderRadius.circular(22),
+          borderRadius: BorderRadius.circular(20),
           child: Ink(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  const Color(0xFF1E2350).withValues(alpha: 0.9),
-                  const Color(0xFF14283A).withValues(alpha: 0.9),
+                  const Color(0xFF1E2350).withValues(alpha: 0.85),
+                  const Color(0xFF14283A).withValues(alpha: 0.85),
                 ],
               ),
-              borderRadius: BorderRadius.circular(22),
+              borderRadius: BorderRadius.circular(20),
               border: Border.all(
-                color: _Ui.violet.withValues(alpha: 0.45),
-                width: 1.5,
+                color: _Ui.violet.withValues(alpha: 0.35),
               ),
             ),
             child: Row(
               children: [
                 Container(
-                  width: 48,
-                  height: 48,
+                  width: 44,
+                  height: 44,
                   decoration: BoxDecoration(
-                    color: _Ui.violet.withValues(alpha: 0.18),
-                    borderRadius: BorderRadius.circular(14),
+                    color: _Ui.violet.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(13),
                   ),
                   child: const Icon(Icons.translate_rounded,
-                      color: _Ui.violet, size: 26),
+                      color: _Ui.violet, size: 24),
                 ),
-                const SizedBox(width: 14),
+                const SizedBox(width: 12),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -314,48 +415,30 @@ class _MoreGamesCard extends StatelessWidget {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
-                      const SizedBox(height: 2),
+                      const SizedBox(height: 1),
                       const Text(
                         'Linguistic Hegemony',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 18,
+                          fontSize: 16.5,
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(height: 2),
                       Text(
-                        'Strategi ala Plague Inc dan Eco Inc, tapi tentang bahasa dan politik.',
-                        style: _Ui.body(0.72).copyWith(fontSize: 12.5),
+                        'Strategi bahasa dan politik, ala Plague Inc.',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: _Ui.body(0.66).copyWith(fontSize: 12),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 10),
-                Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: _Ui.violet,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'Main',
-                        style: TextStyle(
-                          color: Color(0xFF14183A),
-                          fontWeight: FontWeight.w900,
-                          fontSize: 13,
-                        ),
-                      ),
-                      SizedBox(width: 5),
-                      Icon(Icons.open_in_new_rounded,
-                          size: 15, color: Color(0xFF14183A)),
-                    ],
-                  ),
-                ),
+                const SizedBox(width: 8),
+                const Icon(Icons.open_in_new_rounded,
+                    size: 18, color: _Ui.violet),
               ],
             ),
           ),
@@ -406,6 +489,7 @@ class SampahnyaApp extends StatelessWidget {
           brightness: Brightness.dark,
         ),
         useMaterial3: true,
+        scaffoldBackgroundColor: _Ui.bg,
         fontFamily: 'sans-serif',
       ),
       // Batasi skala teks sistem agar tata letak tidak pecah/melebar.
@@ -472,12 +556,14 @@ class _LobbyHomeState extends State<LobbyHome>
   Future<void> _createRoom() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
+      _nameFocus.requestFocus();
       setState(() => _error = 'Masukkan nama pemain kost terlebih dahulu!');
       return;
     }
 
     setState(() {
       _busy = true;
+      _busyKey = 'create';
       _error = null;
     });
 
@@ -527,7 +613,10 @@ class _LobbyHomeState extends State<LobbyHome>
     } catch (e) {
       setState(() => _error = _friendlyError(e));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() {
+        _busy = false;
+        _busyKey = null;
+      });
     }
   }
 
@@ -535,12 +624,14 @@ class _LobbyHomeState extends State<LobbyHome>
   Future<void> _startSurvival() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
+      _nameFocus.requestFocus();
       setState(() => _error = 'Masukkan nama pemain kost terlebih dahulu!');
       return;
     }
 
     setState(() {
       _busy = true;
+      _busyKey = 'survival';
       _error = null;
     });
 
@@ -568,7 +659,10 @@ class _LobbyHomeState extends State<LobbyHome>
     } catch (e) {
       setState(() => _error = _friendlyError(e));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() {
+        _busy = false;
+        _busyKey = null;
+      });
     }
   }
 
@@ -576,12 +670,14 @@ class _LobbyHomeState extends State<LobbyHome>
     final name = _nameController.text.trim();
     final code = _codeController.text.trim().toUpperCase();
     if (name.isEmpty || code.isEmpty) {
+      (name.isEmpty ? _nameFocus : _codeFocus).requestFocus();
       setState(() => _error = 'Isi nama pemain dan 6 digit kode ruangan!');
       return;
     }
 
     setState(() {
       _busy = true;
+      _busyKey = 'join';
       _error = null;
     });
 
@@ -621,7 +717,10 @@ class _LobbyHomeState extends State<LobbyHome>
     } catch (e) {
       setState(() => _error = _friendlyError(e));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) setState(() {
+        _busy = false;
+        _busyKey = null;
+      });
     }
   }
 
@@ -647,12 +746,21 @@ class _LobbyHomeState extends State<LobbyHome>
   void dispose() {
     _nameController.dispose();
     _codeController.dispose();
+    _nameFocus.dispose();
+    _codeFocus.dispose();
     super.dispose();
   }
-
   // ------------------------------------------------------------------
   //  UI
   // ------------------------------------------------------------------
+
+  final _nameFocus = FocusNode();
+  final _codeFocus = FocusNode();
+  String? _busyKey; // 'create' | 'survival' | 'join'
+
+  void _clearError() {
+    if (_error != null) setState(() => _error = null);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -669,15 +777,16 @@ class _LobbyHomeState extends State<LobbyHome>
               trashRatio: 0.15,
             ),
           ),
-          // Vignette agar panel di depan terbaca.
+          // Penggelap lembut agar judul dan panel selalu terbaca.
           Positioned.fill(
             child: DecoratedBox(
               decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  radius: 1.1,
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
                   colors: [
-                    Colors.black.withValues(alpha: 0.25),
-                    _Ui.bg.withValues(alpha: 0.78),
+                    _Ui.bg.withValues(alpha: 0.55),
+                    _Ui.bg.withValues(alpha: 0.86),
                   ],
                 ),
               ),
@@ -702,24 +811,24 @@ class _LobbyHomeState extends State<LobbyHome>
   Widget _buildNarrow(BoxConstraints c) {
     final compact = c.maxWidth < 380;
     final hPad = _Ui.fluid(c.maxWidth, 16, 28, to: 600);
-    final titleSize = _Ui.fluid(c.maxWidth, 32, 44, to: 480);
+    final titleSize = _Ui.fluid(c.maxWidth, 34, 44, to: 480);
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 20),
+      padding: EdgeInsets.fromLTRB(hPad, 24, hPad, 24),
       child: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: _Ui.maxNarrow,
-            minHeight: max(0.0, c.maxHeight - 40),
+            minHeight: max(0.0, c.maxHeight - 48),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               _buildHero(center: true, titleSize: titleSize),
-              _Ui.gap24,
+              const SizedBox(height: 28),
               _buildFormPanel(compact: compact),
-              _Ui.gap16,
+              _Ui.gap12,
               const _MoreGamesCard(),
               _Ui.gap16,
               _buildFooter(),
@@ -734,7 +843,7 @@ class _LobbyHomeState extends State<LobbyHome>
   /// Lebar konten dikunci agar tidak melebar di monitor besar.
   Widget _buildWide(BoxConstraints c) {
     final hPad = _Ui.fluid(c.maxWidth, 24, 40, from: 640, to: 1100);
-    final gap = _Ui.fluid(c.maxWidth, 28, 48, from: 640, to: 1100);
+    final gap = _Ui.fluid(c.maxWidth, 28, 56, from: 640, to: 1100);
     final titleSize = _Ui.fluid(c.maxWidth, 40, 56, from: 640, to: 1100);
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
@@ -755,9 +864,9 @@ class _LobbyHomeState extends State<LobbyHome>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildHero(center: false, titleSize: titleSize),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 28),
                     ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 440),
+                      constraints: const BoxConstraints(maxWidth: 420),
                       child: const _MoreGamesCard(),
                     ),
                     _Ui.gap16,
@@ -791,38 +900,27 @@ class _LobbyHomeState extends State<LobbyHome>
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          width: 56,
+          height: 56,
           decoration: BoxDecoration(
-            color: _Ui.amber,
-            borderRadius: BorderRadius.circular(20),
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [Color(0xFFFFD54F), Color(0xFFFFA000)],
+            ),
+            borderRadius: BorderRadius.circular(18),
             boxShadow: [
               BoxShadow(
-                color: _Ui.amber.withValues(alpha: 0.4),
-                blurRadius: 12,
+                color: _Ui.amber.withValues(alpha: 0.35),
+                blurRadius: 18,
+                offset: const Offset(0, 6),
               ),
             ],
           ),
-          child: const Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.delete_sweep_rounded, size: 16, color: Colors.black87),
-              SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  'Gim multipemain 2–4 orang',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: Colors.black87,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
+          child: const Icon(Icons.delete_sweep_rounded,
+              size: 30, color: Colors.black87),
         ),
-        const SizedBox(height: 14),
+        const SizedBox(height: 16),
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: center ? Alignment.center : Alignment.centerLeft,
@@ -835,13 +933,14 @@ class _LobbyHomeState extends State<LobbyHome>
         ),
         const SizedBox(height: 10),
         ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+          constraints: const BoxConstraints(maxWidth: 380),
           child: Text(
             'Bangun kamar, kelola limbah, atau timbun kost tetangga!',
             textAlign: textAlign,
-            style: _Ui.body(0.88).copyWith(
+            style: _Ui.body(0.86).copyWith(
               fontSize: 15,
-              shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+              height: 1.45,
+              shadows: const [Shadow(color: Colors.black, blurRadius: 8)],
             ),
           ),
         ),
@@ -854,7 +953,7 @@ class _LobbyHomeState extends State<LobbyHome>
       'Sampahnya! v1.4.9 (2410:2)',
       textAlign: left ? TextAlign.left : TextAlign.center,
       style: TextStyle(
-        color: Colors.white.withValues(alpha: 0.4),
+        color: Colors.white.withValues(alpha: 0.35),
         fontSize: 11,
       ),
     );
@@ -863,7 +962,7 @@ class _LobbyHomeState extends State<LobbyHome>
   /// Panel form: 1) nama → 2) pilih mode → 3) aksi → (error).
   Widget _buildFormPanel({required bool compact}) {
     return _GlassPanel(
-      padding: EdgeInsets.all(compact ? 18 : 26),
+      padding: EdgeInsets.all(compact ? 16 : 22),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -872,16 +971,26 @@ class _LobbyHomeState extends State<LobbyHome>
           const SizedBox(height: 8),
           TextField(
             controller: _nameController,
+            focusNode: _nameFocus,
             maxLength: 18,
+            enabled: !_busy,
             textCapitalization: TextCapitalization.words,
-            textInputAction: TextInputAction.next,
+            textInputAction: _tab == 1 ? TextInputAction.next : TextInputAction.done,
+            onChanged: (_) => _clearError(),
+            onSubmitted: (_) {
+              if (_tab == 1) {
+                _codeFocus.requestFocus();
+              } else {
+                _nameFocus.unfocus();
+              }
+            },
             style: const TextStyle(
               color: Colors.white,
               fontSize: 16,
               fontWeight: FontWeight.w700,
             ),
             decoration: _inputDecoration(
-              hint: 'Mama Kos',
+              hint: 'Contoh: Mama Kos',
               icon: Icons.badge_outlined,
             ),
           ),
@@ -894,10 +1003,17 @@ class _LobbyHomeState extends State<LobbyHome>
             alignment: Alignment.topCenter,
             child: _tab == 0 ? _buildCreateSection() : _buildJoinSection(),
           ),
-          if (_error != null) ...[
-            _Ui.gap16,
-            _ErrorBanner(_error!),
-          ],
+          AnimatedSize(
+            duration: const Duration(milliseconds: 200),
+            curve: Curves.easeOutCubic,
+            alignment: Alignment.topCenter,
+            child: _error == null
+                ? const SizedBox(width: double.infinity)
+                : Padding(
+              padding: const EdgeInsets.only(top: 14),
+              child: _ErrorBanner(_error!),
+            ),
+          ),
         ],
       ),
     );
@@ -909,17 +1025,18 @@ class _LobbyHomeState extends State<LobbyHome>
   }) {
     return InputDecoration(
       hintText: hint,
-      hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.35)),
-      prefixIcon: Icon(icon, color: _Ui.amber),
+      hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.32)),
+      prefixIcon: Icon(icon, color: _Ui.amber, size: 22),
       counterText: '',
       filled: true,
       fillColor: Colors.black.withValues(alpha: 0.28),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(_Ui.radiusField),
         borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(_Ui.radiusField),
         borderSide: const BorderSide(color: _Ui.amber, width: 2),
       ),
     );
@@ -929,8 +1046,8 @@ class _LobbyHomeState extends State<LobbyHome>
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(16),
+        color: Colors.black.withValues(alpha: 0.32),
+        borderRadius: BorderRadius.circular(_Ui.radiusField + 2),
       ),
       child: Row(
         children: [
@@ -965,7 +1082,9 @@ class _LobbyHomeState extends State<LobbyHome>
       label: label,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onTap: () => setState(() {
+        onTap: _busy
+            ? null
+            : () => setState(() {
           _tab = index;
           _error = null;
         }),
@@ -974,7 +1093,7 @@ class _LobbyHomeState extends State<LobbyHome>
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
             color: selected ? _Ui.green : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(_Ui.radiusField - 2),
             boxShadow: selected
                 ? [
               BoxShadow(
@@ -988,7 +1107,8 @@ class _LobbyHomeState extends State<LobbyHome>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 18, color: selected ? Colors.white : Colors.white60),
+              Icon(icon,
+                  size: 18, color: selected ? Colors.white : Colors.white60),
               const SizedBox(width: 7),
               Flexible(
                 child: Text(
@@ -1013,52 +1133,57 @@ class _LobbyHomeState extends State<LobbyHome>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.05),
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
-          ),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Icon(Icons.info_outline, color: _Ui.greenSoft, size: 20),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  'Buat ruangan baru untuk 2–4 pemain, lalu bagikan kodenya ke teman-temanmu.',
-                  style: _Ui.body(0.72).copyWith(fontSize: 12.5),
-                ),
-              ),
-            ],
-          ),
+        Text(
+          'Buat ruangan untuk 2–4 pemain, lalu bagikan kodenya ke teman-temanmu.',
+          style: _Ui.body(0.62).copyWith(fontSize: 12.5),
         ),
-        const SizedBox(height: 16),
+        _Ui.gap12,
         _ActionButton(
-          label: _busy ? 'Membuka lahan…' : 'Buat ruangan baru',
+          label: _busyKey == 'create' ? 'Membuka lahan…' : 'Buat ruangan baru',
           icon: Icons.rocket_launch_rounded,
-          busy: _busy,
+          busy: _busyKey == 'create',
           onPressed: _busy ? null : _createRoom,
         ),
-        const SizedBox(height: 10),
-        _ActionButton(
-          label: _busy ? 'Menyiapkan…' : 'Main sendiri: Kesintasan',
-          icon: Icons.timer_rounded,
-          busy: _busy,
-          onPressed: _busy ? null : _startSurvival,
-        ),
-        const SizedBox(height: 10),
-        _ActionButton(
-          label: 'Papan skor Kesintasan',
-          icon: Icons.emoji_events_rounded,
-          onPressed: _busy
-              ? null
-              : () => Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const SurvivalLeaderboardScreen(),
-            ),
-          ),
+        _Ui.gap16,
+        const _OrDivider('atau main sendiri'),
+        _Ui.gap16,
+        LayoutBuilder(
+          builder: (context, c) {
+            final survival = _ActionButton(
+              label: _busyKey == 'survival' ? 'Menyiapkan…' : 'Kesintasan',
+              icon: Icons.timer_rounded,
+              busy: _busyKey == 'survival',
+              outlined: true,
+              height: 48,
+              onPressed: _busy ? null : _startSurvival,
+            );
+            final board = _ActionButton(
+              label: 'Papan skor',
+              icon: Icons.emoji_events_rounded,
+              outlined: true,
+              height: 48,
+              onPressed: _busy
+                  ? null
+                  : () => Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const SurvivalLeaderboardScreen(),
+                ),
+              ),
+            );
+            if (c.maxWidth < 280) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [survival, _Ui.gap8, board],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: survival),
+                const SizedBox(width: 10),
+                Expanded(child: board),
+              ],
+            );
+          },
         ),
       ],
     );
@@ -1068,12 +1193,17 @@ class _LobbyHomeState extends State<LobbyHome>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        const Text('Kode ruangan', style: _Ui.label),
+        _Ui.gap8,
         TextField(
           controller: _codeController,
+          focusNode: _codeFocus,
           maxLength: 6,
+          enabled: !_busy,
           textAlign: TextAlign.center,
           textCapitalization: TextCapitalization.characters,
           textInputAction: TextInputAction.done,
+          onChanged: (_) => _clearError(),
           onSubmitted: (_) {
             if (!_busy) _joinRoom();
           },
@@ -1087,31 +1217,38 @@ class _LobbyHomeState extends State<LobbyHome>
             letterSpacing: 8,
           ),
           decoration: InputDecoration(
-            hintText: 'Kode 6 digit',
+            hintText: '• • • • • •',
             hintStyle: TextStyle(
-              color: Colors.white.withValues(alpha: 0.28),
-              fontSize: 15,
+              color: Colors.white.withValues(alpha: 0.22),
+              fontSize: 18,
               fontWeight: FontWeight.w500,
-              letterSpacing: 1,
+              letterSpacing: 4,
             ),
             counterText: '',
             filled: true,
-            fillColor: Colors.black.withValues(alpha: 0.35),
+            fillColor: Colors.black.withValues(alpha: 0.28),
+            contentPadding: const EdgeInsets.symmetric(vertical: 16),
             border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(_Ui.radiusField),
               borderSide: BorderSide.none,
             ),
             focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(16),
+              borderRadius: BorderRadius.circular(_Ui.radiusField),
               borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 2),
             ),
           ),
         ),
-        const SizedBox(height: 16),
+        const SizedBox(height: 6),
+        Text(
+          'Minta kode 6 karakter dari pembuat ruangan.',
+          textAlign: TextAlign.center,
+          style: _Ui.body(0.55).copyWith(fontSize: 12),
+        ),
+        _Ui.gap16,
         _ActionButton(
-          label: _busy ? 'Menyambungkan…' : 'Gabung sekarang',
+          label: _busyKey == 'join' ? 'Menyambungkan…' : 'Gabung sekarang',
           icon: Icons.login_rounded,
-          busy: _busy,
+          busy: _busyKey == 'join',
           background: _Ui.greenBright,
           foreground: Colors.white,
           onPressed: _busy ? null : _joinRoom,
@@ -1389,13 +1526,7 @@ class _RoomLobbyState extends State<RoomLobby>
       'editing' => ('Mengedit', _Ui.amber),
       _ => ('Belum dipilih', Colors.white54),
     };
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-      ),
+    return _SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1404,31 +1535,15 @@ class _RoomLobbyState extends State<RoomLobby>
               const Icon(Icons.palette_rounded, size: 18, color: _Ui.amber),
               const SizedBox(width: 8),
               const Expanded(child: Text('Tampilan', style: _Ui.label)),
-              Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
+              _Pill(label: label, color: color),
             ],
           ),
           const SizedBox(height: 6),
           Text(
-            'Pakai tampilan bawaan, atau ubah karakter & bangunanmu di ruang '
-                'kustomisasi bersama pemain lain.',
-            style: _Ui.body(0.6),
+            'Pakai tampilan bawaan, atau ubah karakter & bangunanmu bersama pemain lain.',
+            style: _Ui.body(0.58).copyWith(fontSize: 12.5),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           Row(
             children: [
               Expanded(
@@ -1440,7 +1555,7 @@ class _RoomLobbyState extends State<RoomLobby>
                     side: BorderSide(
                       color: status == 'default'
                           ? _Ui.amber
-                          : Colors.white.withValues(alpha: 0.3),
+                          : Colors.white.withValues(alpha: 0.22),
                       width: status == 'default' ? 2 : 1,
                     ),
                     minimumSize: const Size.fromHeight(46),
@@ -1456,7 +1571,7 @@ class _RoomLobbyState extends State<RoomLobby>
                 child: FilledButton.icon(
                   onPressed: _busy || me == null ? null : _openCustomize,
                   style: FilledButton.styleFrom(
-                    backgroundColor: _Ui.greenBright,
+                    backgroundColor: _Ui.green,
                     foregroundColor: Colors.white,
                     minimumSize: const Size.fromHeight(46),
                     shape: RoundedRectangleBorder(
@@ -1465,6 +1580,8 @@ class _RoomLobbyState extends State<RoomLobby>
                   icon: const Icon(Icons.brush_rounded, size: 18),
                   label: Text(
                     status == 'done' ? 'Ubah lagi' : 'Kustomisasi',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -1472,7 +1589,7 @@ class _RoomLobbyState extends State<RoomLobby>
             ],
           ),
           if (others.isNotEmpty) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Row(
               children: [
                 const SizedBox(
@@ -1485,7 +1602,7 @@ class _RoomLobbyState extends State<RoomLobby>
                   child: Text(
                     'Menunggu ${others.map((p) => p['player_name']).join(', ')} '
                         'selesai kustomisasi…',
-                    style: _Ui.body(0.7),
+                    style: _Ui.body(0.7).copyWith(fontSize: 12.5),
                   ),
                 ),
                 TextButton(
@@ -1531,9 +1648,12 @@ class _RoomLobbyState extends State<RoomLobby>
     super.dispose();
   }
 
+
   // ------------------------------------------------------------------
   //  UI
   // ------------------------------------------------------------------
+
+  static const int _maxPlayers = 4;
 
   @override
   Widget build(BuildContext context) {
@@ -1563,8 +1683,8 @@ class _RoomLobbyState extends State<RoomLobby>
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
                   colors: [
-                    _Ui.bg.withValues(alpha: 0.72),
-                    _Ui.bg.withValues(alpha: 0.88),
+                    _Ui.bg.withValues(alpha: 0.74),
+                    _Ui.bg.withValues(alpha: 0.90),
                   ],
                 ),
               ),
@@ -1587,8 +1707,8 @@ class _RoomLobbyState extends State<RoomLobby>
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          _buildTopBar(),
-                          const SizedBox(height: 14),
+                          _buildTopBar(allReady),
+                          _Ui.gap12,
                           Expanded(
                             child: wide
                                 ? _buildWideBody(
@@ -1609,35 +1729,46 @@ class _RoomLobbyState extends State<RoomLobby>
     );
   }
 
-  /// Ponsel: kode → jalan → tombol. Bila layar pendek, seluruhnya bisa digulir
-  /// dan jalan diberi tinggi minimum supaya tidak gepeng.
+  /// Ponsel: konten bisa digulir (kode → jalan → pemain → tampilan),
+  /// sedangkan bar aksi (Siap / Mulai) selalu menempel di bawah.
   Widget _buildNarrowBody(
       String? userId, bool ready, Map<String, dynamic>? me, bool isHost,
       bool allReady, BoxConstraints c) {
-    final controls = _buildControls(ready, me, isHost, allReady);
-    // Tinggi jalan = sisa layar, tapi tidak kurang dari 220.
-    final streetH = max(220.0, c.maxHeight * 0.34);
-    return SingleChildScrollView(
-      physics: const ClampingScrollPhysics(),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildRoomCodeBanner(),
-          const SizedBox(height: 14),
-          SizedBox(height: streetH, child: _buildStreetArea(userId)),
-          const SizedBox(height: 12),
-          ...controls,
-        ],
-      ),
+    final streetH = (c.maxHeight * 0.34).clamp(200.0, 320.0).toDouble();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Expanded(
+          child: SingleChildScrollView(
+            physics: const ClampingScrollPhysics(),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildRoomCodeBanner(),
+                _Ui.gap12,
+                SizedBox(height: streetH, child: _buildStreetArea(userId)),
+                _Ui.gap12,
+                _buildPlayerSummary(columns: 2),
+                _Ui.gap12,
+                _buildStyleCard(me),
+                _Ui.gap8,
+              ],
+            ),
+          ),
+        ),
+        _Ui.gap8,
+        _buildActionBar(ready, me, isHost, allReady),
+      ],
     );
   }
 
-  /// Layar lebar: jalan di kiri; kode + tombol di panel kanan (lebar tetap).
+  /// Layar lebar: jalan di kiri; panel kanan berisi kode, pemain, tampilan,
+  /// dengan bar aksi menempel di dasar panel.
   Widget _buildWideBody(
       String? userId, bool ready, Map<String, dynamic>? me, bool isHost,
       bool allReady, BoxConstraints c) {
-    final panelW = _Ui.fluid(c.maxWidth, 300, _Ui.sidePanel,
-        from: 640, to: 1000);
+    final panelW =
+    _Ui.fluid(c.maxWidth, 300, _Ui.sidePanel, from: 640, to: 1000);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1645,46 +1776,60 @@ class _RoomLobbyState extends State<RoomLobby>
         const SizedBox(width: 20),
         SizedBox(
           width: panelW,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildRoomCodeBanner(),
-                const SizedBox(height: 16),
-                _buildPlayerSummary(),
-                const SizedBox(height: 16),
-                ..._buildControls(ready, me, isHost, allReady),
-              ],
-            ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _buildRoomCodeBanner(),
+                      _Ui.gap12,
+                      _buildPlayerSummary(columns: 1),
+                      _Ui.gap12,
+                      _buildStyleCard(me),
+                    ],
+                  ),
+                ),
+              ),
+              _Ui.gap12,
+              _buildActionBar(ready, me, isHost, allReady),
+            ],
           ),
         ),
       ],
     );
   }
 
-  Widget _buildTopBar() {
+  Widget _buildTopBar(bool allReady) {
+    final title = allReady
+        ? 'Semua pemain siap!'
+        : (_players.length < 2
+        ? 'Menunggu pemain lain…'
+        : 'Menunggu semua siap…');
     return Row(
       children: [
         IconButton.filledTonal(
           tooltip: 'Kembali',
           style: IconButton.styleFrom(
-            backgroundColor: Colors.white.withValues(alpha: 0.12),
+            backgroundColor: Colors.white.withValues(alpha: 0.10),
             foregroundColor: Colors.white,
           ),
           onPressed: () => Navigator.of(context).maybePop(),
           icon: const Icon(Icons.arrow_back_rounded),
         ),
         const SizedBox(width: 12),
-        const Expanded(
+        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Ruang tunggu', style: _Ui.label),
+              const Text('Ruang tunggu', style: _Ui.label),
               Text(
-                'Menunggu pemain lain…',
+                title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: _Ui.heading,
+                style: _Ui.heading.copyWith(fontSize: 19),
               ),
             ],
           ),
@@ -1693,7 +1838,7 @@ class _RoomLobbyState extends State<RoomLobby>
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.12),
+            color: Colors.white.withValues(alpha: 0.10),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Row(
@@ -1702,7 +1847,7 @@ class _RoomLobbyState extends State<RoomLobby>
               const Icon(Icons.people_alt_rounded, size: 16, color: _Ui.amber),
               const SizedBox(width: 6),
               Text(
-                '${_players.length}/4',
+                '${_players.length}/$_maxPlayers',
                 style: const TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.w900,
@@ -1715,225 +1860,335 @@ class _RoomLobbyState extends State<RoomLobby>
     );
   }
 
-  /// Ringkasan pemain (hanya di layout lebar): siapa host, siapa sudah siap.
-  Widget _buildPlayerSummary() {
+  Widget _buildRoomCodeBanner() {
+    return Semantics(
+      button: true,
+      label: 'Kode ruangan ${widget.roomCode}, ketuk untuk menyalin',
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: _copyCode,
+          borderRadius: BorderRadius.circular(20),
+          child: Ink(
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(
+                colors: [Color(0xFF1E3C2B), Color(0xFF14281D)],
+              ),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _Ui.amber.withValues(alpha: 0.35)),
+            ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Kode ruangan · bagikan ke teman',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.68),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          widget.roomCode,
+                          style: const TextStyle(
+                            color: _Ui.amber,
+                            fontSize: 30,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 6,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Container(
+                  padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: _Ui.amber.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.copy_rounded, color: _Ui.amber, size: 18),
+                      SizedBox(width: 6),
+                      Text(
+                        'Salin',
+                        style: TextStyle(
+                          color: _Ui.amber,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 13,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Daftar slot pemain (selalu [_maxPlayers] slot; yang kosong diberi
+  /// penanda "Menunggu…").
+  Widget _buildPlayerSummary({required int columns}) {
     final list = _ordered;
     final userId = _db.auth.currentUser?.id;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
-      ),
+    final readyCount = list.where((p) => p['is_ready'] == true).length;
+    final slots = <Map<String, dynamic>?>[
+      for (var i = 0; i < _maxPlayers; i++) i < list.length ? list[i] : null,
+    ];
+    return _SurfaceCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Text('Pemain', style: _Ui.label),
-          const SizedBox(height: 8),
-          if (list.isEmpty)
-            Text('Belum ada pemain.', style: _Ui.body(0.6))
-          else
-            for (final p in list)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    Icon(
-                      p['style_status'] == 'editing'
-                          ? Icons.brush_rounded
-                          : (p['is_ready'] == true
-                          ? Icons.check_circle_rounded
-                          : Icons.hourglass_bottom_rounded),
-                      size: 18,
-                      color: p['is_ready'] == true
-                          ? _Ui.greenSoft
-                          : Colors.amber.shade300,
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '${p['player_name'] ?? 'Pemain'}'
-                            '${p['player_id'].toString() == userId ? ' (Anda)' : ''}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ),
-                    if (p['player_id'].toString() == _hostId)
-                      const Icon(Icons.workspace_premium_rounded,
-                          size: 16, color: _Ui.amber),
-                  ],
+          Row(
+            children: [
+              const Expanded(child: Text('Pemain', style: _Ui.label)),
+              Text(
+                '$readyCount/${list.length} siap',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.6),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          LayoutBuilder(
+            builder: (context, c) {
+              const gap = 8.0;
+              final w = columns == 1 ? c.maxWidth : (c.maxWidth - gap) / 2;
+              return Wrap(
+                spacing: gap,
+                runSpacing: gap,
+                children: [
+                  for (final p in slots)
+                    SizedBox(width: w, child: _slotChip(p, userId)),
+                ],
+              );
+            },
+          ),
         ],
       ),
     );
   }
 
-  /// Tombol SIAP + MULAI + status + error. Dipakai di kedua layout.
-  List<Widget> _buildControls(
-      bool ready, Map<String, dynamic>? me, bool isHost, bool allReady) {
-    return [
-      if (_error != null) ...[
-        _ErrorBanner(_error!),
-        const SizedBox(height: 12),
-      ],
-      _buildStyleCard(me),
-      const SizedBox(height: 12),
-      LayoutBuilder(
-        builder: (context, c) {
-          final readyBtn = _ActionButton(
-            label: _busy
-                ? 'Memproses…'
-                : ready
-                ? 'Batal siap'
-                : 'Saya siap!',
-            icon:
-            ready ? Icons.pause_circle_outline : Icons.check_circle_rounded,
-            background: ready ? const Color(0xFF37474F) : _Ui.greenBright,
-            foreground: Colors.white,
-            onPressed: _busy || me == null ? null : _toggleReady,
-          );
-          final startBtn = _ActionButton(
-            label: 'Mulai game',
-            icon: Icons.play_arrow_rounded,
-            background: allReady ? _Ui.amber : Colors.white.withValues(alpha: 0.15),
-            foreground: allReady ? Colors.black87 : Colors.white54,
-            onPressed: _busy ? null : _startGame,
-          );
-          if (!isHost) return readyBtn;
-          // Di ruang sempit tumpuk vertikal agar teks tombol tidak terpotong.
-          if (c.maxWidth < 340) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [readyBtn, const SizedBox(height: 10), startBtn],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: readyBtn),
-              const SizedBox(width: 12),
-              Expanded(child: startBtn),
-            ],
-          );
-        },
-      ),
-      const SizedBox(height: 8),
-      Text(
-        _othersEditing.isNotEmpty
-            ? 'Menunggu pemain lain selesai kustomisasi…'
-            : isHost
-            ? (allReady
-            ? 'Semua pemain sudah siap! Tekan Mulai game.'
-            : 'Menunggu minimal 2 pemain dan semuanya menekan Saya siap.')
-            : 'Menunggu host memulai pertandingan…',
-        textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.65),
-          fontSize: 12,
+  Widget _slotChip(Map<String, dynamic>? p, String? userId) {
+    if (p == null) {
+      return Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.10)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.person_add_alt_1_rounded,
+                size: 16, color: Colors.white.withValues(alpha: 0.28)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Menunggu…',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.35),
+                  fontSize: 12.5,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    final pid = p['player_id'].toString();
+    final ready = p['is_ready'] == true;
+    final editing = p['style_status'] == 'editing';
+    final isMe = pid == userId;
+    final isHost = pid == _hostId;
+    final accent = ready ? _Ui.greenSoft : Colors.amber.shade300;
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: BoxDecoration(
+        color: ready
+            ? const Color(0xFF43A047).withValues(alpha: 0.14)
+            : Colors.white.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: ready
+              ? const Color(0xFF66BB6A).withValues(alpha: 0.5)
+              : Colors.white.withValues(alpha: 0.08),
         ),
       ),
-    ];
+      child: Row(
+        children: [
+          KostHeadIcon(
+            look: kostLookFor(pid, KostStyle.fromJson(p['style'])),
+            size: 24,
+            ring: isMe ? _Ui.amber : null,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '${p['player_name'] ?? 'Pemain'}${isMe ? ' (Anda)' : ''}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: isMe ? _Ui.amber : Colors.white,
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          if (isHost)
+            const Padding(
+              padding: EdgeInsets.only(left: 4),
+              child: Icon(Icons.workspace_premium_rounded,
+                  size: 15, color: _Ui.amber),
+            ),
+          const SizedBox(width: 6),
+          Icon(
+            editing
+                ? Icons.brush_rounded
+                : (ready
+                ? Icons.check_circle_rounded
+                : Icons.hourglass_bottom_rounded),
+            size: 16,
+            color: accent,
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Bar aksi tetap di bawah: pesan status, error, lalu tombol Siap / Mulai.
+  Widget _buildActionBar(
+      bool ready, Map<String, dynamic>? me, bool isHost, bool allReady) {
+    final (IconData hintIcon, String hint, Color hintColor) = _othersEditing.isNotEmpty
+        ? (
+    Icons.brush_rounded,
+    'Menunggu pemain lain selesai kustomisasi…',
+    _Ui.amber
+    )
+        : isHost
+        ? (allReady
+        ? (
+    Icons.check_circle_rounded,
+    'Semua pemain sudah siap! Tekan Mulai game.',
+    _Ui.greenSoft
+    )
+        : (
+    Icons.hourglass_bottom_rounded,
+    'Butuh minimal 2 pemain, dan semuanya menekan Saya siap.',
+    Colors.white70
+    ))
+        : (
+    Icons.hourglass_bottom_rounded,
+    'Menunggu host memulai pertandingan…',
+    Colors.white70
+    );
+
+    final readyBtn = _ActionButton(
+      label: _busy
+          ? 'Memproses…'
+          : ready
+          ? 'Batal siap'
+          : 'Saya siap!',
+      icon: ready ? Icons.pause_circle_outline : Icons.check_circle_rounded,
+      background: ready ? const Color(0xFF37474F) : _Ui.greenBright,
+      foreground: Colors.white,
+      onPressed: _busy || me == null ? null : _toggleReady,
+    );
+    final startBtn = _ActionButton(
+      label: 'Mulai game',
+      icon: Icons.play_arrow_rounded,
+      background: _Ui.amber,
+      foreground: Colors.black87,
+      onPressed: _busy || !allReady ? null : _startGame,
+    );
+
+    return _GlassPanel(
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_error != null) ...[
+            _ErrorBanner(_error!),
+            _Ui.gap12,
+          ],
+          Row(
+            children: [
+              Icon(hintIcon, size: 16, color: hintColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  hint,
+                  style: TextStyle(
+                    color: hintColor == Colors.white70
+                        ? Colors.white.withValues(alpha: 0.65)
+                        : hintColor,
+                    fontSize: 12.5,
+                    height: 1.3,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          _Ui.gap12,
+          LayoutBuilder(
+            builder: (context, c) {
+              if (!isHost) return readyBtn;
+              // Di ruang sempit tumpuk vertikal agar teks tombol tidak terpotong.
+              if (c.maxWidth < 300) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [readyBtn, _Ui.gap8, startBtn],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(child: readyBtn),
+                  const SizedBox(width: 10),
+                  Expanded(child: startBtn),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildStreetArea(String? userId) {
-    return _loading
-        ? const Center(child: CircularProgressIndicator())
-        : _buildStreet(userId);
-  }
-
-  Widget _buildRoomCodeBanner() {
-    return Semantics(
-      button: true,
-      label: 'Kode ruangan ${widget.roomCode}, ketuk untuk menyalin',
-      child: InkWell(
-        onTap: _copyCode,
-        borderRadius: BorderRadius.circular(22),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              colors: [Color(0xFF1E3C2B), Color(0xFF14281D)],
-            ),
-            borderRadius: BorderRadius.circular(22),
-            border: Border.all(
-              color: _Ui.amber.withValues(alpha: 0.45),
-              width: 1.5,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.35),
-                blurRadius: 16,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Kode ruangan',
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.7),
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    FittedBox(
-                      fit: BoxFit.scaleDown,
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        widget.roomCode,
-                        style: const TextStyle(
-                          color: _Ui.amber,
-                          fontSize: 32,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 6,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 10),
-              Container(
-                padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: _Ui.amber.withValues(alpha: 0.16),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: _Ui.amber.withValues(alpha: 0.4)),
-                ),
-                child: const Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.copy_rounded, color: _Ui.amber, size: 18),
-                    SizedBox(width: 6),
-                    Text(
-                      'Salin',
-                      style: TextStyle(
-                        color: _Ui.amber,
-                        fontWeight: FontWeight.w800,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+    if (_loading) {
+      return Container(
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.2),
+          borderRadius: BorderRadius.circular(22),
         ),
-      ),
-    );
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    return _buildStreet(userId);
   }
 
   KostSceneData _houseFor(Map<String, dynamic> p, int i) {
