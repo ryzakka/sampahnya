@@ -322,7 +322,7 @@ class KostPainter extends CustomPainter {
 
     final p = _c01(d.pollution / 100);
     _drawSky(canvas, t, p);
-    _drawHills(canvas, p);
+    _drawHills(canvas, p, t);
     _drawSkyline(canvas, p);
     _drawTrees(canvas, t, p);
     _drawGodRays(canvas, t, p);
@@ -509,7 +509,7 @@ extension KostPainterScenery on KostPainter {
     _setView(view);
     final p = _c01(d.pollution / 100);
     _drawSky(canvas, t, p);
-    _drawHills(canvas, p);
+    _drawHills(canvas, p, t);
     _drawSkyline(canvas, p);
     _drawTrees(canvas, t, p);
     _drawGodRays(canvas, t, p);
@@ -730,8 +730,8 @@ extension KostPainterScenery on KostPainter {
   void _drawSky(Canvas canvas, double t, double p) {
     final isRain = d.worldEvent == 'rain_flood';
     final heavy = _c01(p * 1.2 + (d.smog ? 0.25 : 0) + (isRain ? 0.35 : 0));
-    var top = _mix(const Color(0xFF4CA8E0), const Color(0xFF5D666B), heavy);
-    var bottom = _mix(const Color(0xFFE3F5FB), const Color(0xFFA09C94), heavy);
+    var top = _mix(d.biome.skyTop, const Color(0xFF5D666B), heavy);
+    var bottom = _mix(d.biome.skyBottom, const Color(0xFFA09C94), heavy);
     final night = _night;
     final dusk = _dusk;
     if (d.dayPhase != null) {
@@ -880,8 +880,12 @@ extension KostPainterScenery on KostPainter {
     }
   }
 
-  void _drawHills(Canvas canvas, double p) {
+  void _drawHills(Canvas canvas, double p, [double t = 0]) {
     if (d.compact) return;
+    if (d.biome != KostBiome.kota) {
+      _drawBiomeFar(canvas, t, p);
+      return;
+    }
     for (var layer = 0; layer < 2; layer++) {
       final c = layer == 0
           ? _mix(const Color(0xFFA9D6B5), const Color(0xFF8E8A70), p)
@@ -908,6 +912,7 @@ extension KostPainterScenery on KostPainter {
   }
 
   void _drawSkyline(Canvas canvas, double p) {
+    if (d.biome != KostBiome.kota) return;
     final c = _mix(const Color(0xFFB5CFDB), const Color(0xFF8E857A), p);
     final start = (_vl / 34).floor();
     final end = (_vr / 34).ceil();
@@ -952,7 +957,9 @@ extension KostPainterScenery on KostPainter {
     final canopy2 =
     _mix(const Color(0xFF66BB6A), const Color(0xFFA09A5A), p * 1.2);
 
-    for (var k = start; k < end; k++) {
+    final cityTrees = d.biome == KostBiome.kota;
+    if (!cityTrees) _drawBiomeTrees(canvas, t, p);
+    for (var k = start; k < (cityTrees ? end : start); k++) {
       final h = _hh(k + 77);
       final x = k * 90.0 + 20 + (h % 30);
       if (x > -14 && x < _streetW + 14) continue;
@@ -986,19 +993,14 @@ extension KostPainterScenery on KostPainter {
   }
 
   void _drawGround(Canvas canvas, double t, double p) {
-    final grass = _mix(const Color(0xFF8DBB7A), const Color(0xFF7A7A5A), p);
+    final grass = _mix(d.biome.grass, const Color(0xFF7A7A5A), p);
     _p
       ..style = PaintingStyle.fill
       ..color = grass;
     canvas.drawRect(Rect.fromLTRB(_vl, _gy - 4, _vr, _gy + 6), _p);
 
     if (p < 0.5 && !d.compact) {
-      const flowers = [
-        Color(0xFFFF8A80),
-        Color(0xFFFFF176),
-        Color(0xFFCE93D8),
-        Color(0xFFFFFFFF)
-      ];
+      final flowers = d.biome.specks;
       final s = (_vl / 17).floor();
       final e = (_vr / 17).ceil();
       for (var k = s; k < e; k++) {
@@ -1010,7 +1012,7 @@ extension KostPainterScenery on KostPainter {
       }
     }
 
-    _p.color = _mix(const Color(0xFFD0C9B8), const Color(0xFFA39C8C), p);
+    _p.color = _mix(d.biome.yard, const Color(0xFFA39C8C), p);
     canvas.drawRect(Rect.fromLTRB(_vl, _gy + 6, _vr, 270), _p);
     _p
       ..style = PaintingStyle.stroke

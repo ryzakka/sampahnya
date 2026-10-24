@@ -18,6 +18,7 @@ part 'kost_painter_life.dart';
 part 'kost_street.dart';
 part 'kost_painter_warehouse.dart';
 part 'kost_painter_pets.dart';
+part 'kost_painter_biome.dart';
 
 final Stopwatch _clock = Stopwatch()..start();
 
@@ -224,12 +225,16 @@ class KostSceneData {
     this.dayPhase,
     this.warehouse,
     this.pets,
+    this.biome = KostBiome.kota,
   });
 
   /// Gudang sampah di sisi kanan kost; null = tidak digambar (lobi dll).
   final WhLive? warehouse;
   /// Hewan peliharaan (maks 2) yang hidup di halaman; null = tidak digambar.
   final KostPetCrew? pets;
+
+  /// Tema latar belakang ruangan ini (acak tapi stabil dari id ruangan).
+  final KostBiome biome;
 
 
   /// Fase siang-malam 0..1 (0 = tengah malam, 0.25 = matahari terbit,
@@ -327,6 +332,7 @@ class KostSceneData {
         dayPhase: clearDayPhase ? null : dayPhase,
         warehouse: warehouse,
         pets: pets,
+        biome: biome,
       );
 
   /// Salinan dengan [compact] / [facingRight] diganti (dipakai mode jalan).
@@ -362,6 +368,7 @@ class KostSceneData {
     dayPhase: dayPhase,
     warehouse: warehouse,
     pets: pets,
+    biome: biome,
   );
 }
 
