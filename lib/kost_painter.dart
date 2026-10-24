@@ -338,6 +338,7 @@ class KostPainter extends CustomPainter {
     _drawBags(canvas);
     _drawResidents(canvas, t);
     _drawOwner(canvas, t);
+    _drawPets(canvas, t);
     _drawRats(canvas, t);
     _drawStinkAndFlies(canvas, t);
     _drawCrows(canvas, t);
@@ -618,6 +619,7 @@ extension KostPainterScenery on KostPainter {
     _drawBags(canvas);
     _drawResidents(canvas, t);
     _drawOwner(canvas, t);
+    _drawPets(canvas, t);
     _drawRats(canvas, t);
     _drawStinkAndFlies(canvas, t);
     _drawCrows(canvas, t);

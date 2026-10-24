@@ -9,6 +9,7 @@ import 'cinematics.dart';
 import 'kost_scene.dart';
 import 'kost_style.dart';
 import 'kost_warehouse.dart';
+import 'kost_pets.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.roomId, required this.roomCode});
@@ -125,6 +126,19 @@ class _GameScreenState extends State<GameScreen>
   // --- gudang sampah (sisi kanan kost) ---
   /// Baris `player_warehouse` per pemain (tabel dari warehouse.sql).
   final Map<String, Map<String, dynamic>> _wh = {};
+
+  // --- hewan peliharaan ---
+  /// Baris `player_pets`: pemain -> (slot -> baris).
+  final Map<String, Map<int, Map<String, dynamic>>> _petRows = {};
+  final Map<String, KostPetCrew> _petCrews = {};
+  int _petSlotSel = 1;
+
+  KostPetCrew _petsFor(String id) {
+    final c =
+    _petCrews.putIfAbsent(id, () => KostPetCrew(seed: kostSeedFor(id)));
+    c.loadout = PetLoadout.fromRows((_petRows[id] ?? const {}).values);
+    return c;
+  }
 
   // --- jalan (kost berderet) & kamera zoom ---
   final KostStreetCamera _cam = KostStreetCamera();
@@ -312,6 +326,36 @@ class _GameScreenState extends State<GameScreen>
         if (pid == _me && after > before && before > 0) {
           _showNotice('Gudang naik jadi ${Wh.tierNames[after.clamp(0, Wh.maxTier).toInt()]}!',
               icon: Icons.warehouse_rounded, color: const Color(0xFFFB8C00));
+        }
+      },
+    )
+        .onPostgresChanges(
+      event: PostgresChangeEvent.all,
+      schema: 'public',
+      table: 'player_pets',
+      filter: roomFilter('room_id'),
+      callback: (p) {
+        if (!mounted) return;
+        final del = p.eventType == PostgresChangeEvent.delete;
+        final r = del ? p.oldRecord : p.newRecord;
+        final pid = r['player_id'] as String?;
+        final slot = (r['slot'] as num?)?.toInt();
+        if (pid == null || slot == null) return;
+        final before = _petRows[pid]?[slot]?['pet_key'];
+        setState(() {
+          if (del) {
+            _petRows[pid]?.remove(slot);
+          } else {
+            (_petRows[pid] ??= {})[slot] = Map<String, dynamic>.from(r);
+          }
+        });
+        final key = r['pet_key'] as String?;
+        if (!del && pid == _me && key != null && key != before) {
+          final def = Pets.byKey(key);
+          if (def != null) {
+            _showNotice('${def.name} bergabung di kost Anda!',
+                icon: Icons.pets, color: const Color(0xFFEC407A));
+          }
         }
       },
     )
@@ -785,6 +829,13 @@ class _GameScreenState extends State<GameScreen>
             .select()
             .eq('room_id', widget.roomId);
       } catch (_) {}
+      List<dynamic> petRows = const [];
+      try {
+        petRows = await _db
+            .from('player_pets')
+            .select()
+            .eq('room_id', widget.roomId);
+      } catch (_) {}
       final ev = await _db
           .from('game_events')
           .select()
@@ -807,6 +858,11 @@ class _GameScreenState extends State<GameScreen>
         for (final r in whRows) {
           final m = Map<String, dynamic>.from(r as Map);
           _wh[m['player_id'] as String] = m;
+        }
+        _petRows.clear();
+        for (final r in petRows) {
+          final m = Map<String, dynamic>.from(r as Map);
+          (_petRows[m['player_id'] as String] ??= {})[(m['slot'] as num).toInt()] = m;
         }
         for (final n in names) {
           _names[n['player_id'] as String] = n['player_name'] as String;
@@ -1319,6 +1375,7 @@ class _GameScreenState extends State<GameScreen>
       seed: id.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000),
       dayPhase: _dayPhase,
       warehouse: wh,
+      pets: compact ? null : _petsFor(id),
     );
   }
 
@@ -2885,9 +2942,22 @@ class _GameScreenState extends State<GameScreen>
         busy: false,
         onTap: canAct ? _openWarehouse : null,
       ),
+      _ActionButton(
+        mode: mode,
+        icon: Icons.pets,
+        color: Colors.pinkAccent,
+        title: 'Hewan',
+        shortTitle: 'Hewan',
+        shortSub: '${_petRows[_me]?.length ?? 0}/${Pets.maxSlots}',
+        subtitle: (_petRows[_me]?.isEmpty ?? true)
+            ? 'Adopsi · mulai ${Pets.all.first.price}'
+            : 'Slot ${_petRows[_me]!.length}/${Pets.maxSlots}',
+        busy: false,
+        onTap: canAct ? _openPets : null,
+      ),
     ];
 
-    // Selalu satu baris tujuh tombol; tinggi mengikuti mode.
+    // Selalu satu baris delapan tombol; tinggi mengikuti mode.
     final h = mode == 1 ? 60.0 : (short ? 46.0 : 76.0);
     final gap = mode == 1 ? 4.0 : 6.0;
     return _glass(
@@ -3446,6 +3516,263 @@ class _GameScreenState extends State<GameScreen>
       pourLeft: _remaining(r['pour_ready_at']),
       pourAgeMs: pourAge,
       lastPourAmount: _num(r['last_pour_amount']),
+    );
+  }
+
+  void _openPets() {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      constraints: const BoxConstraints(maxWidth: 520),
+      backgroundColor: const Color(0xFF1A2820),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (ctx) => AnimatedBuilder(
+        animation: _anim,
+        builder: (ctx, _) => SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
+              child: _petsPanel(),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _renamePet(PetSlot p) async {
+    final ctl = TextEditingController(text: p.nickname ?? '');
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Nama ${p.def.species.label}'),
+        content: TextField(
+          controller: ctl,
+          maxLength: 14,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: 'Huruf/angka, maks 14'),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Batal')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, ctl.text),
+              child: const Text('Simpan')),
+        ],
+      ),
+    );
+    ctl.dispose();
+    if (name != null) {
+      await _act('rename_pet', {'p_slot': p.slot, 'p_name': name});
+    }
+  }
+
+  Widget _petsPanel() {
+    final me = _states[_me];
+    if (me == null || me['eliminated_at'] != null) {
+      return const SizedBox(
+        height: 120,
+        child: Center(
+          child: Text('Hewan hanya untuk pemain yang masih hidup.',
+              style: TextStyle(color: Colors.white70)),
+        ),
+      );
+    }
+    final money = _live(me).money;
+    final finished = _room['status'] == 'finished';
+    final canAct = !finished && _activeRpc == null && !_cine.blocksInput;
+    final loadout = _petsFor(_me).loadout;
+    final sel = _petSlotSel;
+    final cur = loadout.inSlot(sel);
+    const gold = Color(0xFFFFCA28);
+    const rc = [Color(0xFF90A4AE), Color(0xFF64B5F6), Color(0xFFFFCA28)];
+
+    Widget slotBox(int slot) {
+      final p = loadout.inSlot(slot);
+      final on = sel == slot;
+      return Expanded(
+        child: GestureDetector(
+          onTap: () => setState(() => _petSlotSel = slot),
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: on ? 0.14 : 0.06),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                  color: on ? gold : Colors.white24, width: on ? 2 : 1),
+            ),
+            child: Column(
+              children: [
+                Text(p?.def.species.emoji ?? '➕',
+                    style: const TextStyle(fontSize: 30)),
+                const SizedBox(height: 4),
+                Text(p?.displayName ?? 'Slot $slot kosong',
+                    style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 13)),
+                Text(
+                    p == null
+                        ? 'Pilih hewan di bawah'
+                        : '${p.def.variant} · ${p.def.perkLine}',
+                    textAlign: TextAlign.center,
+                    style:
+                    const TextStyle(color: Colors.white70, fontSize: 11)),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    Widget petCard(PetDef def) {
+      final why = loadout.whyCannotBuy(def, sel, money);
+      final owned = cur?.def.key == def.key;
+      final net = def.price - (cur?.def.refund ?? 0);
+      final ok = why == null && canAct;
+      return Expanded(
+        child: Padding(
+          padding: const EdgeInsets.all(3),
+          child: AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: (ok || owned) ? 1 : 0.5,
+            child: Material(
+              color: rc[def.rarity].withValues(alpha: 0.16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(
+                    color: rc[def.rarity].withValues(alpha: owned ? 1 : 0.55),
+                    width: owned ? 2 : 1),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: owned
+                    ? null
+                    : ok
+                    ? () => _act('buy_pet',
+                    {'p_pet_key': def.key, 'p_slot': sel})
+                    : (why == null ? null : () => _toast(why, error: true)),
+                child: Padding(
+                  padding:
+                  const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          for (final c in [def.body, def.accent])
+                            Container(
+                              width: 12,
+                              height: 12,
+                              margin: const EdgeInsets.symmetric(horizontal: 1),
+                              decoration: BoxDecoration(
+                                  color: c,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(color: Colors.white38)),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(def.variant,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12)),
+                      Text(def.rarityName,
+                          style: TextStyle(
+                              color: rc[def.rarity],
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 2),
+                      Text(def.perkLine,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                              color: Colors.white70, fontSize: 10)),
+                      const SizedBox(height: 4),
+                      Text(owned ? 'Terpasang' : '$net',
+                          style: const TextStyle(
+                              color: gold,
+                              fontWeight: FontWeight.w900,
+                              fontSize: 12)),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.pets, color: Color(0xFFF48FB1)),
+            const SizedBox(width: 8),
+            const Text('Hewan Peliharaan',
+                style: TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 16)),
+            const Spacer(),
+            Text('Uang ${money.floor()}',
+                style: const TextStyle(color: gold, fontWeight: FontWeight.w800)),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Row(children: [
+          for (var s = 1; s <= Pets.maxSlots; s++) ...[
+            if (s > 1) const SizedBox(width: 8),
+            slotBox(s),
+          ],
+        ]),
+        if (cur != null) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: canAct ? () => _renamePet(cur) : null,
+                icon: const Icon(Icons.edit, size: 16),
+                label: const Text('Beri nama'),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: canAct
+                    ? () => _act('release_pet', {'p_slot': sel})
+                    : null,
+                icon: const Icon(Icons.logout, size: 16),
+                label: Text('Lepas (+${cur.def.refund})'),
+              ),
+            ),
+          ]),
+        ],
+        const SizedBox(height: 12),
+        Text(
+            cur == null
+                ? 'Adopsi untuk slot $sel'
+                : 'Ganti slot $sel (refund 50% hewan lama sudah dipotong)',
+            style: const TextStyle(
+                color: Colors.white60,
+                fontSize: 11,
+                fontWeight: FontWeight.w700)),
+        for (final sp in PetSpecies.values) ...[
+          Padding(
+            padding: const EdgeInsets.only(top: 8, bottom: 2),
+            child: Text('${sp.emoji} ${sp.label} · ${sp.perkText}',
+                style: const TextStyle(color: Colors.white, fontSize: 12)),
+          ),
+          Row(children: [for (final def in Pets.ofSpecies(sp)) petCard(def)]),
+        ],
+      ],
     );
   }
 

@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'kost_style.dart';
 import 'kost_traffic.dart';
 import 'kost_warehouse.dart';
-
+import 'kost_pets.dart';
 
 // ====================================================================
 //  Adegan visual kost (v5 - Smart Trash Overflow & Animated Emoji)
@@ -17,6 +17,7 @@ part 'kost_painter_events.dart';
 part 'kost_painter_life.dart';
 part 'kost_street.dart';
 part 'kost_painter_warehouse.dart';
+part 'kost_painter_pets.dart';
 
 final Stopwatch _clock = Stopwatch()..start();
 
@@ -222,10 +223,14 @@ class KostSceneData {
     this.owner,
     this.dayPhase,
     this.warehouse,
+    this.pets,
   });
 
   /// Gudang sampah di sisi kanan kost; null = tidak digambar (lobi dll).
   final WhLive? warehouse;
+  /// Hewan peliharaan (maks 2) yang hidup di halaman; null = tidak digambar.
+  final KostPetCrew? pets;
+
 
   /// Fase siang-malam 0..1 (0 = tengah malam, 0.25 = matahari terbit,
   /// 0.5 = tengah hari, 0.75 = matahari terbenam). null = siang tetap
@@ -321,6 +326,7 @@ class KostSceneData {
         owner: owner,
         dayPhase: clearDayPhase ? null : dayPhase,
         warehouse: warehouse,
+        pets: pets,
       );
 
   /// Salinan dengan [compact] / [facingRight] diganti (dipakai mode jalan).
@@ -355,6 +361,7 @@ class KostSceneData {
     owner: owner,
     dayPhase: dayPhase,
     warehouse: warehouse,
+    pets: pets,
   );
 }
 

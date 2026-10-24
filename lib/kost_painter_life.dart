@@ -771,7 +771,8 @@ extension KostPainterResidents on KostPainter {
 
   void _drawRats(Canvas canvas, double t) {
     if (d.compact || !(d.trashRatio >= 0.75 || d.eliminated)) return;
-    for (var k = 0; k < 4; k++) {
+    final guards = (d.pets?.hasSpecies(PetSpecies.cat) ?? false) ? 2 : 4;
+    for (var k = 0; k < guards; k++) {
       final base = k % 2 == 0 ? 350.0 : 50.0;
       final ang = t * 1.6 + k * 2;
       final x = base + math.sin(ang) * 34;
