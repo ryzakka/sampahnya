@@ -394,6 +394,13 @@ class KostOwner {
   /// Mulai dari pintu depan (x 201), lalu berjalan ke tempatnya.
   double x = 201;
   double dir = 1;
+
+  /// Arah hadap yang dihaluskan (−1..1) untuk menggambar; berputar mulus
+  /// saat [dir] berbalik, bukan membalik seketika.
+  double dirS = 1;
+
+  /// Kecepatan jalan saat ini (px/dtk), dihaluskan agar start/stop lembut.
+  double vx = 0;
   KostPose pose = KostPose.stand;
   bool walking = false;
   int mask = 0;
@@ -546,14 +553,20 @@ class KostOwner {
 
     tx = tx.clamp(_minX, _maxX).toDouble();
     final dx = tx - x;
-    final step = speed * dt;
     final moving = speed > 0 && dx.abs() > 0.6;
-    if (moving) {
-      x += dx.abs() <= step ? dx : step * dx.sign;
-      dir = dx.sign;
-    }
-    walking = moving && p != KostPose.sad;
+    // kecepatan target: melambat lembut mendekati tujuan (ease-out)
+    final want = moving
+        ? dx.sign * math.min(speed, 3.2 + dx.abs() * 2.4)
+        : 0.0;
+    vx += (want - vx) * (1 - math.exp(-dt * (moving ? 7.0 : 10.0)));
+    var stepX = vx * dt;
+    if (stepX.abs() > dx.abs()) stepX = dx;
+    x += stepX;
+    if (moving) dir = dx.sign;
+    walking = (moving || vx.abs() > 2.5) && p != KostPose.sad;
     if (face != 0) dir = face;
+    dirS += (dir - dirS) * (1 - math.exp(-dt * 13));
+    if ((dir - dirS).abs() < 0.02) dirS = dir;
 
     pose = p;
     mask = m;

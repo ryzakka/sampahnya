@@ -125,7 +125,7 @@ const double _doorX = 201;
 final Map<String, TextPainter> _iconCache = <String, TextPainter>{};
 
 const double _roadY = 297.0; // garis jalan (koordinat rumah)
-const double _parkX = 318.0; // titik parkir truk angkut
+const double _parkX = 62.0; // titik parkir truk angkut (sisi KIRI rumah)
 
 const double _roofHover = 30;
 

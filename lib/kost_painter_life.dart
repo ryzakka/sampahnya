@@ -178,7 +178,10 @@ extension KostPainterResidents on KostPainter {
       ..color = const Color(0xFFFFCA28).withValues(alpha: 0.7);
     canvas.drawOval(ring, _p);
     _p.style = PaintingStyle.fill;
-    canvas.scale(o.dir * 1.12, 1.12);
+    // arah hadap halus + napas lembut (lebih terasa saat diam)
+    final ds = o.dirS.abs() < 0.08 ? (o.dirS < 0 ? -0.08 : 0.08) : o.dirS;
+    final breath = o.walking ? 0.0 : math.sin(t * 2.2 + o.seed * 0.3) * 0.012;
+    canvas.scale(ds * 1.12, 1.12 * (1 + breath));
     paintKostCharacter(canvas, _p, o.look,
         t: t,
         pose: o.pose,
@@ -258,10 +261,20 @@ extension KostPainterResidents on KostPainter {
   void _resIcon(
       Canvas canvas, double x, double y, String e, double t, int k) {
     final tp = _icon(e);
-    final pop = 0.9 + 0.14 * math.sin(t * 6 + k * 2);
+    // muncul dengan membal (easeOutBack) tiap kali ikon baru/berganti
+    final key = k * 1000003 + e.hashCode;
+    final born = _iconBorn[key];
+    if (born == null || t - born.last > 0.4) {
+      _iconBorn[key] = _IconLife(t, t);
+    } else {
+      born.last = t;
+    }
+    final age = t - _iconBorn[key]!.first;
+    final intro = age >= 0.35 ? 1.0 : _easeOutBack(_c01(age / 0.35));
+    final pop = (0.9 + 0.08 * math.sin(t * 5 + k * 2)) * intro;
     canvas.save();
     canvas.translate(x, y + math.sin(t * 3 + k) * 0.8);
-    canvas.scale(pop);
+    canvas.scale(pop.clamp(0.0, 1.4).toDouble());
     _p
       ..style = PaintingStyle.fill
       ..color = Colors.white.withValues(alpha: 0.92);
@@ -299,13 +312,28 @@ extension KostPainterResidents on KostPainter {
       );
     }
     final ph = t * (walking ? 10 : 7) + k * 1.7;
-    final cough = !walking && pose == 3 && math.sin(t * 2.2 + k) > 0.5;
-    final hop = (!walking && pose == 1) ? -math.sin(ph).abs() * 2.6 : 0.0;
+    final cw = math.sin(t * 2.2 + k);
+    final cough = !walking && pose == 3 && cw > 0.5;
+    final hop = (!walking && pose == 1)
+        ? -math.sin(ph).abs() * 2.6
+        : (walking ? -math.sin(ph).abs() * 1.1 : 0.0);
     var lean = 0.0;
-    if (cough) lean = 0.32;
+    // batuk: membungkuk masuk/keluar dengan halus, bukan lompat
+    if (!walking && pose == 3) lean = 0.32 * _ease(_c01((cw - 0.35) / 0.3));
     if (walking && mask == 2) lean = 0.16;
     final sw = walking ? math.sin(ph) * 3.0 : 0.0;
     const skin = Color(0xFFE0AC84);
+
+    // bayangan lembut di tanah; mengecil saat melompat
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFF000000).withValues(alpha: 0.14);
+    canvas.drawOval(
+        Rect.fromCenter(
+            center: Offset(x, y + 0.8),
+            width: 11 + hop * 0.8,
+            height: 2.8),
+        _p);
 
     canvas.save();
     canvas.translate(x, y + hop);
@@ -1850,3 +1878,10 @@ extension KostPainterHijack on KostPainter {
   }
 
 }
+class _IconLife {
+  _IconLife(this.first, this.last);
+  final double first;
+  double last;
+}
+
+final Map<int, _IconLife> _iconBorn = {};

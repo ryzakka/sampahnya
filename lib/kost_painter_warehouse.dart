@@ -1003,10 +1003,11 @@ extension KostPainterWarehouse on KostPainter {
     const arriveEnd = 0.20;
     const leaveStart = 0.82;
     const parkX = _whTruckX;
-    final inX = math.min(math.max(vr + 110, parkX + 220), parkX + 1000);
-    final outX = math.max(math.min(vl - 110, parkX - 220), parkX - 1000);
-    final inVisible = inX < vr + 40;
-    final outVisible = outX > vl - 40;
+    // Truk gudang masuk dari KIRI dan keluar ke KANAN (kebalikan truk angkut).
+    final inX = math.max(math.min(vl - 110, parkX - 220), parkX - 1000);
+    final outX = math.min(math.max(vr + 110, parkX + 220), parkX + 1000);
+    final inVisible = inX > vl - 40;
+    final outVisible = outX < vr + 40;
 
     var x = parkX;
     var alpha = 1.0;
@@ -1035,14 +1036,15 @@ extension KostPainterWarehouse on KostPainter {
     }
 
     final vis = _ease((hp - 0.215) / 0.06) * (1 - _ease((hp - 0.755) / 0.06));
-    final (double, double) lr = vis > 0.6 ? _workLid(t) : (0.0, 0.0);
     final bob = moving ? math.sin(t * 24) * 0.7 : math.sin(t * 38) * 0.22;
+    final hatch = _ease(vis * 1.6);
+    final load = _c01((hp - 0.25) / 0.5); // isi kontainer 0..1
 
     // peluncur dari pintu gudang ke bak truk + kantong yang meluncur
     if (vis > 0.02) {
       final doorX = _whDoorX(w.tier);
       final from = Offset(doorX, _gy - 2);
-      final to = Offset(x - 18, _roadY - 44);
+      final to = Offset(x - 14, _roadY - 56);
       // penyangga peluncur
       _p
         ..style = PaintingStyle.stroke
@@ -1087,29 +1089,23 @@ extension KostPainterWarehouse on KostPainter {
 
     _fadeLayer(
       canvas,
-      Rect.fromLTRB(x - 130, _roadY - 90, x + 130, _roadY + 16),
+      Rect.fromLTRB(x - 130, _roadY - 100, x + 130, _roadY + 16),
       alpha,
           () {
-        canvas.saveLayer(
-          Rect.fromLTRB(x - 130, _roadY - 90, x + 130, _roadY + 16),
-          Paint()
-            ..colorFilter =
-            const ColorFilter.mode(Color(0x77FF9100), BlendMode.srcATop),
-        );
         canvas.save();
         canvas.translate(x, _roadY);
-        _truckBody(
+        _whTruckBody(
           canvas,
           t,
           wheelA: x / 6.5,
           lean: lean,
           moving: moving,
           brake: brake,
-          lid: lr.$1,
-          ram: lr.$2,
+          hatch: hatch,
+          load: load,
+          loading: vis > 0.3,
           bob: bob,
         );
-        canvas.restore();
         canvas.restore();
       },
     );
@@ -1118,10 +1114,210 @@ extension KostPainterWarehouse on KostPainter {
       _drawBannerText(
         canvas,
         'TRUK GUDANG',
-        Offset(x - 30, _roadY - 104),
+        Offset(x - 14, _roadY - 110),
         const Color(0xFFFFB74D),
         alpha: vis,
       );
+    }
+  }
+
+  /// Truk gudang: kontainer jingga menghadap KANAN, kabin datar di kanan,
+  /// tiga as roda, lampu strobo berputar, palka atap yang membuka saat
+  /// memuat, pegas yang ambles seiring isi, dan indikator isi di sisi bak.
+  /// Titik asal: tengah-bawah di tanah.
+  void _whTruckBody(
+      Canvas canvas,
+      double t, {
+        required double wheelA,
+        required double lean,
+        required bool moving,
+        required bool brake,
+        required double hatch,
+        required double load,
+        required bool loading,
+        required double bob,
+      }) {
+    // bayangan
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0x38000000);
+    canvas.drawOval(const Rect.fromLTWH(-50, -3, 100, 6), _p);
+
+    // roda (tiga as): 2 belakang, 1 depan
+    void wheel(double cx) {
+      canvas.save();
+      canvas.translate(cx, -6.5 + bob * 0.4);
+      _p
+        ..style = PaintingStyle.fill
+        ..color = const Color(0xFF212121);
+      canvas.drawCircle(Offset.zero, 6.5, _p);
+      canvas.rotate(-wheelA);
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.1
+        ..color = const Color(0xFFB0BEC5);
+      for (var k = 0; k < 3; k++) {
+        final a = k * math.pi / 3;
+        canvas.drawLine(Offset(math.cos(a) * 4.2, math.sin(a) * 4.2),
+            Offset(-math.cos(a) * 4.2, -math.sin(a) * 4.2), _p);
+      }
+      _p.style = PaintingStyle.fill;
+      _p.color = const Color(0xFFFFB300);
+      canvas.drawCircle(Offset.zero, 1.6, _p);
+      canvas.restore();
+    }
+
+    wheel(-32);
+    wheel(-14);
+    wheel(28);
+
+    // bodi: ambles saat terisi + goyang kecil saat peluncur menghantam
+    final sink = load * 2.2;
+    final shake = loading && !moving ? math.sin(t * 31) * 0.35 : 0.0;
+    canvas.save();
+    canvas.translate(shake, bob - sink);
+    canvas.rotate(-lean);
+
+    // sasis
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFF37474F);
+    canvas.drawRect(const Rect.fromLTWH(-46, -15, 94, 5), _p);
+
+    // kontainer
+    final box = RRect.fromRectAndRadius(
+        const Rect.fromLTWH(-46, -56, 62, 42), const Radius.circular(2));
+    _p.color = const Color(0xFFF57C00);
+    canvas.drawRRect(box, _p);
+    _p.color = const Color(0xFFFFA726);
+    canvas.drawRect(const Rect.fromLTWH(-46, -56, 62, 5), _p);
+    // rusuk vertikal
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = const Color(0xFFE65100);
+    for (var xx = -38.0; xx < 14; xx += 8) {
+      canvas.drawLine(Offset(xx, -50), Offset(xx, -21), _p);
+    }
+    // strip bahaya hitam-kuning di bawah
+    _p.style = PaintingStyle.fill;
+    canvas.save();
+    canvas.clipRect(const Rect.fromLTWH(-46, -21, 62, 6));
+    _p.color = const Color(0xFFFFEB3B);
+    canvas.drawRect(const Rect.fromLTWH(-46, -21, 62, 6), _p);
+    _p.color = const Color(0xFF212121);
+    for (var xx = -52.0; xx < 18; xx += 10) {
+      final path = Path()
+        ..moveTo(xx, -15)
+        ..lineTo(xx + 5, -15)
+        ..lineTo(xx + 11, -21)
+        ..lineTo(xx + 6, -21)
+        ..close();
+      canvas.drawPath(path, _p);
+    }
+    canvas.restore();
+
+    // indikator isi di sisi bak
+    _p.color = const Color(0xFF263238);
+    canvas.drawRect(const Rect.fromLTWH(-42, -46, 7, 22), _p);
+    _p.color = Color.lerp(const Color(0xFF66BB6A), const Color(0xFFEF5350), load)!;
+    final fh = 20 * load;
+    canvas.drawRect(Rect.fromLTWH(-41, -25 - fh, 5, fh), _p);
+
+    // atap + palka yang membuka
+    _p.color = const Color(0xFF455A64);
+    canvas.drawRect(const Rect.fromLTWH(-48, -58, 66, 3), _p);
+    // tumpukan sampah menyembul dari palka saat terisi
+    if (hatch > 0.5 && load > 0.1) {
+      _p.color = const Color(0xFF2E7D32);
+      canvas.drawOval(Rect.fromLTWH(-26, -62 - 3 * load, 16, 6 + 3 * load), _p);
+    }
+    canvas.save();
+    canvas.translate(-26, -58);
+    canvas.rotate(-hatch * 1.25);
+    _p.color = const Color(0xFF78909C);
+    canvas.drawRect(const Rect.fromLTWH(0, -2, 16, 2.4), _p);
+    canvas.restore();
+
+    // kabin
+    final cab = Path()
+      ..moveTo(18, -15)
+      ..lineTo(18, -46)
+      ..lineTo(34, -46)
+      ..lineTo(43, -31)
+      ..lineTo(48, -29)
+      ..lineTo(48, -15)
+      ..close();
+    _p.color = const Color(0xFFECEFF1);
+    canvas.drawPath(cab, _p);
+    _p.color = const Color(0xFFFF9800);
+    canvas.drawRect(const Rect.fromLTWH(18, -21, 30, 6), _p);
+    final win = Path()
+      ..moveTo(22, -42)
+      ..lineTo(33, -42)
+      ..lineTo(40, -31)
+      ..lineTo(22, -31)
+      ..close();
+    _p.color = const Color(0xFF4FC3F7);
+    canvas.drawPath(win, _p);
+    _p.color = const Color(0x55FFFFFF);
+    canvas.drawRect(const Rect.fromLTWH(24, -41, 3, 9), _p);
+
+    // lampu depan (+ sorot) & lampu rem
+    _p.color = const Color(0xFFFFF59D);
+    canvas.drawRect(const Rect.fromLTWH(46, -25, 3, 4), _p);
+    if (moving) {
+      _p.color = const Color(0x33FFF59D);
+      final beam = Path()
+        ..moveTo(49, -24)
+        ..lineTo(76, -30)
+        ..lineTo(76, -12)
+        ..close();
+      canvas.drawPath(beam, _p);
+    }
+    _p.color = brake ? const Color(0xFFFF1744) : const Color(0xFF8E0000);
+    canvas.drawRect(const Rect.fromLTWH(-47, -25, 2, 6), _p);
+
+    // lampu strobo berputar di atap kabin
+    final spin = t * 9;
+    final on = math.sin(spin) > 0;
+    _p.color = const Color(0xFF424242);
+    canvas.drawRect(const Rect.fromLTWH(24, -49, 8, 3), _p);
+    _p.color = on ? const Color(0xFFFFAB00) : const Color(0xFF8D5A00);
+    canvas.drawCircle(const Offset(28, -51), 2.4, _p);
+    if (on) {
+      _p.color = const Color(0x44FFAB00);
+      canvas.drawCircle(const Offset(28, -51), 8, _p);
+    }
+    final bx = math.cos(spin) * 7;
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2
+      ..color = const Color(0x66FFAB00);
+    canvas.drawLine(const Offset(28, -51), Offset(28 + bx, -53), _p);
+    _p.style = PaintingStyle.fill;
+
+    // knalpot tegak + asap saat jalan / tancap gas
+    _p.color = const Color(0xFF616161);
+    canvas.drawRect(const Rect.fromLTWH(15, -56, 2.4, 20), _p);
+    if (moving) {
+      for (var k = 0; k < 3; k++) {
+        final q = (t * 1.6 + k / 3) % 1.0;
+        _p.color = Color.fromRGBO(120, 120, 120, 0.4 * (1 - q));
+        canvas.drawCircle(
+            Offset(16 - q * 14, -58 - q * 10), 2 + q * 3.5, _p);
+      }
+    }
+
+    canvas.restore();
+
+    // debu di roda saat jalan
+    if (moving) {
+      for (var k = 0; k < 3; k++) {
+        final q = (t * 2.2 + k / 3) % 1.0;
+        _p.color = Color.fromRGBO(190, 170, 140, 0.35 * (1 - q));
+        canvas.drawCircle(Offset(-40 - q * 14, -3 - q * 5), 1.5 + q * 2.5, _p);
+      }
     }
   }
 }

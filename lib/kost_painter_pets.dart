@@ -23,6 +23,10 @@ class PetAgent {
   double x;
   final double y = 271;
   double dir = 1;
+
+  /// Arah hadap halus untuk gambar, dan kecepatan halus (px/dtk).
+  double dirS = 1;
+  double vx = 0;
   PetPose pose = PetPose.idle;
   bool walking = false;
   String? icon;
@@ -178,15 +182,20 @@ class KostPetCrew {
 
       tx = tx.clamp(_minX, _maxX).toDouble();
       final dx = tx - a.x;
-      final step = speed * dt;
       final moving = speed > 0 && dx.abs() > 0.8;
-      if (moving) {
-        a.x += dx.abs() <= step ? dx : step * dx.sign;
-        a.dir = dx.sign;
-      }
-      a.walking = moving && pose != PetPose.sad;
+      final want = moving
+          ? dx.sign * math.min(speed, 4.0 + dx.abs() * 2.8)
+          : 0.0;
+      a.vx += (want - a.vx) * (1 - math.exp(-dt * (moving ? 9.0 : 12.0)));
+      var stepX = a.vx * dt;
+      if (stepX.abs() > dx.abs()) stepX = dx;
+      a.x += stepX;
+      if (moving) a.dir = dx.sign;
+      a.walking = (moving || a.vx.abs() > 2.5) && pose != PetPose.sad;
       if (a.walking && pose == PetPose.idle) pose = PetPose.walk;
       if (face != null) a.dir = face;
+      a.dirS += (a.dir - a.dirS) * (1 - math.exp(-dt * 14));
+      if ((a.dir - a.dirS).abs() < 0.02) a.dirS = a.dir;
       if (moving && (pose == PetPose.sit || pose == PetPose.peck)) {
         pose = PetPose.walk;
       }
@@ -218,7 +227,11 @@ extension KostPainterPets on KostPainter {
           Rect.fromCenter(center: const Offset(0, 0.8), width: 15, height: 3.6),
           _p);
 
-      canvas.scale(a.dir, 1);
+      // napas halus & sedikit memipih saat melangkah
+      final br = math.sin(t * 2.4 + a.slot * 1.7);
+      final sq = 1 + br * (a.pose == PetPose.sleep ? 0.035 : 0.014);
+      canvas.scale(a.dirS.abs() < 0.08 ? (a.dirS < 0 ? -0.08 : 0.08) : a.dirS,
+          sq);
       switch (def.species) {
         case PetSpecies.cat:
           _petCat(canvas, def, a, t);

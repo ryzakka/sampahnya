@@ -998,7 +998,71 @@ class _GameScreenState extends State<GameScreen>
   }
 
   /// Pengali laju sampah: +20% tiap 2 menit (harus sama dengan sync_room_state).
-  double get _pressure => 1.0 + 0.2 * (_elapsedSec / 120).floor();
+  /// Mode Kesintasan (singleplayer): bertahan selama mungkin.
+  bool get _isSurvival => _room['mode'] == 'survival';
+
+  /// Pengali laju sampah. HARUS sama dengan public._pressure_for() di SQL.
+  ///   versus   : +20% tiap 2 menit
+  ///   survival : 1 + 0.12*m + 0.01*m^2  (m = menit, mulus & mempercepat)
+  double get _pressure {
+    if (_isSurvival) {
+      final m = _elapsedSec / 60;
+      return 1.0 + 0.12 * m + 0.01 * m * m;
+    }
+    return 1.0 + 0.2 * (_elapsedSec / 120).floor();
+  }
+
+  /// Survival masih berjalan & pemain masih hidup (untuk konfirmasi menyerah).
+  bool get _survivalLive {
+    if (!_isSurvival || _room['status'] != 'playing') return false;
+    final me = _states[_me];
+    return me != null && me['eliminated_at'] == null;
+  }
+
+  String _fmtDur(num sec) {
+    final s = sec.floor();
+    return '${(s ~/ 60).toString().padLeft(2, '0')}:'
+        '${(s % 60).toString().padLeft(2, '0')}';
+  }
+
+  /// Dialog konfirmasi menyerah; skor tetap tercatat (lama bertahan sampai kini).
+  Future<void> _confirmQuitSurvival() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF16281F),
+        title: const Text('Menyerah?',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
+        content: Text(
+          'Kost dianggap tertimbun. Waktu bertahan ${_fmtDur(_elapsedSec)} '
+              'tetap dicatat di papan skor.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Lanjut main'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Colors.redAccent,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Menyerah'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _quitSurvival();
+  }
+
+  Future<void> _quitSurvival() async {
+    try {
+      await _db.rpc('survival_quit', params: {'p_room': widget.roomId});
+    } catch (_) {}
+    if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
+  }
 
   /// Siklus siang-malam: satu hari penuh = [_dayCycleSec] detik. Diturunkan
   /// dari waktu server (started_at) sehingga SAMA di semua pemain. Murni visual.
@@ -1461,6 +1525,17 @@ class _GameScreenState extends State<GameScreen>
 
   @override
   Widget build(BuildContext context) {
+    // Survival: tombol kembali (HUD & sistem) meminta konfirmasi menyerah.
+    return PopScope(
+      canPop: !_survivalLive,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _confirmQuitSurvival();
+      },
+      child: _buildGame(context),
+    );
+  }
+
+  Widget _buildGame(BuildContext context) {
     if (!_loaded) {
       return Scaffold(
         backgroundColor: const Color(0xFF14201A),
@@ -2222,7 +2297,10 @@ class _GameScreenState extends State<GameScreen>
         color: Colors.white.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(widget.roomCode,
+      child: Text(
+          _isSurvival
+              ? '${_fmtDur(_elapsedSec)} · ×${_pressure.toStringAsFixed(1)}'
+              : widget.roomCode,
           style: const TextStyle(
               color: Colors.white,
               fontSize: 11.5,
@@ -2736,7 +2814,73 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  Widget _survivalFinishedCard() {
+    final secs = _num(_room['survival_seconds']);
+    final s = _states[_me];
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF16281F),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFFFCA28), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 24,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.timer_rounded, size: 40, color: Color(0xFFFFCA28)),
+          const SizedBox(height: 12),
+          const Text(
+            'KOST TERTIMBUN!',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 22,
+              fontWeight: FontWeight.w900,
+              letterSpacing: 1,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Bertahan ${_fmtDur(secs)}',
+            style: const TextStyle(
+              color: Color(0xFFFFCA28),
+              fontSize: 30,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${_num(s?['rooms_count']).toInt()} kamar · '
+                'Bank Sampah Lv ${_num(s?['waste_level']).toInt()}',
+            style: const TextStyle(color: Colors.white70, fontSize: 14),
+          ),
+          const SizedBox(height: 20),
+          SizedBox(
+            width: double.infinity,
+            height: 48,
+            child: FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFFFCA28),
+                foregroundColor: Colors.black87,
+                textStyle: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+              onPressed: () =>
+                  Navigator.of(context).popUntil((r) => r.isFirst),
+              child: const Text('KEMBALI KE BERANDA'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _finishedCard() {
+    if (_isSurvival) return _survivalFinishedCard();
     final winner = _room['winner_id'];
     final isWin = winner == _me;
     final text = isWin
@@ -3753,7 +3897,7 @@ class _GameScreenState extends State<GameScreen>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (alive) ...[
+        if (alive && !_isSurvival) ...[
           _fab(
             icon: boothOpen ? Icons.storefront : Icons.storefront_outlined,
             color: boothOpen ? const Color(0xFF69F0AE) : Colors.white,

@@ -1267,7 +1267,7 @@ extension KostPainterTruck on KostPainter {
     for (var i = 0; i < 2; i++) {
       final phase = (tt * 0.9 + i * 0.5) % 1.0;
       final tri = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
-      final baseX = _lerp(382, 352, tri) + dx;
+      final baseX = _lerp(_parkX + 64, _parkX + 34, tri) + dx;
       final x = vis < 1 ? _lerp(_parkX + 38, baseX, vis) : baseX;
       const y = 270.0;
       final carrying = !idle && phase < 0.5;

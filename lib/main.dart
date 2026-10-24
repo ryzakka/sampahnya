@@ -11,6 +11,7 @@ import 'customize_screen.dart';
 import 'game_screen.dart';
 import 'kost_scene.dart';
 import 'kost_style.dart';
+import 'survival_leaderboard.dart';
 
 const supabaseUrl = String.fromEnvironment(
   'SUPABASE_URL',
@@ -530,6 +531,47 @@ class _LobbyHomeState extends State<LobbyHome>
     }
   }
 
+  /// MODE KESINTASAN (singleplayer): buat ruangan 1 pemain, mulai langsung.
+  Future<void> _startSurvival() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'Masukkan nama pemain kost terlebih dahulu!');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+
+    try {
+      await _ensureAnonymousSession();
+      final user = _db.auth.currentUser;
+      if (user == null) throw Exception('Sesi anonim belum tersedia.');
+
+      final id = (await _db
+          .rpc('create_survival_room', params: {'p_name': name}))
+          .toString();
+      await _db.rpc('start_game', params: {'p_room': id});
+      final room =
+      await _db.from('rooms').select('id, code').eq('id', id).single();
+
+      if (!mounted) return;
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => GameScreen(
+            roomId: room['id'].toString(),
+            roomCode: room['code'].toString(),
+          ),
+        ),
+      );
+    } catch (e) {
+      setState(() => _error = _friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _joinRoom() async {
     final name = _nameController.text.trim();
     final code = _codeController.text.trim().toUpperCase();
@@ -998,6 +1040,25 @@ class _LobbyHomeState extends State<LobbyHome>
           icon: Icons.rocket_launch_rounded,
           busy: _busy,
           onPressed: _busy ? null : _createRoom,
+        ),
+        const SizedBox(height: 10),
+        _ActionButton(
+          label: _busy ? 'Menyiapkan…' : 'Main sendiri: Kesintasan',
+          icon: Icons.timer_rounded,
+          busy: _busy,
+          onPressed: _busy ? null : _startSurvival,
+        ),
+        const SizedBox(height: 10),
+        _ActionButton(
+          label: 'Papan skor Kesintasan',
+          icon: Icons.emoji_events_rounded,
+          onPressed: _busy
+              ? null
+              : () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const SurvivalLeaderboardScreen(),
+            ),
+          ),
         ),
       ],
     );
