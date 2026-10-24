@@ -209,7 +209,18 @@ class KostPainter extends CustomPainter {
   /// Apakah jendela kamar [idx] menyala (dipakai gambar jendela & kilau malam).
   bool _roomLit(int idx, double t) {
     final flicker = _critical && math.sin(t * 17 + idx * 2.3) > 0.82;
-    return !d.eliminated && !flicker && ((_hh(idx) % 100) / 100) < _litFactor;
+    if (d.eliminated || flicker) return false;
+    final h = (_hh(idx) % 100) / 100;
+    if (d.dayPhase == null) return h < _litFactor;
+    // Jadwal malam (kost_painter_ambient): lampu per kamar menyala senja,
+    // padam bergantian menjelang tengah malam, menyala lagi saat bangun.
+    final st = _nightState(idx);
+    final cap = math.min(_litBase, d.lights);
+    if (st.act == _Act.day) {
+      // siang: batasi 0.4 agar tidak "kedip" saat jadwal malam mengambil alih
+      return h < math.min(_litFactor, 0.4 * cap);
+    }
+    return st.k > 0.02 && h < cap;
   }
 
   double? _fxProgress(FxType type, int durMs) {
@@ -573,10 +584,16 @@ extension KostPainterScenery on KostPainter {
       if (!_roomLit(idx, t)) continue;
       final r = _cell(idx);
       final win = Rect.fromLTWH(r.left + 9, r.top + 9, r.width - 18, 26);
-      _p.color = const Color(0xFFFFB74D).withValues(alpha: 0.10 * night);
+      final st = _nightState(idx);
+      final sched = st.act != _Act.day;
+      // korden rapat meredam cahaya yang tumpah ke luar
+      final close = _curtainClose(idx, st.act, sched ? st.k : 1.0, st.sleep);
+      final g = (sched ? st.k : 1.0) * (1 - 0.6 * close);
+      final gc = sched ? _actGlow(st.act, t, idx) : const Color(0xFFFFB74D);
+      _p.color = gc.withValues(alpha: 0.10 * night * g);
       canvas.drawRRect(
           RRect.fromRectAndRadius(win.inflate(7), const Radius.circular(6)), _p);
-      _p.color = const Color(0xFFFFC870).withValues(alpha: 0.20 * night);
+      _p.color = gc.withValues(alpha: 0.20 * night * g);
       canvas.drawRect(win, _p);
     }
     _p.blendMode = BlendMode.srcOver;
@@ -1128,7 +1145,9 @@ extension KostPainterScenery on KostPainter {
       pollution: _c01(d.pollution / 100),
       lights: d.pollution > 60 || d.worldEvent == 'rain_flood' || _night > 0.3,
       rain: d.worldEvent == 'rain_flood',
+      density: _trafficDensity,
     );
+    _drawStreetWalkers(canvas, t, worldL - 350, worldR + 350);
   }
 
 }
@@ -2007,12 +2026,17 @@ extension KostPainterBuilding on KostPainter {
 
     // Lampu berkedip panik saat kondisi kritis
     final lit = _roomLit(idx, t);
+    final st = _nightState(idx);
+    final sched = st.act != _Act.day; // jadwal malam berlaku
     final win = Rect.fromLTWH(r.left + 9, r.top + 9, r.width - 18, 26);
 
     if (lit) {
       _p
         ..style = PaintingStyle.fill
-        ..color = const Color(0xFFFFE082).withValues(alpha: 0.22);
+        ..color = (sched
+            ? _actGlow(st.act, t, idx)
+            : const Color(0xFFFFE082))
+            .withValues(alpha: 0.22 * (sched ? st.k : 1.0));
       canvas.drawRect(win.inflate(3), _p);
     }
     _p
@@ -2024,7 +2048,13 @@ extension KostPainterBuilding on KostPainter {
           : const Color(0xFF39465A);
     canvas.drawRect(win, _p);
 
-    if (lit && !d.compact && idx % 3 != 1 && !_resOutRooms.contains(idx)) {
+    if (sched && !d.compact) {
+      // potret malam: belajar, nonton, main ponsel, ngobrol, masak, tidur
+      _drawRoomScene(canvas, win, idx, t, lit, st);
+    } else if (lit &&
+        !d.compact &&
+        idx % 3 != 1 &&
+        !_resOutRooms.contains(idx)) {
       canvas.save();
       canvas.clipRect(win);
       final cx = win.center.dx + math.sin(t * 1.3 + idx) * 5;
@@ -2086,6 +2116,9 @@ extension KostPainterBuilding on KostPainter {
           Rect.fromLTWH(win.left - 2.5, r.top + 7.4, win.width + 5, 1.6), _p);
     }
 
+    // korden: setengah/rapat saat asap, bau, silau, privasi & tidur
+    _drawCurtains(canvas, win, idx, t, lit, st);
+
     if (!d.compact) {
       // kilau kaca yang menyapu pelan
       canvas.save();
@@ -2104,37 +2137,6 @@ extension KostPainterBuilding on KostPainter {
           ..close(),
         _p,
       );
-      // tirai yang bergoyang tertiup angin
-      if (lit) {
-        const curtains = [
-          Color(0xFFE57373),
-          Color(0xFF64B5F6),
-          Color(0xFF81C784),
-          Color(0xFFFFB74D),
-        ];
-        final cc =
-        curtains[_hh(idx + 9) % curtains.length].withValues(alpha: 0.8);
-        final cs = math.sin(t * 1.6 + idx * 1.3) * 1.2;
-        _p.color = cc;
-        canvas.drawPath(
-          Path()
-            ..moveTo(win.left, win.top)
-            ..lineTo(win.left + 5 + cs, win.top)
-            ..lineTo(win.left + 3 + cs * 0.6, win.top + win.height * 0.6)
-            ..lineTo(win.left, win.bottom)
-            ..close(),
-          _p,
-        );
-        canvas.drawPath(
-          Path()
-            ..moveTo(win.right, win.top)
-            ..lineTo(win.right - 5 - cs, win.top)
-            ..lineTo(win.right - 3 - cs * 0.6, win.top + win.height * 0.6)
-            ..lineTo(win.right, win.bottom)
-            ..close(),
-          _p,
-        );
-      }
       canvas.restore();
       // ambang jendela
       _p.color = _mix(wall, Colors.black, 0.32);

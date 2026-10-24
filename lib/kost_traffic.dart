@@ -77,6 +77,34 @@ class KostTraffic {
   static bool _low = false;
   static bool _mirror = false;
   static double _hz = 0; // kabut lajur yang sedang digambar
+  static double _density = 1.0; // 0..1 kepadatan kendaraan (jam sibuk/sepi)
+
+  /// Pengendara bermasker saat udara kotor; makin kotor makin banyak yang
+  /// memakainya (acak tetap per kendaraan, jadi tidak berkedip).
+  static bool _masked(int id) {
+    if (_poll < 0.35) return false;
+    final k = ((_poll - 0.35) / 0.4).clamp(0.0, 1.0);
+    return ((id >> 9) % 100) / 100.0 < k;
+  }
+
+  static void _mask(Canvas c, Offset head) {
+    _p
+      ..style = PaintingStyle.fill
+      ..color = const Color(0xFFB3E5FC);
+    c.drawRRect(
+      RRect.fromRectAndRadius(
+          Rect.fromLTWH(head.dx + 0.2, head.dy - 0.1, 2.9, 1.9),
+          const Radius.circular(0.6)),
+      _p,
+    );
+    _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.35
+      ..color = const Color(0xFFECEFF1);
+    c.drawLine(Offset(head.dx + 0.2, head.dy + 0.5),
+        Offset(head.dx - 1.6, head.dy - 0.4), _p);
+    _p.style = PaintingStyle.fill;
+  }
 
   /// Cache shader gradien (kunci = bounds + warna) supaya tidak membuat ulang
   /// ratusan shader per frame. Dibersihkan otomatis bila terlalu besar.
@@ -554,7 +582,9 @@ class KostTraffic {
         required double pollution,
         required bool lights,
         required bool rain,
+        double density = 1.0,
       }) {
+    _density = density;
     // Polusi dikuantisasi agar kunci cache shader tidak berubah tiap frame.
     _poll = (pollution.clamp(0.0, 1.0) * 24).round() / 24;
     _lights = lights;
@@ -594,11 +624,27 @@ class KostTraffic {
       final x = lane.right ? worldL + pos : worldR - pos;
       if (x < viewL - 120 || x > viewR + 120) continue;
 
+      // Jalan sepi: tiap slot punya peringkat tetap; di atas kepadatan ia
+      // menghilang (memudar halus di pita sempit, tanpa melompat).
+      var vis = 1.0;
+      if (_density < 0.995) {
+        final rank = (_th(li * 131 + i * 911 + 3) % 1000) / 1000.0;
+        vis = ((_density - rank) / 0.06).clamp(0.0, 1.0);
+        if (vis <= 0.01) continue;
+      }
+
       canvas.save();
       canvas.translate(x, lane.y);
       canvas.scale(lane.right ? lane.scale : -lane.scale, lane.scale);
+      if (vis < 1.0) {
+        canvas.saveLayer(
+          const Rect.fromLTRB(-100, -70, 100, 24),
+          Paint()..color = Color.fromRGBO(0, 0, 0, vis),
+        );
+      }
       _mirror = !lane.right;
       _drawVehicle(canvas, lane.kind, id, base + m, sinT, t);
+      if (vis < 1.0) canvas.restore();
       canvas.restore();
     }
   }
@@ -1364,14 +1410,16 @@ class KostTraffic {
           jacket: _jackets[(id >> 13) % _jackets.length],
           helmet: _palette[(id >> 15) % _palette.length], skin: skin,
           hold: const Offset(-5.4, -13.2), kneeTo: const Offset(-3.6, -9.2),
-          foot: const Offset(-4.4, -5.4), small: true);
+          foot: const Offset(-4.4, -5.4), small: true,
+          mask: _masked(id + 7));
     }
     // pengemudi
     _rider(c, hip: const Offset(-4.2, -11.4), lean: 2.6, sway: sway,
         jacket: jacket, helmet: helmet, skin: skin,
         hold: const Offset(6.6, -14.0), kneeTo: const Offset(1.8, -9.4),
         foot: const Offset(1.2, -5.2), small: false,
-        flutter: math.sin(dist * 0.7 + id) * 0.8);
+        flutter: math.sin(dist * 0.7 + id) * 0.8,
+        mask: _masked(id));
     c.restore();
 
     _wheel(c, -8.6, 4.4, dist, rim: const Color(0xFFB0BEC5));
@@ -1394,6 +1442,7 @@ class KostTraffic {
         required Offset foot,
         required bool small,
         double flutter = 0,
+        bool mask = false,
       }) {
     final sh = hip + Offset(lean + sway, small ? -7.0 : -7.8);
     final head = sh + Offset(small ? 0.6 : 1.2, -3.4);
@@ -1439,6 +1488,7 @@ class KostTraffic {
     _p.color = helmet;
     c.drawArc(Rect.fromCircle(center: head, radius: 3.0), math.pi * 0.9,
         math.pi * 1.2, true, _p);
+    if (mask) _mask(c, head);
     if (!small || _lights) {
       _p.color = const Color(0xFF263238).withValues(alpha: 0.85);
       c.drawRRect(
@@ -1592,6 +1642,7 @@ class KostTraffic {
       c.drawArc(Rect.fromCircle(center: headC, radius: 2.9), math.pi,
           math.pi, true, _p);
     }
+    if (_masked(id)) _mask(c, headC);
 
     // lampu sepeda (malam / kabut asap)
     if (_lights) {

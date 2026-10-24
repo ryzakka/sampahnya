@@ -12,6 +12,7 @@ import 'kost_warehouse.dart';
 // ====================================================================
 
 part 'kost_painter.dart';
+part 'kost_painter_ambient.dart';
 part 'kost_painter_events.dart';
 part 'kost_painter_life.dart';
 part 'kost_street.dart';
