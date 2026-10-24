@@ -1619,29 +1619,19 @@ class _GameScreenState extends State<GameScreen>
                     behavior: HitTestBehavior.opaque,
                     onLongPressStart: (d) {
                       if (_iAmGhost) return;
-                      if (_sceneHit(d.localPosition, stage, order, focusId) ==
-                          'wh') {
-                        _openWarehouse();
-                      }
+                      final mine = _states[_me];
+                      if (mine == null || mine['eliminated_at'] != null) return;
+                      final i = _cam.houseAt(d.localPosition.dx, stage, n);
+                      if (i == null) return;
+                      final id = order[i];
+                      if (id == _me) return;
+                      if (_states[id]?['eliminated_at'] != null) return;
+                      setState(() => _throwFor = id);
                     },
                     onTapUp: (d) {
                       if (_iAmGhost) {
                         // Arwah: ketukan menggerakkan arwahmu melayang ke sana.
                         _moveMyGhost(d.localPosition, stage, force: true);
-                        return;
-                      }
-                      final hit =
-                      _sceneHit(d.localPosition, stage, order, focusId);
-                      if (hit != null) {
-                        final now = DateTime.now().millisecondsSinceEpoch;
-                        if (_lastHit == hit && now - _lastHitMs < 380) {
-                          _lastHit = null;
-                          if (hit == 'bin') _pourToWarehouse();
-                          if (hit == 'wh') _callWarehouseTruck();
-                        } else {
-                          _lastHit = hit;
-                          _lastHitMs = now;
-                        }
                         return;
                       }
                       final i = _cam.houseAt(d.localPosition.dx, stage, n);
@@ -1738,6 +1728,7 @@ class _GameScreenState extends State<GameScreen>
                                 focusId,
                                 topInset,
                               ),
+                              ..._throwPopup(order, stage, screen, me, topInset),
                               if (myAttackLeft > 0 && me != null)
                                 _parryRing(me, myAttackLeft, order, stage, focusId,
                                     topInset, dockedShown,
@@ -1801,14 +1792,46 @@ class _GameScreenState extends State<GameScreen>
                           ),
                         ),
 
-                      // 5c) Tombol mengambang kecil (hewan & pertahanan) di sisi kanan,
-                      //     di atas dok zoom.
+                      // 5c) Tombol mengambang di dua sisi, di atas dok zoom:
+                      //     kiri = Loket & Emoji, kanan = Hewan, Pertahanan, Gudang.
+                      //     Naik sedikit saat bilah emoji terbuka.
+                      if (hasBar)
+                        Positioned(
+                          left: 12 + pad.left,
+                          top: topInset + 40,
+                          bottom: bottomInset +
+                              52 +
+                              (myAttackLeft <= 0 && _emojiBarOpen ? 54 : 0),
+                          child: Align(
+                            alignment: Alignment.bottomLeft,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.bottomLeft,
+                              child: _socialTools(me),
+                            ),
+                          ),
+                        ),
                       if (hasBar && me != null && me['eliminated_at'] == null)
                         Positioned(
                           right: 12 + pad.right,
-                          bottom: bottomInset + 52,
-                          child: _floatingTools(me, canAct),
+                          top: topInset + 40,
+                          bottom: bottomInset +
+                              52 +
+                              (myAttackLeft <= 0 && _emojiBarOpen ? 54 : 0),
+                          child: Align(
+                            alignment: Alignment.bottomRight,
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.bottomRight,
+                              child: _floatingTools(me, canAct),
+                            ),
+                          ),
                         ),
+
+                      // 5d) Gelembung peringatan: Lapor Polisi / Bajak Truk, hanya
+                      //     saat tersedia, di sisi layar menurut letak rumah lawan.
+                      if (hasBar)
+                        ..._rivalAlerts(order, me, canAct, pad, screen),
 
                       // 6) Bilah Aksi
                       if (hasBar) ...[
@@ -2188,22 +2211,6 @@ class _GameScreenState extends State<GameScreen>
       tooltip: 'Kembali',
       onTap: () => Navigator.of(context).maybePop(),
     );
-    final emojiBtn = _hudIcon(
-      icon: _emojiBarOpen ? Icons.emoji_emotions : Icons.emoji_emotions_outlined,
-      color: const Color(0xFFFFCA28),
-      tooltip: 'Kirim Emoji Reaksi',
-      onTap: () => setState(() => _emojiBarOpen = !_emojiBarOpen),
-    );
-    final myS = _states[_me];
-    final boothOpen = myS != null && _remaining(myS['booth_until']) > 0;
-    final boothBtn = (myS == null || myS['eliminated_at'] != null)
-        ? const SizedBox.shrink()
-        : _hudIcon(
-      icon: boothOpen ? Icons.storefront : Icons.storefront_outlined,
-      color: boothOpen ? const Color(0xFF69F0AE) : Colors.white,
-      tooltip: 'Loket Sampah',
-      onTap: _openBooth,
-    );
     final history = _hudIcon(
       icon: Icons.history,
       tooltip: 'Kabar terbaru',
@@ -2286,8 +2293,6 @@ class _GameScreenState extends State<GameScreen>
             ],
             Expanded(child: polMeter),
             const SizedBox(width: 2),
-            boothBtn,
-            emojiBtn,
             history,
           ],
         ),
@@ -2315,8 +2320,6 @@ class _GameScreenState extends State<GameScreen>
               const SizedBox(width: 6),
               code,
               const SizedBox(width: 2),
-              boothBtn,
-              emojiBtn,
               history,
             ],
           ),
@@ -2995,7 +2998,7 @@ class _GameScreenState extends State<GameScreen>
         final dockedRival = id != _me;
         // Rumah yang di-zoom: kartu sasaran (lawan) ditempel di atas layar.
         if (dockedRival) {
-          final w = min(stage.width - 24, 372.0);
+          final w = min(stage.width - 24, 280.0);
           docked = Positioned(
             left: stage.left + (stage.width - w) / 2,
             top: topInset + 6,
@@ -3027,7 +3030,7 @@ class _GameScreenState extends State<GameScreen>
       // Rumah sempit (banyak pemain di layar kecil): kartu tetangga akan saling
       // menimpa, jadi disusun zig-zag pada 2-3 tingkat ketinggian.
       final rows = ((w + 4) / houseW).ceil().clamp(1, 3).toInt();
-      final lift = (i % rows) * 92.0;
+      final lift = (i % rows) * 54.0;
       final bottom =
       max(topInset + 70.0 + bubbleH, roofY - 34 * s - 6 - lift);
 
@@ -3145,24 +3148,16 @@ class _GameScreenState extends State<GameScreen>
                   ],
                 ),
               ),
-              if (!isMe) ...[
+              if (!isMe && out) ...[
                 const SizedBox(width: 10),
-                SizedBox(
-                  width: 168,
-                  child: out
-                      ? Center(
-                    child: Text(
-                      'TERTIMBUN',
-                      style: TextStyle(
-                        color: Colors.red.shade300,
-                        fontSize: 11,
-                        letterSpacing: 1.2,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  )
-                      : _sabotageRow(id, s, me, canAct, ratio,
-                      vertical: false),
+                Text(
+                  'TERTIMBUN',
+                  style: TextStyle(
+                    color: Colors.red.shade300,
+                    fontSize: 11,
+                    letterSpacing: 1.2,
+                    fontWeight: FontWeight.w900,
+                  ),
                 ),
               ],
             ],
@@ -3194,22 +3189,19 @@ class _GameScreenState extends State<GameScreen>
             header,
             const SizedBox(height: 3),
             _meter(shownTrash, cap, _trashColor(shownRatio), height: 4),
-            if (!isMe) ...[
+            if (!isMe && out) ...[
               const SizedBox(height: 5),
-              if (out)
-                Center(
-                  child: Text(
-                    'TERTIMBUN',
-                    style: TextStyle(
-                      color: Colors.red.shade300,
-                      fontSize: 11,
-                      letterSpacing: 1.2,
-                      fontWeight: FontWeight.w900,
-                    ),
+              Center(
+                child: Text(
+                  'TERTIMBUN',
+                  style: TextStyle(
+                    color: Colors.red.shade300,
+                    fontSize: 11,
+                    letterSpacing: 1.2,
+                    fontWeight: FontWeight.w900,
                   ),
-                )
-              else
-                _sabotageRow(id, s, me, canAct, ratio, vertical: narrow),
+                ),
+              ),
             ],
           ],
         ),
@@ -3217,228 +3209,420 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  /// Tiga tombol sabotase ke satu lawan: Lempar Sampah, Sidak Dinas, Bajak Truk.
-  Widget _sabotageRow(
-      String id,
-      Map<String, dynamic> s,
-      Map<String, dynamic>? me,
-      bool canAct,
-      double ratio, {
-        required bool vertical,
-      }) {
-    final out = s['eliminated_at'] != null;
-    final prot = _remaining(s['protected_until']);
-    final rivalWl = _num(s['waste_level']).toInt();
-    final rivalHauling = _remaining(s['hauler_busy_until']) > 0;
-    final rivalViolating = _remaining(s['burn_penalty_until']) > 0 ||
-        rivalWl == 8 ||
-        rivalWl == 9 ||
-        ratio >= 0.70;
-
-    final throwLeft = me == null ? 0.0 : _remaining(me['throw_cooldown_until']);
-    final sabLeft =
-    me == null ? 0.0 : _remaining(me['sabotage_cooldown_until']);
-    final mine = me == null ? null : _live(me);
-
-    final rivalPending = _remaining(s['pending_attack_until']) > 0;
-    final isBounty = id == _bountyId;
-    final revenge = _hasRevenge(me, id);
-    final inspectCost = _inspectCost(id, me);
-    final hijackCost = _hijackCost(id, me);
-    // Dendam: tanpa jeda sabotase
-    final sabReady = sabLeft == 0 || revenge;
-
-    final canThrow = canAct &&
-        !out &&
-        prot == 0 &&
-        !rivalPending &&
-        throwLeft == 0 &&
-        mine != null &&
-        (mine.money >= 50 || (mine.money >= 10 && mine.trash >= 1));
-
-    final canInspect = canAct &&
-        !out &&
-        sabReady &&
-        !rivalPending &&
-        rivalViolating &&
-        mine != null &&
-        mine.money >= inspectCost;
-
-    final canHijack = canAct &&
-        !out &&
-        sabReady &&
-        rivalHauling &&
-        mine != null &&
-        mine.money >= hijackCost;
-
-    return Row(
-      children: [
-        Expanded(
-          child: _sabotageBtn(
-            icon: Icons.rocket_launch_rounded,
-            label: rivalPending
-                ? '…'
-                : (throwLeft > 0 ? '${throwLeft.ceil()}s' : '10+'),
-            tooltip:
-            'Lempar (pilih jenis: Biasa 10 · Karung 40 · Polusi 50 · Kembang Api 10). Lawan punya 2,5 dtk untuk Tangkis.${isBounty ? ' Buronan: +40 koin bila sampah mendarat.' : ''}',
-            color: const Color(0xFFFF7043),
-            enabled: canThrow,
-            vertical: vertical,
-            onTap: () => _openThrowMenu(id, me),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Expanded(
-          child: _sabotageBtn(
-            icon: Icons.policy_rounded,
-            label: (sabLeft > 0 && !revenge)
-                ? '${sabLeft.ceil()}s'
-                : '$inspectCost',
-            tooltip:
-            'Kirim Sidak Dinas (Biaya $inspectCost${isBounty ? ' · Buronan -30%, denda 35%' : ''}${revenge ? ' · Dendam -50%' : ''} · Aktif bila lawan habis bakar sampah / pakai Insinerator Polusi / sampah >70% · bisa ditangkis)',
-            color: const Color(0xFFE53935),
-            enabled: canInspect,
-            vertical: vertical,
-            onTap: () => _act('sabotage_inspect', {'p_target': id}),
-          ),
-        ),
-        const SizedBox(width: 4),
-        Expanded(
-          child: _sabotageBtn(
-            icon: Icons.u_turn_left_rounded,
-            label: (sabLeft > 0 && !revenge)
-                ? '${sabLeft.ceil()}s'
-                : '$hijackCost',
-            tooltip:
-            'Bajak Truk Sampah Lawan (Biaya $hijackCost${revenge ? ' · Dendam -50%' : ''} · Aktif saat truk lawan sedang mengangkut · tidak bisa ditangkis)',
-            color: const Color(0xFFFFB300),
-            enabled: canHijack,
-            vertical: vertical,
-            onTap: () => _act('sabotage_hijack', {'p_target': id}),
-          ),
-        ),
-      ],
-    );
-  }
-
   // ------------------------------------------------------ menu lemparan
 
-  void _openThrowMenu(String id, Map<String, dynamic>? me) {
-    if (me == null) return;
-    final mine = _live(me);
-    final base = 18 + _num(me['rooms_count']) * 1.5;
-    final fwLeft = _remaining(me['firework_cooldown_until']);
-    final normalAmt = min(mine.trash, base).floor();
-    final sackAmt = min(mine.trash, base * 2.5).floor();
+  // ----------------------------------------- popup lemparan (tekan lama rumah)
 
-    final kinds = <({
-    String kind,
-    String icon,
-    String title,
-    String desc,
-    int cost,
-    bool ok,
-    String? why
-    })>[
+  /// Rumah lawan yang sedang ditahan lama: popup pilihan lemparan muncul di atasnya.
+  String? _throwFor;
+
+  List<({String kind, String icon, String label, int cost, bool ok})>
+  _throwKinds(Map<String, dynamic> me) {
+    final mine = _live(me);
+    final fwLeft = _remaining(me['firework_cooldown_until']);
+    return [
       (
       kind: 'normal',
       icon: '🗑️',
-      title: 'Lempar Biasa',
-      desc: '~$normalAmt sampah · jeda 4 dtk · Tangkis 2,5 dtk',
+      label: 'Biasa',
       cost: 10,
       ok: mine.money >= 10 && mine.trash >= 1,
-      why: null,
       ),
       (
       kind: 'sack',
       icon: '🛍️',
-      title: 'Sekarung Besar',
-      desc: '~$sackAmt sampah (×2,5) · jeda 10 dtk · Tangkis 3,5 dtk',
+      label: 'Karung',
       cost: 40,
       ok: mine.money >= 40 && mine.trash >= 1,
-      why: null,
       ),
       (
       kind: 'smog',
       icon: '☣️',
-      title: 'Lemparan Polusi',
-      desc:
-      'Income lawan −35% selama 12 dtk, polusi global +5. Bila ditangkis, asap berbalik ke kamu.',
+      label: 'Polusi',
       cost: 50,
       ok: mine.money >= 50,
-      why: null,
       ),
       (
       kind: 'firework',
       icon: '🎆',
-      title: 'Kembang Api (Gertak)',
-      desc:
-      'Tampak persis seperti lempar biasa. 30%: membakar 1 sampah lawan & polusi +15. Isi ulang 8 dtk.',
+      label: 'Gertak',
       cost: 10,
       ok: mine.money >= 10 && mine.trash >= 1 && fwLeft == 0,
-      why: fwLeft > 0 ? 'Isi ulang ${fwLeft.ceil()}s' : null,
       ),
     ];
+  }
 
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true, // layar landscape pendek: tidak terpotong
-      constraints: const BoxConstraints(maxWidth: 520),
-      backgroundColor: const Color(0xFF1A2820),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(8, 14, 8, 10),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  'Lempar ke ${_name(id)}',
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
+  /// Alasan semua lemparan ke [id] sedang terkunci (null = boleh).
+  String? _throwBlockReason(String id, Map<String, dynamic> me) {
+    final st = _states[id];
+    if (st == null || st['eliminated_at'] != null) return 'Sudah tertimbun';
+    final prot = _remaining(st['protected_until']);
+    if (prot > 0) return 'Dilindungi ${prot.ceil()}s';
+    if (_remaining(st['pending_attack_until']) > 0) {
+      return 'Sedang diserang orang lain';
+    }
+    final left = _remaining(me['throw_cooldown_until']);
+    if (left > 0) return 'Jeda lempar ${left.ceil()}s';
+    return null;
+  }
+
+  static const _throwDesc = {
+    'normal': 'Lempar Biasa · jeda 4 dtk · Tangkis 2,5 dtk',
+    'sack': 'Sekarung Besar ×2,5 · jeda 10 dtk · Tangkis 3,5 dtk',
+    'smog': 'Polusi: income lawan -35% selama 12 dtk. Bila ditangkis, asap berbalik ke kamu.',
+    'firework': 'Kembang Api: tampak seperti lempar biasa. 30% membakar sampah lawan.',
+  };
+
+  /// Barrier + gelembung pilihan lemparan beranimasi di atas rumah [_throwFor].
+  List<Widget> _throwPopup(
+      List<String> order,
+      Rect stage,
+      Size screen,
+      Map<String, dynamic>? me,
+      double topInset,
+      ) {
+    final id = _throwFor;
+    if (id == null || me == null || me['eliminated_at'] != null) {
+      return const [];
+    }
+    final i = order.indexOf(id);
+    final st = _states[id];
+    if (i < 0 || st == null || st['eliminated_at'] != null) return const [];
+
+    final sc = _cam.scale;
+    final o = _cam.origin(stage);
+    final cx = o.dx + (i * kStreetSlotW + kStreetSlotW / 2) * sc;
+    final rooms = _num(st['rooms_count']).toInt();
+    final floors = min(3, max(1, (rooms / 4).ceil()));
+    final roofY = o.dy + (236.0 - floors * 50.0) * sc;
+
+    const bubble = 56.0;
+    const gap = 8.0;
+    const w = 4 * bubble + 3 * gap;
+    final left = (cx - w / 2)
+        .clamp(8.0, max(8.0, screen.width - w - 8))
+        .toDouble();
+    final bottomY = max(topInset + 118.0, roofY - 34 * sc - 62);
+
+    final block = _throwBlockReason(id, me);
+    final kinds = _throwKinds(me);
+
+    Widget one(int idx) {
+      final k = kinds[idx];
+      final ok = block == null && k.ok;
+      return TweenAnimationBuilder<double>(
+        key: ValueKey('throw-${k.kind}'),
+        tween: Tween<double>(begin: 0, end: 1),
+        duration: Duration(milliseconds: 240 + idx * 70),
+        curve: Curves.easeOutBack,
+        builder: (context, v, child) => Opacity(
+          opacity: v.clamp(0.0, 1.0).toDouble(),
+          child: Transform.translate(
+            offset: Offset(0, (1 - v) * 26),
+            child: Transform.scale(scale: 0.4 + 0.6 * v, child: child),
+          ),
+        ),
+        child: SizedBox(
+          width: bubble,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Tooltip(
+                message: _throwDesc[k.kind] ?? '',
+                child: Opacity(
+                  opacity: ok ? 1 : 0.45,
+                  child: Material(
+                    color: const Color(0xFF1A2820),
+                    elevation: 6,
+                    shape: CircleBorder(
+                      side: BorderSide(
+                          color: const Color(0xFFFF7043)
+                              .withValues(alpha: ok ? 0.95 : 0.4),
+                          width: 2),
+                    ),
+                    child: InkWell(
+                      customBorder: const CircleBorder(),
+                      onTap: () {
+                        if (block != null) {
+                          _toast(block, error: true);
+                        } else if (!k.ok) {
+                          _toast(
+                              k.kind == 'firework' &&
+                                  _remaining(me['firework_cooldown_until']) >
+                                      0
+                                  ? 'Kembang api sedang isi ulang.'
+                                  : 'Uang atau sampah belum cukup.',
+                              error: true);
+                        } else if (_canActNow) {
+                          setState(() => _throwFor = null);
+                          _act('throw_trash',
+                              {'p_target': id, 'p_kind': k.kind});
+                        }
+                      },
+                      child: SizedBox(
+                        width: bubble - 6,
+                        height: bubble - 6,
+                        child: Center(
+                          child: Text(k.icon,
+                              style: const TextStyle(fontSize: 26)),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 6),
-                for (final k in kinds)
-                  ListTile(
-                    enabled: k.ok,
-                    dense: true,
-                    leading: Text(k.icon, style: const TextStyle(fontSize: 26)),
-                    title: Text(
-                      k.title,
-                      style: TextStyle(
-                        color: k.ok ? Colors.white : Colors.white38,
-                        fontWeight: FontWeight.w800,
+              ),
+              const SizedBox(height: 3),
+              Text(k.label,
+                  style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      shadows: [Shadow(blurRadius: 4, color: Colors.black)])),
+              Text('${k.cost}',
+                  style: const TextStyle(
+                      color: Color(0xFFFFCA28),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w900,
+                      shadows: [Shadow(blurRadius: 4, color: Colors.black)])),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return [
+      Positioned.fill(
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: () => setState(() => _throwFor = null),
+          child: ColoredBox(color: Colors.black.withValues(alpha: 0.18)),
+        ),
+      ),
+      Positioned(
+        left: left,
+        bottom: screen.height - bottomY,
+        width: w,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1A2820).withValues(alpha: 0.95),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(
+                    color: const Color(0xFFFF7043).withValues(alpha: 0.8)),
+              ),
+              child: Text(
+                block == null
+                    ? 'Lempar ke ${_name(id)}'
+                    : '${_name(id)} · $block',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    color: block == null ? Colors.white : Colors.red.shade200,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [for (var k = 0; k < kinds.length; k++) one(k)],
+            ),
+          ],
+        ),
+      ),
+    ];
+  }
+
+  // ------------------------------- gelembung peringatan (lapor / bajak)
+
+  /// Gelembung di sisi layar yang HANYA muncul bila Sidak Dinas atau Bajak
+  /// Truk terhadap seorang lawan sedang tersedia. Sisi kiri/kanan mengikuti
+  /// letak rumah lawan relatif terhadap rumah sendiri.
+  List<Widget> _rivalAlerts(
+      List<String> order,
+      Map<String, dynamic>? me,
+      bool canAct,
+      EdgeInsets pad,
+      Size screen,
+      ) {
+    if (me == null || me['eliminated_at'] != null || !canAct) return const [];
+    final mine = _live(me);
+    final myIdx = order.indexOf(_me);
+    final sabLeft = _remaining(me['sabotage_cooldown_until']);
+
+    final lefts = <({int dist, Widget w})>[];
+    final rights = <({int dist, Widget w})>[];
+    for (var i = 0; i < order.length; i++) {
+      final id = order[i];
+      if (id == _me) continue;
+      final st = _states[id];
+      if (st == null || st['eliminated_at'] != null) continue;
+
+      final cap = max(1.0, _num(st['trash_capacity']));
+      final ratio = _live(st).trash / cap;
+      final rivalWl = _num(st['waste_level']).toInt();
+      final violating = _remaining(st['burn_penalty_until']) > 0 ||
+          rivalWl == 8 ||
+          rivalWl == 9 ||
+          ratio >= 0.70;
+      final hauling = _remaining(st['hauler_busy_until']) > 0;
+      final pending = _remaining(st['pending_attack_until']) > 0;
+      final revenge = _hasRevenge(me, id);
+      final ready = sabLeft == 0 || revenge;
+      final inspectCost = _inspectCost(id, me);
+      final hijackCost = _hijackCost(id, me);
+      final isLeft = myIdx >= 0 ? i < myIdx : i < order.length / 2;
+      final dist = myIdx >= 0 ? (i - myIdx).abs() : i;
+
+      void add(Widget w) =>
+          (isLeft ? lefts : rights).add((dist: dist, w: w));
+
+      if (ready && !pending && violating && mine.money >= inspectCost) {
+        add(_alertBubble(
+          key: 'inspect-$id',
+          icon: Icons.policy_rounded,
+          color: const Color(0xFFE53935),
+          title: 'Lapor ${_name(id)}',
+          cost: inspectCost,
+          left: isLeft,
+          tip:
+          'Sidak Dinas ke ${_name(id)} (bisa ditangkis). Lawan melanggar: habis bakar sampah / insinerator polusi / sampah >70%.',
+          onTap: () => _act('sabotage_inspect', {'p_target': id}),
+        ));
+      }
+      if (ready && hauling && mine.money >= hijackCost) {
+        add(_alertBubble(
+          key: 'hijack-$id',
+          icon: Icons.u_turn_left_rounded,
+          color: const Color(0xFFFFB300),
+          title: 'Bajak truk ${_name(id)}',
+          cost: hijackCost,
+          left: isLeft,
+          tip:
+          'Bajak truk sampah ${_name(id)} yang sedang mengangkut (tidak bisa ditangkis).',
+          onTap: () => _act('sabotage_hijack', {'p_target': id}),
+        ));
+      }
+    }
+    if (lefts.isEmpty && rights.isEmpty) return const [];
+
+    List<Widget> top3(List<({int dist, Widget w})> l) {
+      l.sort((a, b) => a.dist.compareTo(b.dist));
+      return [for (final e in l.take(3)) e.w];
+    }
+
+    Widget column(List<Widget> items, CrossAxisAlignment al) => Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: al,
+      children: [
+        for (final w in items)
+          Padding(padding: const EdgeInsets.only(bottom: 8), child: w),
+      ],
+    );
+
+    // Digeser ke dalam supaya tidak menimpa kolom tombol mengambang.
+    const inset = 12.0 + 46 + 8;
+    return [
+      if (lefts.isNotEmpty)
+        Positioned(
+          left: inset + pad.left,
+          top: screen.height * 0.30,
+          child: column(top3(lefts), CrossAxisAlignment.start),
+        ),
+      if (rights.isNotEmpty)
+        Positioned(
+          right: inset + pad.right,
+          top: screen.height * 0.30,
+          child: column(top3(rights), CrossAxisAlignment.end),
+        ),
+    ];
+  }
+
+  Widget _alertBubble({
+    required String key,
+    required IconData icon,
+    required Color color,
+    required String title,
+    required int cost,
+    required bool left,
+    required String tip,
+    required VoidCallback onTap,
+  }) {
+    return TweenAnimationBuilder<double>(
+      key: ValueKey('alert-$key'),
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: const Duration(milliseconds: 380),
+      curve: Curves.easeOutBack,
+      builder: (context, v, child) => Opacity(
+        opacity: v.clamp(0.0, 1.0).toDouble(),
+        child: Transform.translate(
+          offset: Offset((left ? -1 : 1) * (1 - v) * 60, 0),
+          child: child,
+        ),
+      ),
+      child: AnimatedBuilder(
+        animation: _anim,
+        builder: (context, child) => Transform.scale(
+          scale: 1 + 0.045 * sin(_anim.value * 2 * pi),
+          child: child,
+        ),
+        child: Tooltip(
+          message: tip,
+          child: Material(
+            color: const Color(0xFF1A2820).withValues(alpha: 0.94),
+            elevation: 6,
+            shape: StadiumBorder(
+                side: BorderSide(color: color.withValues(alpha: 0.9), width: 2)),
+            child: InkWell(
+              customBorder: const StadiumBorder(),
+              onTap: onTap,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(8, 6, 10, 6),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 170),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (left)
+                        Icon(Icons.chevron_left, size: 16, color: color),
+                      Container(
+                        width: 26,
+                        height: 26,
+                        decoration:
+                        BoxDecoration(color: color, shape: BoxShape.circle),
+                        child: Icon(icon, size: 16, color: Colors.black87),
                       ),
-                    ),
-                    subtitle: Text(
-                      k.why ?? k.desc,
-                      style: TextStyle(
-                        color: k.ok ? Colors.white70 : Colors.white30,
-                        fontSize: 12,
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w800)),
+                            Text('$cost',
+                                style: const TextStyle(
+                                    color: Color(0xFFFFCA28),
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900)),
+                          ],
+                        ),
                       ),
-                    ),
-                    trailing: Text(
-                      '${k.cost}',
-                      style: TextStyle(
-                        color: k.ok ? const Color(0xFFFFCA28) : Colors.white30,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 16,
-                      ),
-                    ),
-                    onTap: k.ok
-                        ? () {
-                      Navigator.of(ctx).pop();
-                      _act('throw_trash', {'p_target': id, 'p_kind': k.kind});
-                    }
-                        : null,
+                      if (!left)
+                        Icon(Icons.chevron_right, size: 16, color: color),
+                    ],
                   ),
-              ],
+                ),
+              ),
             ),
           ),
         ),
@@ -3503,45 +3687,39 @@ class _GameScreenState extends State<GameScreen>
 
   // ------------------------------------------------ tombol mengambang
 
-  /// Tombol bulat kecil di sisi layar: Hewan & Pertahanan (pagar).
-  Widget _floatingTools(Map<String, dynamic> me, bool canAct) {
-    final defense = _num(me['defense']).toInt();
-    final maxed = defense >= _maxDefense;
-    final defCost = 150 * (defense + 1);
-    final money = _live(me).money;
-    final pets = _petRows[_me]?.length ?? 0;
-
-    Widget fab({
-      required IconData icon,
-      required Color color,
-      required String tip,
-      required String badge,
-      required VoidCallback onTap,
-      bool dim = false,
-    }) {
-      return Tooltip(
-        message: tip,
-        child: Opacity(
-          opacity: dim ? 0.55 : 1,
-          child: SizedBox(
-            width: 46,
-            height: 46,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: [
-                Positioned.fill(
-                  child: Material(
-                    color: _ink.withValues(alpha: 0.82),
-                    shape: CircleBorder(
-                        side: BorderSide(color: color.withValues(alpha: 0.8))),
-                    elevation: 3,
-                    child: InkWell(
-                      customBorder: const CircleBorder(),
-                      onTap: onTap,
-                      child: Icon(icon, size: 22, color: color),
-                    ),
+  Widget _fab({
+    required IconData icon,
+    required Color color,
+    required String tip,
+    String? badge,
+    required VoidCallback onTap,
+    bool dim = false,
+    double size = 46,
+  }) {
+    return Tooltip(
+      message: tip,
+      child: Opacity(
+        opacity: dim ? 0.55 : 1,
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned.fill(
+                child: Material(
+                  color: _ink.withValues(alpha: 0.82),
+                  shape: CircleBorder(
+                      side: BorderSide(color: color.withValues(alpha: 0.8))),
+                  elevation: 3,
+                  child: InkWell(
+                    customBorder: const CircleBorder(),
+                    onTap: onTap,
+                    child: Icon(icon, size: size * 0.48, color: color),
                   ),
                 ),
+              ),
+              if (badge != null)
                 Positioned(
                   right: -3,
                   top: -3,
@@ -3559,12 +3737,55 @@ class _GameScreenState extends State<GameScreen>
                             fontWeight: FontWeight.w900)),
                   ),
                 ),
-              ],
-            ),
+            ],
           ),
         ),
-      );
-    }
+      ),
+    );
+  }
+
+
+  /// Tombol bulat di sisi kiri: Loket Sampah (jual-beli antar pemain) & Emoji.
+  Widget _socialTools(Map<String, dynamic>? me) {
+    final alive = me != null && me['eliminated_at'] == null;
+    final boothLeft = alive ? _remaining(me['booth_until']) : 0.0;
+    final boothOpen = boothLeft > 0;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (alive) ...[
+          _fab(
+            icon: boothOpen ? Icons.storefront : Icons.storefront_outlined,
+            color: boothOpen ? const Color(0xFF69F0AE) : Colors.white,
+            tip: 'Loket Sampah',
+            badge: boothOpen ? '${boothLeft.ceil()}s' : null,
+            onTap: _openBooth,
+          ),
+          const SizedBox(height: 10),
+        ],
+        _fab(
+          icon: _emojiBarOpen
+              ? Icons.emoji_emotions
+              : Icons.emoji_emotions_outlined,
+          color: const Color(0xFFFFCA28),
+          tip: 'Kirim Emoji Reaksi',
+          onTap: () => setState(() => _emojiBarOpen = !_emojiBarOpen),
+        ),
+      ],
+    );
+  }
+
+  /// Tombol bulat kecil di sisi kanan: Hewan, Pertahanan & Gudang.
+  Widget _floatingTools(Map<String, dynamic> me, bool canAct) {
+    final defense = _num(me['defense']).toInt();
+    final maxed = defense >= _maxDefense;
+    final defCost = 150 * (defense + 1);
+    final money = _live(me).money;
+    final pets = _petRows[_me]?.length ?? 0;
+    final w = _whLive(_me);
+    final pourAmt = _pourAmt(me, w);
+
+    final fab = _fab;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -3592,6 +3813,72 @@ class _GameScreenState extends State<GameScreen>
               _act('buy_defense');
             }
           },
+        ),
+        // Anak tombol gudang: meluncur ke atas dari tombol Gudang begitu
+        // gudang berdiri, dan meluncur turun lagi bila belum/tidak ada.
+        TweenAnimationBuilder<double>(
+          tween: Tween<double>(begin: 0, end: w.built ? 1 : 0),
+          duration: const Duration(milliseconds: 280),
+          curve: Curves.easeOutCubic,
+          builder: (context, v, _) {
+            if (v <= 0.001) return const SizedBox.shrink();
+            return ClipRect(
+              child: Align(
+                alignment: Alignment.bottomCenter,
+                heightFactor: v,
+                child: Opacity(
+                  opacity: v,
+                  child: Transform.translate(
+                    offset: Offset(0, (1 - v) * 30),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const SizedBox(height: 10),
+                        fab(
+                          icon: Icons.local_shipping_rounded,
+                          color: Colors.orangeAccent,
+                          tip: 'Buang gudang (panggil truk)',
+                          size: 40,
+                          badge: w.truckProgress != null
+                              ? '${w.truckLeft.ceil()}s'
+                              : (w.truckReadyLeft > 0
+                              ? '${w.truckReadyLeft.ceil()}s'
+                              : '${w.stored.floor()}'),
+                          dim: w.truckProgress != null ||
+                              w.truckReadyLeft > 0 ||
+                              w.stored < 1,
+                          onTap: _callWarehouseTruck,
+                        ),
+                        const SizedBox(height: 8),
+                        fab(
+                          icon: Icons.move_down_rounded,
+                          color: Colors.lightGreenAccent,
+                          tip: 'Kirim sampah ke gudang',
+                          size: 40,
+                          badge: w.pourLeft > 0
+                              ? '${w.pourLeft.ceil()}s'
+                              : '~$pourAmt',
+                          dim: w.pourLeft > 0 || pourAmt < 1,
+                          onTap: _pourToWarehouse,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        fab(
+          icon: Icons.warehouse_rounded,
+          color: Colors.orange,
+          tip: w.built ? 'Upgrade gudang' : 'Bangun gudang',
+          badge: w.built
+              ? '${w.stored.floor()}/${w.cap.floor()}'
+              : '${Wh.tierCost[1]}',
+          dim: !w.built && money < Wh.tierCost[1],
+          onTap: _openWarehouse,
         ),
       ],
     );
@@ -3933,29 +4220,16 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  // --- gestur di adegan kost sendiri ---
-  // Ketuk 2x kotak sampah kiri = tuang ke gudang; ketuk 2x gudang = panggil
-  // truk (buang isi gudang); tekan lama gudang = panel upgrade.
-  String? _lastHit;
-  int _lastHitMs = 0;
-
-  /// Objek di bawah jari pada kost milik sendiri yang sedang di-zoom:
-  /// 'bin' (kotak sampah kiri), 'wh' (gudang / lahan kosong), atau null.
-  String? _sceneHit(
-      Offset pos, Rect stage, List<String> order, String? focusId) {
-    if (focusId != _me || _states[_me]?['eliminated_at'] != null) return null;
-    final o = _cam.origin(stage);
-    final wx = (pos.dx - o.dx) / _cam.scale;
-    final wy = (pos.dy - o.dy) / _cam.scale;
-    final i = order.indexOf(_me);
-    if (i < 0) return null;
-    final lx = wx - i * 400.0; // koordinat lokal rumah
-    final built = _whLive(_me).built;
-    if (lx >= 296 && lx <= 400 && wy >= (built ? 120 : 190) && wy <= 246) {
-      return 'wh';
-    }
-    if (lx >= 34 && lx <= 110 && wy >= 168 && wy <= 246) return 'bin';
-    return null;
+  /// Perkiraan jumlah sampah yang akan dituang ke gudang saat ini.
+  int _pourAmt(Map<String, dynamic> me, WhLive w) {
+    if (!w.built) return 0;
+    return Wh.pourAmount(
+      liveTrash: _live(me).trash,
+      trashCapacity: _num(me['trash_capacity']),
+      stored: w.stored,
+      tier: w.tier,
+      comps: w.comps,
+    );
   }
 
   bool get _canActNow =>
@@ -3966,8 +4240,7 @@ class _GameScreenState extends State<GameScreen>
     if (me == null) return;
     final w = _whLive(_me);
     if (!w.built) {
-      _toast('Bangun gudang dulu: tekan lama lahan kosong di kanan.',
-          error: true);
+      _toast('Bangun gudang dulu lewat tombol Gudang.', error: true);
       return;
     }
     final wasteLv = _num(me['waste_level']).toInt();
@@ -3979,13 +4252,7 @@ class _GameScreenState extends State<GameScreen>
       _toast('Gerobak masih jeda ${w.pourLeft.ceil()}s.', error: true);
       return;
     }
-    final amt = Wh.pourAmount(
-      liveTrash: _live(me).trash,
-      trashCapacity: _num(me['trash_capacity']),
-      stored: w.stored,
-      tier: w.tier,
-      comps: w.comps,
-    );
+    final amt = _pourAmt(me, w);
     if (amt < 1) {
       _toast(w.cap - w.stored < 1 ? 'Gudang penuh.' : 'Kotak sampah kosong.',
           error: true);
@@ -4029,19 +4296,17 @@ class _GameScreenState extends State<GameScreen>
   }
 
   void _openWarehouse() {
-    showModalBottomSheet<void>(
+    showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      constraints: const BoxConstraints(maxWidth: 520),
-      backgroundColor: const Color(0xFF1A2820),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
-      ),
-      builder: (ctx) => AnimatedBuilder(
-        animation: _anim,
-        builder: (ctx, _) => SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
+      builder: (ctx) => Dialog(
+        backgroundColor: const Color(0xFF1A2820),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460, maxHeight: 600),
+          child: AnimatedBuilder(
+            animation: _anim,
+            builder: (ctx, _) => SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
               child: _warehousePanel(),
             ),
@@ -4123,9 +4388,8 @@ class _GameScreenState extends State<GameScreen>
       children.addAll([
         const Text(
           'Lahan kosong di sisi kanan kost. Gudang punya kapasitas sendiri, '
-              'terpisah dari kotak sampah. Setelah dibangun: ketuk 2× kotak '
-              'kiri untuk menuang, ketuk 2× gudang untuk memanggil truk, '
-              'tekan lama gudang untuk upgrade.',
+              'terpisah dari kotak sampah. Setelah dibangun, muncul tombol '
+              'kirim sampah dan buang gudang di atas tombol Gudang.',
           style: TextStyle(color: Colors.white70, fontSize: 12.5),
         ),
         const SizedBox(height: 10),
@@ -4158,8 +4422,8 @@ class _GameScreenState extends State<GameScreen>
     ]);
 
     children.add(const Text(
-      'Ketuk 2× kotak sampah kiri: tuang ke gudang · '
-          'Ketuk 2× gudang: panggil truk',
+      'Tombol kecil di atas tombol Gudang: kirim sampah ke gudang '
+          'dan buang gudang (panggil truk).',
       style: TextStyle(color: Colors.white54, fontSize: 11.5),
     ));
     children.add(const SizedBox(height: 8));
@@ -4496,72 +4760,6 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _sabotageBtn({
-    required IconData icon,
-    required String label,
-    required String tooltip,
-    required Color color,
-    required bool enabled,
-    required VoidCallback onTap,
-    bool vertical = false,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: SizedBox(
-        height: vertical ? 40 : 34,
-        child: FilledButton(
-          style: FilledButton.styleFrom(
-            backgroundColor:
-            enabled ? color : Colors.white.withValues(alpha: 0.08),
-            foregroundColor: enabled ? Colors.white : Colors.white38,
-            padding: const EdgeInsets.symmetric(horizontal: 2),
-            minimumSize: Size.zero,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
-          ),
-          onPressed: enabled ? onTap : null,
-          // Kartu sempit (tampilan semua tetangga di layar kecil): ikon di atas, angka di bawah.
-          child: vertical
-              ? Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 13),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  style: const TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          )
-              : Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 13),
-              const SizedBox(width: 3),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _ActionButton extends StatelessWidget {
