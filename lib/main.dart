@@ -851,7 +851,7 @@ class _LobbyHomeState extends State<LobbyHome>
 
   Widget _buildFooter({bool left = false}) {
     return Text(
-      'Sampahnya! v1.4.8 (2410:2)',
+      'Sampahnya! v1.4.9 (2410:2)',
       textAlign: left ? TextAlign.left : TextAlign.center,
       style: TextStyle(
         color: Colors.white.withValues(alpha: 0.4),

@@ -47,7 +47,7 @@ extension KostPainterAmbient on KostPainter {
           : (burn > 0.8 ? (1 - burn) / 0.2 : 1.0);
       a = math.max(a, 0.30 + 0.55 * env);
     }
-    if (d.worldEvent == 'rain_flood') a *= 0.65;
+    if (_isRainy) a *= 0.65;
     return _c01(a);
   }
 
@@ -699,7 +699,7 @@ extension KostPainterAmbient on KostPainter {
     final deep = 1 - _ease((mid - 0.02) / 0.14);
     var k = _lerp(day, _lerp(0.40, 0.06, deep), _night);
     k *= 1 - 0.35 * _ease((_air - 0.5) / 0.4);
-    if (d.worldEvent == 'rain_flood') k *= 0.6;
+    if (_isRainy) k *= 0.6;
     return k.clamp(0.04, 1.0).toDouble();
   }
 
@@ -719,7 +719,7 @@ extension KostPainterAmbient on KostPainter {
     if (d.compact) return;
     final dens = _walkerDensity;
     final air = _air;
-    final rain = d.worldEvent == 'rain_flood';
+    final rain = _isRainy;
     final len = math.max(300.0, worldR - worldL);
     final n = math.max(1, (len / 85).round());
     final gap = len / n;

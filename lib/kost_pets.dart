@@ -179,7 +179,8 @@ class PetLoadout {
 
   /// Cek sisi klien sebelum memanggil `buy_pet` (server tetap yang memutuskan).
   /// Mengembalikan pesan galat, atau null bila boleh.
-  String? whyCannotBuy(PetDef def, int slot, double money) {
+  String? whyCannotBuy(PetDef def, int slot, double money,
+      {double priceMul = 1.0}) {
     if (slot < 1 || slot > Pets.maxSlots) return 'Slot tidak valid.';
     final cur = inSlot(slot);
     if (cur?.def.key == def.key) return 'Sudah ada di slot ini.';
@@ -188,7 +189,7 @@ class PetLoadout {
         return 'Spesies yang sama tidak boleh di dua slot.';
       }
     }
-    final net = def.price - (cur?.def.refund ?? 0);
+    final net = (def.price * priceMul).floor() - (cur?.def.refund ?? 0);
     if (money < net) return 'Uang belum cukup.';
     return null;
   }

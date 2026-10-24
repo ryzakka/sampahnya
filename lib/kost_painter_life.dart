@@ -798,8 +798,10 @@ extension KostPainterResidents on KostPainter {
   }
 
   void _drawRats(Canvas canvas, double t) {
-    if (d.compact || !(d.trashRatio >= 0.75 || d.eliminated)) return;
-    final guards = (d.pets?.hasSpecies(PetSpecies.cat) ?? false) ? 2 : 4;
+    final plague = d.worldEvent == 'rat_plague';
+    if (d.compact || !(d.trashRatio >= 0.75 || d.eliminated || plague)) return;
+    final guards = ((d.pets?.hasSpecies(PetSpecies.cat) ?? false) ? 2 : 4) *
+        (plague ? 2 : 1); // wabah tikus: dua kali lipat
     for (var k = 0; k < guards; k++) {
       final base = k % 2 == 0 ? 350.0 : 50.0;
       final ang = t * 1.6 + k * 2;
@@ -1147,7 +1149,7 @@ extension KostPainterFx on KostPainter {
   // ------------------------------------------- efek sinematik & dramatis
 
   void _drawGodRays(Canvas canvas, double t, double p) {
-    if (d.compact || p > 0.45 || d.eliminated || d.worldEvent == 'rain_flood') {
+    if (d.compact || p > 0.45 || d.eliminated || _isRainy) {
       return;
     }
     // Berkas cahaya hanya saat matahari tinggi (siang), bukan senja/malam.

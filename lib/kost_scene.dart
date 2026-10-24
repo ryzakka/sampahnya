@@ -19,6 +19,9 @@ part 'kost_street.dart';
 part 'kost_painter_warehouse.dart';
 part 'kost_painter_pets.dart';
 part 'kost_painter_biome.dart';
+part 'kost_painter_weather.dart';
+part 'kost_painter_eventfx.dart';
+part 'kost_painter_trees.dart';
 
 final Stopwatch _clock = Stopwatch()..start();
 
@@ -37,6 +40,7 @@ enum FxType {
   collapse,
   emoji,
   parry,
+  quake, // dampak gempa (dari game_events 'quake_hit')
 }
 
 /// Jenis lemparan: biasa, sekarung besar, gas beracun, atau kembang api
@@ -226,6 +230,11 @@ class KostSceneData {
     this.warehouse,
     this.pets,
     this.biome = KostBiome.kota,
+    this.pendingEvent,
+    this.pendingLeft = 0,
+    this.eventAge = 99,
+    this.eventLeft = 99,
+    this.eventChained = false,
   });
 
   /// Gudang sampah di sisi kanan kost; null = tidak digambar (lobi dll).
@@ -235,6 +244,21 @@ class KostSceneData {
 
   /// Tema latar belakang ruangan ini (acak tapi stabil dari id ruangan).
   final KostBiome biome;
+
+  /// Event yang sudah diumumkan tapi belum aktif (fase peringatan) dan sisa
+  /// detik sampai aktif. null = tidak ada.
+  final String? pendingEvent;
+  final double pendingLeft;
+
+  /// Detik sejak [worldEvent] mulai (untuk fade-in / air banjir naik).
+  final double eventAge;
+
+  /// Sisa detik event aktif. NEGATIF = event sudah selesai dan sedang
+  /// memudar (-eventLeft = detik sejak selesai).
+  final double eventLeft;
+
+  /// true bila event ini lanjutan langsung hujan deras -> banjir (tanpa fade).
+  final bool eventChained;
 
 
   /// Fase siang-malam 0..1 (0 = tengah malam, 0.25 = matahari terbit,
@@ -333,6 +357,11 @@ class KostSceneData {
         warehouse: warehouse,
         pets: pets,
         biome: biome,
+        pendingEvent: pendingEvent,
+        pendingLeft: pendingLeft,
+        eventAge: eventAge,
+        eventLeft: eventLeft,
+        eventChained: eventChained,
       );
 
   /// Salinan dengan [compact] / [facingRight] diganti (dipakai mode jalan).
@@ -369,6 +398,11 @@ class KostSceneData {
     warehouse: warehouse,
     pets: pets,
     biome: biome,
+    pendingEvent: pendingEvent,
+    pendingLeft: pendingLeft,
+    eventAge: eventAge,
+    eventLeft: eventLeft,
+    eventChained: eventChained,
   );
 }
 

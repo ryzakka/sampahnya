@@ -1198,9 +1198,13 @@ class KostStreetPainter extends CustomPainter {
     for (var i = 0; i < houses.length; i++) {
       final hd = houses[i];
       final hauling = hd.haulProgress != null;
+      // Truk khusus gudang juga digambar lewat lapisan ini (_whTruckLayer di
+      // dalam _truckLayer), jadi rumah dengan truk gudang aktif tidak boleh
+      // dilewati walau truk angkut biasa sedang tidak jalan.
+      final whTruck = hd.warehouse?.truckProgress != null;
       final hjVictim = hd.fx.any((f) =>
       f.type == FxType.hijack && f.amount.round() != 1 && f.age >= 0);
-      if (!hauling && !hjVictim) continue;
+      if (!hauling && !hjVictim && !whTruck) continue;
       final x0 = i * _w;
       final kp =
           painters[i] ?? KostPainter(hd.withView(compact: compact), _repaint);

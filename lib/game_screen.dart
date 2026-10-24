@@ -687,6 +687,10 @@ class _GameScreenState extends State<GameScreen>
           _ensureFx(actor, FxType.emoji, amount: amt);
         }
         break;
+      case 'quake_hit':
+      // dampak gempa di kost target (sampah tumpah, gudang retak)
+        _ensureFx(target, FxType.quake, amount: amt);
+        break;
       case 'eliminated':
         if (target != null &&
             _cine.playBuried(
@@ -981,6 +985,73 @@ class _GameScreenState extends State<GameScreen>
     return ev;
   }
 
+  // ---- visual event: durasi (cermin _event_duration di server), fade & rantai
+  static const Map<String, double> _evDurTable = {
+    'heavy_rain': 12,
+    'strong_wind': 20,
+    'drought': 25,
+    'blackout': 18,
+    'rat_plague': 22,
+    'earthquake': 8,
+    'night_market': 20,
+  };
+  static const double _evFadeSec = 1.6;
+
+  String? _evSeen; // event aktif terakhir yang terlihat
+  String? _evLinger; // event yang baru berakhir (masih memudar)
+  int _evEndMs = 0;
+  bool _evChained = false; // hujan deras -> banjir langsung berlanjut
+
+  void _trackWorldEvent() {
+    final ev = _activeWorldEvent;
+    if (ev == _evSeen) return;
+    final prev = _evSeen;
+    _evChained = prev == 'heavy_rain' && ev == 'rain_flood';
+    if (ev == null) {
+      _evLinger = prev;
+      _evEndMs = sceneNowMs();
+    } else {
+      _evLinger = null;
+    }
+    _evSeen = ev;
+  }
+
+  double get _evSinceEnd => (sceneNowMs() - _evEndMs) / 1000.0;
+
+  /// Event untuk VISUAL saja: yang aktif, atau yang baru berakhir (memudar).
+  /// Logika UI (blokir tombol dll) tetap memakai [_activeWorldEvent].
+  String? get _visualWorldEvent {
+    _trackWorldEvent();
+    final ev = _activeWorldEvent;
+    if (ev != null) return ev;
+    if (_evLinger != null && _evSinceEnd < _evFadeSec) return _evLinger;
+    return null;
+  }
+
+  double get _visualEventAge {
+    final ev = _activeWorldEvent;
+    if (ev == null) return 99;
+    final left = _remaining(_room['world_event_until']);
+    return max(0.0, (_evDurTable[ev] ?? 22.0) - left);
+  }
+
+  /// Sisa detik event; negatif = sudah selesai & sedang memudar.
+  double get _visualEventLeft {
+    if (_activeWorldEvent != null) {
+      return _remaining(_room['world_event_until']);
+    }
+    if (_evLinger != null && _evSinceEnd < _evFadeSec) return -_evSinceEnd;
+    return 99;
+  }
+
+  /// Event yang sudah diumumkan (peringatan ±4 dtk) tapi belum aktif.
+  String? get _pendingWorldEvent {
+    final ev = _room['pending_event']?.toString();
+    if (ev == null || ev.isEmpty) return null;
+    if (_remaining(_room['pending_event_at']) <= 0) return null;
+    return ev;
+  }
+
   String _name(dynamic id) {
     if (id == null) return '?';
     if (id == _me) return 'Anda';
@@ -1134,7 +1205,12 @@ class _GameScreenState extends State<GameScreen>
     final t = _ts(_room['pollution_updated_at']);
     if (t == null) return p;
     final dt = max(0.0, _serverNow.difference(t).inMilliseconds / 1000);
-    var delta = _activeWorldEvent == 'eco_subsidy' ? -0.8 : -0.4;
+    var delta = switch (_activeWorldEvent) {
+      'eco_subsidy' || 'heavy_rain' => -0.8,
+      'strong_wind' => -1.2,
+      'drought' => -0.1,
+      _ => -0.4,
+    };
     for (final s in _states.values) {
       if (s['eliminated_at'] != null) continue;
       final wl = _num(s['waste_level']).toInt();
@@ -1195,6 +1271,48 @@ class _GameScreenState extends State<GameScreen>
         Icons.eco,
         Colors.green.shade700,
         );
+      case 'heavy_rain':
+        return (
+        'HUJAN DERAS · Polusi cepat turun, Sampah +15%',
+        Icons.water_drop,
+        Colors.blue.shade700,
+        );
+      case 'strong_wind':
+        return (
+        'ANGIN KENCANG · Bakar diblokir, Polusi cepat hilang, Lemparan meleset',
+        Icons.air,
+        Colors.blueGrey.shade600,
+        );
+      case 'drought':
+        return (
+        'KEMARAU · Polusi susah turun, Bakar +50% polusi, Sampah menumpuk bau',
+        Icons.wb_sunny,
+        Colors.orange.shade800,
+        );
+      case 'blackout':
+        return (
+        'MATI LISTRIK · Income -40%, Sensor IoT mati, Tangkis lebih lambat',
+        Icons.power_off,
+        Colors.grey.shade800,
+        );
+      case 'rat_plague':
+        return (
+        'WABAH TIKUS · Sampah +30%, Kucing 2x lebih ampuh',
+        Icons.bug_report,
+        Colors.brown.shade600,
+        );
+      case 'earthquake':
+        return (
+        'GEMPA BUMI · Sampah tumpah, Bangun & Tuang diblokir',
+        Icons.vibration,
+        Colors.brown.shade800,
+        );
+      case 'night_market':
+        return (
+        'PASAR MALAM · Income +20%, Hewan -20%',
+        Icons.festival,
+        Colors.pink.shade600,
+        );
       default:
         return (ev, Icons.public, Colors.blueGrey);
     }
@@ -1218,11 +1336,62 @@ class _GameScreenState extends State<GameScreen>
     return Colors.green.shade700;
   }
 
+  String _warnText(String ev) {
+    switch (ev) {
+      case 'heavy_rain':
+        return 'PERINGATAN: Awan gelap menggulung, hujan deras segera turun!';
+      case 'strong_wind':
+        return 'PERINGATAN: Angin kencang mendekat! Jangan bakar sampah.';
+      case 'drought':
+        return 'PERINGATAN: Cuaca makin terik, kemarau segera tiba.';
+      case 'blackout':
+        return 'PERINGATAN: Lampu berkedip, mati listrik segera terjadi!';
+      case 'rat_plague':
+        return 'PERINGATAN: Tikus berdatangan dari selokan!';
+      case 'earthquake':
+        return 'PERINGATAN: TANAH MULAI BERGETAR! Gempa sebentar lagi!';
+      case 'night_market':
+        return 'KABAR: Lampion dipasang, pasar malam segera dibuka.';
+      case 'rain_flood':
+        return 'PERINGATAN: Banjir segera datang, siapkan truk!';
+      case 'hauler_strike':
+        return 'KABAR: Tukang sampah berencana mogok, sewa truk sekarang!';
+      case 'new_semester':
+        return 'KABAR: Mahasiswa baru mulai berdatangan.';
+      case 'eco_subsidy':
+        return 'KABAR: Pemerintah akan menggelar Subsidi Hijau.';
+      default:
+        return '';
+    }
+  }
+
   String _eventText(Map<String, dynamic> e) {
     final a = _name(e['actor_id']);
     final t = _name(e['target_id']);
     final amt = _num(e['amount']).round();
+    final type = e['type']?.toString() ?? '';
+    if (type.startsWith('event_warn_')) {
+      return _warnText(type.substring('event_warn_'.length));
+    }
     switch (e['type']) {
+      case 'quake_hit':
+        return e['target_id']?.toString() == _me
+            ? 'GEMPA! Sampah tumpah +$amt di kost-mu.'
+            : '';
+      case 'event_heavy_rain':
+        return 'CUACA: Hujan deras mengguyur kawasan kost!';
+      case 'event_strong_wind':
+        return 'CUACA: Angin kencang! Pembakaran sampah dilarang.';
+      case 'event_drought':
+        return 'CUACA: Musim kemarau, udara panas dan kering.';
+      case 'event_blackout':
+        return 'DARURAT: Mati listrik! Income turun.';
+      case 'event_rat_plague':
+        return 'WABAH: Tikus menyerbu kawasan kost!';
+      case 'event_earthquake':
+        return 'BENCANA: GEMPA BUMI! Pegangan yang kuat!';
+      case 'event_night_market':
+        return 'EVENT: Pasar Malam dibuka! Hewan diskon 20%.';
       case 'burn':
         return '$a membakar $amt sampah! Polusi naik.';
       case 'throw_launch':
@@ -1319,6 +1488,16 @@ class _GameScreenState extends State<GameScreen>
   }
 
   (IconData, Color) _eventIcon(dynamic type) {
+    if (type is String) {
+      if (type.startsWith('event_warn_')) {
+        return (Icons.warning_amber_rounded, Colors.amber);
+      }
+      if (type == 'quake_hit') return (Icons.vibration, Colors.brown);
+      if (type.startsWith('event_')) {
+        final i = _worldEventInfo(type.substring('event_'.length));
+        return (i.$2, i.$3);
+      }
+    }
     switch (type) {
       case 'burn':
         return (Icons.local_fire_department, Colors.deepOrange);
@@ -1416,7 +1595,12 @@ class _GameScreenState extends State<GameScreen>
       defense: _num(s['defense']).toInt(),
       wasteLevel: _num(s['waste_level']).toInt(),
       kostTier: _num(s['kost_tier']).toInt(),
-      worldEvent: _activeWorldEvent,
+      worldEvent: _visualWorldEvent,
+      pendingEvent: _pendingWorldEvent,
+      pendingLeft: _remaining(_room['pending_event_at']),
+      eventAge: _visualEventAge,
+      eventLeft: _visualEventLeft,
+      eventChained: _evChained,
       sealedLeft: _remaining(s['sealed_until']),
       trashRatio: (shownTrash / cap).clamp(0.0, 1.0).toDouble(),
       pollution: _pollution,
@@ -1669,7 +1853,12 @@ class _GameScreenState extends State<GameScreen>
             defense: 0,
             trashRatio: 0,
             pollution: _pollution,
-            worldEvent: _activeWorldEvent,
+            worldEvent: _visualWorldEvent,
+            pendingEvent: _pendingWorldEvent,
+            pendingLeft: _remaining(_room['pending_event_at']),
+            eventAge: _visualEventAge,
+            eventLeft: _visualEventLeft,
+            eventChained: _evChained,
             smog: _remaining(_room['smog_until']) > 0,
             dayPhase: _dayPhase,
             biome: KostBiome.forRoom(widget.roomId),
@@ -2448,6 +2637,13 @@ class _GameScreenState extends State<GameScreen>
       items.add(_StatusItem(info.$2, '${info.$1} ${left}s',
           '${info.$1} (${left}s)', info.$3));
     }
+    final pend = _pendingWorldEvent;
+    if (pend != null) {
+      final pl = _remaining(_room['pending_event_at']).ceil();
+      final nm = _worldEventInfo(pend).$1.split(' · ').first;
+      items.add(_StatusItem(Icons.warning_amber_rounded, 'Awas: $nm ${pl}s',
+          'PERINGATAN: $nm dalam $pl dtk', Colors.amber.shade800));
+    }
     final smog = _remaining(_room['smog_until']);
     if (smog > 0) {
       items.add(_StatusItem(
@@ -2974,6 +3170,8 @@ class _GameScreenState extends State<GameScreen>
     final smog = _remaining(_room['smog_until']) > 0;
     final strike = _activeWorldEvent == 'hauler_strike';
     final flood = _activeWorldEvent == 'rain_flood';
+    final quake = _activeWorldEvent == 'earthquake';
+    final wind = _activeWorldEvent == 'strong_wind';
     final haulMax = 45.0 + wasteLv * 4.0;
     final haulCost = (min(live.trash.floorToDouble(), haulMax) *
         3 *
@@ -2992,12 +3190,16 @@ class _GameScreenState extends State<GameScreen>
         shortTitle: 'Kamar',
         shortSub: sealed
             ? 'Disegel'
+            : quake
+            ? 'Gempa'
             : (rooms >= _maxRooms ? 'Penuh' : '$buildCost'),
         subtitle: sealed
             ? 'Disegel!'
+            : quake
+            ? 'Gempa bumi!'
             : (rooms >= _maxRooms ? 'Maks $_maxRooms' : 'Biaya $buildCost'),
         busy: _activeRpc == 'build_room',
-        onTap: canAct && !sealed && rooms < _maxRooms && live.money >= buildCost
+        onTap: canAct && !sealed && !quake && rooms < _maxRooms && live.money >= buildCost
             ? () => _act('build_room')
             : null,
       ),
@@ -3073,14 +3275,16 @@ class _GameScreenState extends State<GameScreen>
         shortTitle: 'Bakar',
         shortSub: burnLeft > 0
             ? '${burnLeft.ceil()}s'
-            : (smog ? 'Kabut' : (wasteLv >= 10 ? 'Eco' : 'Polusi')),
+            : (wind ? 'Angin' : smog ? 'Kabut' : (wasteLv >= 10 ? 'Eco' : 'Polusi')),
         subtitle: burnLeft > 0
             ? 'Jeda ${burnLeft.ceil()}s'
+            : wind
+            ? 'Angin kencang!'
             : smog
             ? 'Kabut asap!'
             : (wasteLv >= 10 ? 'Rendah polusi' : 'Polusi naik'),
         busy: _activeRpc == 'burn',
-        onTap: canAct && burnLeft == 0 && !smog && live.trash >= 2
+        onTap: canAct && burnLeft == 0 && !smog && !wind && live.trash >= 2
             ? () => _act('burn')
             : null,
       ),
@@ -4222,9 +4426,10 @@ class _GameScreenState extends State<GameScreen>
     final cur = loadout.inSlot(target);
 
     Widget variantCard(PetDef def) {
-      final why = loadout.whyCannotBuy(def, target, money);
+      final pm = _activeWorldEvent == 'night_market' ? 0.8 : 1.0;
+      final why = loadout.whyCannotBuy(def, target, money, priceMul: pm);
       final isCur = cur?.def.key == def.key;
-      final net = def.price - (cur?.def.refund ?? 0);
+      final net = (def.price * pm).floor() - (cur?.def.refund ?? 0);
       final ok = why == null && canAct;
       return Expanded(
         child: Padding(
@@ -4390,6 +4595,10 @@ class _GameScreenState extends State<GameScreen>
     final wasteLv = _num(me['waste_level']).toInt();
     if (wasteLv <= 0) {
       _toast('Butuh kotak sampah dulu.', error: true);
+      return;
+    }
+    if (_activeWorldEvent == 'earthquake') {
+      _toast('Gempa bumi! Gerobak tidak bisa jalan.', error: true);
       return;
     }
     if (w.pourLeft > 0) {

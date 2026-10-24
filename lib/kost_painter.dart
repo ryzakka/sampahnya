@@ -350,6 +350,7 @@ class KostPainter extends CustomPainter {
     _drawCrane(canvas, t);
     _drawThrown(canvas, t);
     _drawParry(canvas, t);
+    _drawQuakeImpact(canvas, t);
     _drawWorldEventFront(canvas, t);
     _drawAsh(canvas, t, p);
     _drawHaze(canvas, p);
@@ -373,6 +374,18 @@ class KostPainter extends CustomPainter {
     final tierP = _fxProgress(FxType.tier, 2400);
 
     double shakeX = 0, shakeY = 0;
+    // Gempa bumi: rumah tahan gempa (tier & level limbah tinggi) bergetar lebih pelan
+    if (d.worldEvent == 'earthquake') {
+      final resist = math.min(0.7, d.kostTier * 0.25 + d.wasteLevel * 0.02);
+      final k = (1 - resist) * _evK; // memudar masuk/keluar
+      shakeX += (math.sin(t * 38) * 2.6 + math.sin(t * 23) * 1.4) * k;
+      shakeY += math.cos(t * 31) * 1.8 * k;
+    }
+    // getaran awal saat peringatan gempa + hentakan saat gempa menghantam
+    final warnQ = _warnQuakeShake(t);
+    final hitQ = _quakeImpactShake();
+    shakeX += warnQ.dx + hitQ.dx;
+    shakeY += warnQ.dy + hitQ.dy;
     if (collapseShake != null) {
       shakeX += math.sin(collapseShake * 65) * 5 * (1 - collapseShake);
       shakeY += math.cos(collapseShake * 50) * 3 * (1 - collapseShake);
@@ -514,6 +527,7 @@ extension KostPainterScenery on KostPainter {
     _drawTrees(canvas, t, p);
     _drawGodRays(canvas, t, p);
     _drawGround(canvas, t, p);
+    _drawStreetTrees(canvas, t, p); // pohon pembatas antar rumah
     _drawLampPosts(canvas);
     _drawCars(canvas, t);
   }
@@ -632,6 +646,7 @@ extension KostPainterScenery on KostPainter {
     _drawWindup(canvas, t);
     _drawThrown(canvas, t);
     _drawParry(canvas, t);
+    _drawQuakeImpact(canvas, t);
     _drawConfetti(canvas, t);
     canvas.restore();
   }
@@ -728,8 +743,9 @@ extension KostPainterScenery on KostPainter {
   // ----------------------------------------------------------- langit
 
   void _drawSky(Canvas canvas, double t, double p) {
-    final isRain = d.worldEvent == 'rain_flood';
-    final heavy = _c01(p * 1.2 + (d.smog ? 0.25 : 0) + (isRain ? 0.35 : 0));
+    final isRain = _isRainy;
+    final heavy = _c01(p * 1.2 + (d.smog ? 0.25 : 0) + (isRain ? 0.35 * _evK : 0) +
+        (d.worldEvent == 'blackout' ? 0.15 : 0));
     var top = _mix(d.biome.skyTop, const Color(0xFF5D666B), heavy);
     var bottom = _mix(d.biome.skyBottom, const Color(0xFFA09C94), heavy);
     final night = _night;
@@ -1036,7 +1052,7 @@ extension KostPainterScenery on KostPainter {
 
   // ------------------------------------------------ kejadian acak (world events)
 
-  void _drawWorldEventBack(Canvas canvas, double t) {
+  void _drawWorldEventBackBody(Canvas canvas, double t) {
     if (d.worldEvent == 'new_semester' && !d.compact) {
       const cols = [
         Color(0xFFFF5252),
@@ -1061,15 +1077,13 @@ extension KostPainterScenery on KostPainter {
     }
   }
 
-  void _drawWorldEventFront(Canvas canvas, double t) {
+  void _drawWorldEventFrontBody(Canvas canvas, double t) {
     final ev = d.worldEvent;
     if (ev == null) return;
+    _drawWeatherFront(canvas, t); // cuaca & insiden baru
 
     if (ev == 'rain_flood') {
-      _p
-        ..style = PaintingStyle.fill
-        ..color = const Color(0xFF1976D2).withValues(alpha: 0.42);
-      canvas.drawRect(Rect.fromLTRB(_vl, 267, _vr, _vb), _p);
+      _drawFloodWater(canvas, t); // air naik/surut perlahan + puing
 
       _p
         ..style = PaintingStyle.stroke
@@ -1147,8 +1161,8 @@ extension KostPainterScenery on KostPainter {
       worldR: worldR + 350,
       lowDetail: d.compact,
       pollution: _c01(d.pollution / 100),
-      lights: d.pollution > 60 || d.worldEvent == 'rain_flood' || _night > 0.3,
-      rain: d.worldEvent == 'rain_flood',
+      lights: d.pollution > 60 || _isRainy || d.worldEvent == 'blackout' || _night > 0.3,
+      rain: _isRainy,
       density: _trafficDensity,
     );
     _drawStreetWalkers(canvas, t, worldL - 350, worldR + 350);
