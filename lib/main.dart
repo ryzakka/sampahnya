@@ -60,6 +60,19 @@ class _Ui {
   // Titik patah layout
   static const wideBreakpoint = 860.0;
 
+  // Batas lebar konten agar desain tidak melebar di layar besar.
+  static const maxNarrow = 480.0; // satu kolom (ponsel / portrait)
+  static const maxHome = 980.0; // beranda dua kolom
+  static const maxLobby = 1000.0; // lobi dua kolom
+  static const sidePanel = 340.0;
+
+  /// Skala nilai mengikuti lebar layar, dibatasi [min]..[max].
+  static double fluid(double width, double min, double max,
+      {double from = 320, double to = 1100}) {
+    final t = ((width - from) / (to - from)).clamp(0.0, 1.0);
+    return min + (max - min) * t;
+  }
+
   // Jarak
   static const gap16 = SizedBox(height: 16);
   static const gap24 = SizedBox(height: 24);
@@ -394,6 +407,19 @@ class SampahnyaApp extends StatelessWidget {
         useMaterial3: true,
         fontFamily: 'sans-serif',
       ),
+      // Batasi skala teks sistem agar tata letak tidak pecah/melebar.
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: mq.textScaler.clamp(
+              minScaleFactor: 0.9,
+              maxScaleFactor: 1.2,
+            ),
+          ),
+          child: child ?? const SizedBox.shrink(),
+        );
+      },
       home: const LobbyHome(),
     );
   }
@@ -618,7 +644,9 @@ class _LobbyHomeState extends State<LobbyHome>
           SafeArea(
             child: LayoutBuilder(
               builder: (context, c) {
-                final wide = c.maxWidth >= _Ui.wideBreakpoint;
+                // Lebar ATAU lanskap ponsel (tinggi pendek) -> dua kolom.
+                final wide = c.maxWidth >= _Ui.wideBreakpoint ||
+                    (c.maxWidth >= 640 && c.maxWidth > c.maxHeight * 1.3);
                 return wide ? _buildWide(c) : _buildNarrow(c);
               },
             ),
@@ -631,23 +659,22 @@ class _LobbyHomeState extends State<LobbyHome>
   /// Ponsel / jendela sempit: satu kolom, urutan = judul → form → gim lain.
   Widget _buildNarrow(BoxConstraints c) {
     final compact = c.maxWidth < 380;
+    final hPad = _Ui.fluid(c.maxWidth, 16, 28, to: 600);
+    final titleSize = _Ui.fluid(c.maxWidth, 32, 44, to: 480);
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 16 : 24,
-        vertical: 24,
-      ),
+      padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 20),
       child: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 460,
-            minHeight: c.maxHeight - 48,
+            maxWidth: _Ui.maxNarrow,
+            minHeight: max(0.0, c.maxHeight - 40),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildHero(center: true, titleSize: compact ? 34 : 42),
+              _buildHero(center: true, titleSize: titleSize),
               _Ui.gap24,
               _buildFormPanel(compact: compact),
               _Ui.gap16,
@@ -661,15 +688,20 @@ class _LobbyHomeState extends State<LobbyHome>
     );
   }
 
-  /// Tablet / desktop: judul di kiri, form di kanan.
+  /// Tablet / desktop / lanskap: judul di kiri, form di kanan.
+  /// Lebar konten dikunci agar tidak melebar di monitor besar.
   Widget _buildWide(BoxConstraints c) {
+    final hPad = _Ui.fluid(c.maxWidth, 24, 40, from: 640, to: 1100);
+    final gap = _Ui.fluid(c.maxWidth, 28, 48, from: 640, to: 1100);
+    final titleSize = _Ui.fluid(c.maxWidth, 40, 56, from: 640, to: 1100);
     return SingleChildScrollView(
-      padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 32),
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+      padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 24),
       child: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 1040,
-            minHeight: c.maxHeight - 64,
+            maxWidth: _Ui.maxHome,
+            minHeight: max(0.0, c.maxHeight - 48),
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
@@ -680,10 +712,10 @@ class _LobbyHomeState extends State<LobbyHome>
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    _buildHero(center: false, titleSize: 56),
-                    const SizedBox(height: 28),
+                    _buildHero(center: false, titleSize: titleSize),
+                    const SizedBox(height: 24),
                     ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 460),
+                      constraints: const BoxConstraints(maxWidth: 440),
                       child: const _MoreGamesCard(),
                     ),
                     _Ui.gap16,
@@ -691,7 +723,7 @@ class _LobbyHomeState extends State<LobbyHome>
                   ],
                 ),
               ),
-              const SizedBox(width: 48),
+              SizedBox(width: gap),
               Expanded(
                 flex: 4,
                 child: Align(
@@ -733,22 +765,31 @@ class _LobbyHomeState extends State<LobbyHome>
             children: [
               Icon(Icons.delete_sweep_rounded, size: 16, color: Colors.black87),
               SizedBox(width: 6),
-              Text(
-                'Gim multipemain 2–4 orang',
-                style: TextStyle(
-                  color: Colors.black87,
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w800,
+              Flexible(
+                child: Text(
+                  'Gim multipemain 2–4 orang',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.black87,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
             ],
           ),
         ),
         const SizedBox(height: 14),
-        Text(
-          'SAMPAHNYA!',
-          textAlign: textAlign,
-          style: _Ui.title.copyWith(fontSize: titleSize),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: center ? Alignment.center : Alignment.centerLeft,
+          child: Text(
+            'SAMPAHNYA!',
+            maxLines: 1,
+            textAlign: textAlign,
+            style: _Ui.title.copyWith(fontSize: titleSize),
+          ),
         ),
         const SizedBox(height: 10),
         ConstrainedBox(
@@ -1474,10 +1515,12 @@ class _RoomLobbyState extends State<RoomLobby>
                 // Lebar, atau lanskap ponsel: jalan di kiri, kontrol di kanan.
                 final wide = c.maxWidth >= _Ui.wideBreakpoint ||
                     (c.maxWidth > c.maxHeight && c.maxWidth >= 640);
-                final pad = c.maxWidth < 380 ? 14.0 : 20.0;
+                final pad = _Ui.fluid(c.maxWidth, 14, 24, to: 900);
                 return Center(
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: wide ? 1100 : 620),
+                    constraints: BoxConstraints(
+                      maxWidth: wide ? _Ui.maxLobby : _Ui.maxNarrow + 80,
+                    ),
                     child: Padding(
                       padding: EdgeInsets.fromLTRB(pad, 12, pad, pad),
                       child: Column(
@@ -1488,9 +1531,9 @@ class _RoomLobbyState extends State<RoomLobby>
                           Expanded(
                             child: wide
                                 ? _buildWideBody(
-                                userId, ready, me, isHost, allReady)
+                                userId, ready, me, isHost, allReady, c)
                                 : _buildNarrowBody(
-                                userId, ready, me, isHost, allReady),
+                                userId, ready, me, isHost, allReady, c),
                           ),
                         ],
                       ),
@@ -1505,33 +1548,42 @@ class _RoomLobbyState extends State<RoomLobby>
     );
   }
 
-  /// Ponsel: kode → jalan (mengisi sisa layar) → tombol.
+  /// Ponsel: kode → jalan → tombol. Bila layar pendek, seluruhnya bisa digulir
+  /// dan jalan diberi tinggi minimum supaya tidak gepeng.
   Widget _buildNarrowBody(
       String? userId, bool ready, Map<String, dynamic>? me, bool isHost,
-      bool allReady) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        _buildRoomCodeBanner(),
-        const SizedBox(height: 14),
-        Expanded(child: _buildStreetArea(userId)),
-        const SizedBox(height: 12),
-        ..._buildControls(ready, me, isHost, allReady),
-      ],
+      bool allReady, BoxConstraints c) {
+    final controls = _buildControls(ready, me, isHost, allReady);
+    // Tinggi jalan = sisa layar, tapi tidak kurang dari 220.
+    final streetH = max(220.0, c.maxHeight * 0.34);
+    return SingleChildScrollView(
+      physics: const ClampingScrollPhysics(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildRoomCodeBanner(),
+          const SizedBox(height: 14),
+          SizedBox(height: streetH, child: _buildStreetArea(userId)),
+          const SizedBox(height: 12),
+          ...controls,
+        ],
+      ),
     );
   }
 
-  /// Layar lebar: jalan di kiri; kode + tombol di panel kanan.
+  /// Layar lebar: jalan di kiri; kode + tombol di panel kanan (lebar tetap).
   Widget _buildWideBody(
       String? userId, bool ready, Map<String, dynamic>? me, bool isHost,
-      bool allReady) {
+      bool allReady, BoxConstraints c) {
+    final panelW = _Ui.fluid(c.maxWidth, 300, _Ui.sidePanel,
+        from: 640, to: 1000);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Expanded(child: _buildStreetArea(userId)),
         const SizedBox(width: 20),
         SizedBox(
-          width: 340,
+          width: panelW,
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
