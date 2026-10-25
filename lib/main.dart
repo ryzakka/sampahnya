@@ -356,7 +356,11 @@ class _ActionButton extends StatelessWidget {
           child: CircularProgressIndicator(strokeWidth: 2.5, color: fg),
         )
             : (asset != null
-            ? GameIcon(asset!, size: 28)
+            ? GameIconBadge(
+          asset!,
+          size: 34,
+          ring: outlined ? _Ui.amber : fg,
+        )
             : Icon(icon, size: 20)),
         label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
@@ -1033,7 +1037,7 @@ class MainMenu extends StatelessWidget {
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        GameIcon(perfIcon(lv), size: 24),
+                                        GameIconBadge(perfIcon(lv), size: 26, ring: col, ringWidth: 1.8),
                                         const SizedBox(width: 6),
                                         Flexible(
                                           child: Text(
@@ -1136,7 +1140,7 @@ class AboutScreen extends StatelessWidget {
                       IconButton(
                         tooltip: 'Kembali',
                         onPressed: () => Navigator.of(context).maybePop(),
-                        icon: const GameIcon(GIcon.back, size: 30),
+                        icon: const GameIconBadge(GIcon.back, size: 34),
                       ),
                       const Text('Info', style: _Ui.heading),
                     ],
@@ -1502,7 +1506,7 @@ class _LobbyHomeState extends State<LobbyHome>
                   ),
                   onPressed:
                   _busy ? null : () => Navigator.of(context).maybePop(),
-                  icon: const GameIcon(GIcon.back, size: 28),
+                  icon: const GameIconBadge(GIcon.back, size: 32),
                 ),
               ),
             ),
@@ -1650,7 +1654,7 @@ class _LobbyHomeState extends State<LobbyHome>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    GameIcon(perfIcon(lv), size: 24),
+                    GameIconBadge(perfIcon(lv), size: 26, ring: col, ringWidth: 1.8),
                     const SizedBox(width: 6),
                     Text(
                       'Mode Ringan: ${KostPerf.names[lv]}  (ketuk untuk ganti)',
@@ -1678,10 +1682,18 @@ class _LobbyHomeState extends State<LobbyHome>
     );
   }
 
-  /// Panel form: 1) nama → 2) pilih mode → 3) aksi → (error).
+  /// Form dalam panel kaca: teks tetap terbaca di atas gambar bangunan.
   Widget _buildFormPanel({required bool compact}) {
+    return _GlassPanel(
+      padding: EdgeInsets.all(compact ? 16 : 22),
+      child: _buildFormContent(compact: compact),
+    );
+  }
+
+  /// Isi form: 1) nama → 2) pilih mode → 3) aksi → (error).
+  Widget _buildFormContent({required bool compact}) {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: compact ? 0 : 4),
+      padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -1748,10 +1760,11 @@ class _LobbyHomeState extends State<LobbyHome>
     return InputDecoration(
       hintText: hint,
       hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.32)),
+      prefixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
       prefixIcon: asset != null
           ? Padding(
-        padding: const EdgeInsets.all(7),
-        child: GameIcon(asset, size: 30),
+        padding: const EdgeInsets.fromLTRB(10, 8, 6, 8),
+        child: GameIconBadge(asset, size: 32, ring: _Ui.amber),
       )
           : Icon(icon, color: _Ui.amber, size: 22),
       counterText: '',
@@ -1835,8 +1848,12 @@ class _LobbyHomeState extends State<LobbyHome>
             children: [
               asset != null
                   ? Opacity(
-                opacity: selected ? 1 : 0.55,
-                child: GameIcon(asset, size: 26),
+                opacity: selected ? 1 : 0.6,
+                child: GameIconBadge(
+                  asset,
+                  size: 30,
+                  ring: selected ? _Ui.amber : Colors.white38,
+                ),
               )
                   : Icon(icon, size: 18, color: color),
               const SizedBox(width: 7),
@@ -1950,9 +1967,11 @@ class _LobbyHomeState extends State<LobbyHome>
             letterSpacing: 8,
           ),
           decoration: InputDecoration(
+            prefixIconConstraints:
+            const BoxConstraints(minWidth: 0, minHeight: 0),
             prefixIcon: const Padding(
-              padding: EdgeInsets.all(8),
-              child: GameIcon(GIcon.roomCode, size: 30),
+              padding: EdgeInsets.fromLTRB(10, 8, 6, 8),
+              child: GameIconBadge(GIcon.roomCode, size: 34, ring: _Ui.amber),
             ),
             hintText: '• • • • • •',
             hintStyle: TextStyle(
@@ -2554,7 +2573,7 @@ class _RoomLobbyState extends State<RoomLobby>
             foregroundColor: Colors.white,
           ),
           onPressed: () => Navigator.of(context).maybePop(),
-          icon: const GameIcon(GIcon.back, size: 28),
+          icon: const GameIconBadge(GIcon.back, size: 32),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -2617,7 +2636,7 @@ class _RoomLobbyState extends State<RoomLobby>
             ),
             child: Row(
               children: [
-                const GameIcon(GIcon.roomCode, size: 42),
+                const GameIconBadge(GIcon.roomCode, size: 46, ring: _Ui.amber),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -2740,8 +2759,13 @@ class _RoomLobbyState extends State<RoomLobby>
         child: Row(
           children: [
             const Opacity(
-              opacity: 0.4,
-              child: GameIcon(GIcon.addInvite, size: 24),
+              opacity: 0.45,
+              child: GameIconBadge(
+                GIcon.addInvite,
+                size: 26,
+                ring: Colors.white38,
+                ringWidth: 1.5,
+              ),
             ),
             const SizedBox(width: 8),
             Expanded(

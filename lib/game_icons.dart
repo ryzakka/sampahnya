@@ -107,6 +107,40 @@ class GameIcon extends StatelessWidget {
   }
 }
 
+/// Ikon PNG dalam bingkai bulat berwarna + bayangan, sama seperti tombol
+/// mengambang di layar game. Dipakai di lobi supaya ikon tidak "menyatu"
+/// dengan latar tombol dan ukurannya seragam.
+class GameIconBadge extends StatelessWidget {
+  const GameIconBadge(
+      this.asset, {
+        super.key,
+        this.size = 30,
+        this.ring = Colors.white,
+        this.ringWidth = 2.0,
+      });
+
+  final String asset;
+  final double size;
+  final Color ring;
+  final double ringWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: ring, width: ringWidth),
+        boxShadow: const [
+          BoxShadow(color: Colors.black38, blurRadius: 5, offset: Offset(0, 2)),
+        ],
+      ),
+      child: ClipOval(child: GameIcon(asset, size: size)),
+    );
+  }
+}
+
 /// Ikon Material -> ikon PNG gim (bila ada padanannya), selain itu tetap
 /// ikon Material. Dipakai untuk chip status, kabar, dan lembar rincian.
 String? assetForIcon(IconData i) {

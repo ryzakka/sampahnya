@@ -137,7 +137,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
           IconButton(
             tooltip: 'Kembali',
             onPressed: () => Navigator.of(context).maybePop(),
-            icon: const GameIcon(GIcon.back, size: 30),
+            icon: const GameIconBadge(GIcon.back, size: 34),
           ),
           const Expanded(
             child: Column(
@@ -376,7 +376,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14)),
       ),
-      icon: const GameIcon(GIcon.play, size: 26),
+      icon: const GameIconBadge(GIcon.play, size: 30, ring: Colors.black87),
       label: const Text('Main sekarang',
           style: TextStyle(fontWeight: FontWeight.w900)),
     ),
