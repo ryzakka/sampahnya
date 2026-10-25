@@ -3457,20 +3457,20 @@ class _GameScreenState extends State<GameScreen>
     ];
 
     // Selalu satu baris tujuh tombol; tinggi mengikuti mode.
-    final h = mode == 1 ? 60.0 : (short ? 46.0 : 76.0);
-    final gap = mode == 1 ? 4.0 : 6.0;
-    return _glass(
-      padding: const EdgeInsets.all(6),
-      child: SizedBox(
-        height: h,
-        child: Row(
-          children: [
-            for (var i = 0; i < buttons.length; i++) ...[
-              if (i > 0) SizedBox(width: gap),
-              Expanded(child: buttons[i]),
-            ],
+    // Tanpa wadah: tiap tombol bulat berdiri sendiri, biaya di bawahnya.
+    final h = mode == 1 ? 62.0 : (short ? 52.0 : 78.0);
+    final gap = mode == 1 ? 8.0 : (short ? 14.0 : 18.0);
+    return SizedBox(
+      height: h,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < buttons.length; i++) ...[
+            if (i > 0) SizedBox(width: gap),
+            buttons[i],
           ],
-        ),
+        ],
       ),
     );
   }
@@ -4222,17 +4222,36 @@ class _GameScreenState extends State<GameScreen>
             clipBehavior: Clip.none,
             children: [
               Positioned.fill(
-                child: Material(
+                child: asset != null
+                    ? GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: onTap,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      border: Border.all(color: color, width: 2.5),
+                      boxShadow: const [
+                        BoxShadow(
+                            color: Colors.black45,
+                            blurRadius: 6,
+                            offset: Offset(0, 2)),
+                      ],
+                    ),
+                    child: ClipOval(
+                      child: GameIcon(asset, size: size),
+                    ),
+                  ),
+                )
+                    : Material(
                   color: _ink.withValues(alpha: 0.82),
                   shape: CircleBorder(
-                      side: BorderSide(color: color.withValues(alpha: 0.8))),
+                      side: BorderSide(
+                          color: color.withValues(alpha: 0.8))),
                   elevation: 3,
                   child: InkWell(
                     customBorder: const CircleBorder(),
                     onTap: onTap,
-                    child: asset != null
-                        ? Center(child: GameIcon(asset, size: size * 0.78))
-                        : Icon(icon, size: size * 0.48, color: color),
+                    child: Icon(icon, size: size * 0.48, color: color),
                   ),
                 ),
               ),
@@ -5354,8 +5373,93 @@ class _ActionButton extends StatelessWidget {
     );
   }
 
+  Widget _standalone() {
+    final enabled = onTap != null || busy;
+    final c = enabled ? color : Colors.blueGrey;
+    final d = mode == 0 ? 56.0 : (mode == 1 ? 44.0 : 36.0);
+    final cost = shortSub ?? subtitle;
+    final fs = mode == 0 ? 12.0 : (mode == 1 ? 10.5 : 10.0);
+    return Tooltip(
+      message: title,
+      triggerMode: TooltipTriggerMode.longPress,
+      waitDuration: const Duration(milliseconds: 350),
+      showDuration: const Duration(seconds: 2),
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 180),
+        opacity: enabled ? 1 : 0.5,
+        child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: busy ? null : onTap,
+          child: SizedBox(
+            width: d + 14,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: d,
+                  height: d,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: c, width: 2.5),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Colors.black45,
+                          blurRadius: 6,
+                          offset: Offset(0, 2)),
+                    ],
+                  ),
+                  child: ClipOval(
+                    child: Stack(
+                      alignment: Alignment.center,
+                      fit: StackFit.expand,
+                      children: [
+                        Opacity(
+                          opacity: busy ? 0.4 : 1,
+                          child: GameIcon(asset!, size: d),
+                        ),
+                        if (busy)
+                          Center(
+                            child: SizedBox(
+                              width: d * 0.4,
+                              height: d * 0.4,
+                              child: const CircularProgressIndicator(
+                                strokeWidth: 2.5,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                SizedBox(height: mode == 2 ? 1 : 3),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    cost,
+                    maxLines: 1,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: fs,
+                      fontWeight: FontWeight.w800,
+                      shadows: const [
+                        Shadow(color: Colors.black87, blurRadius: 4),
+                        Shadow(color: Colors.black87, blurRadius: 2),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (asset != null) return _standalone();
     final enabled = onTap != null || busy;
     final c = enabled ? color : Colors.blueGrey;
     final avatarR = mode == 0 ? 15.0 : (mode == 1 ? 11.0 : 12.5);
