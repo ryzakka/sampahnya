@@ -2194,6 +2194,12 @@ class _RoomLobbyState extends State<RoomLobby>
       _error = null;
     });
     try {
+      if ((me['style_status'] ?? 'pending').toString() == 'pending') {
+        try {
+          await _db.rpc('set_style_status',
+              params: {'p_room': widget.roomId, 'p_status': 'default'});
+        } catch (_) {}
+      }
       await _db
           .from('room_players')
           .update({'is_ready': !(me['is_ready'] == true)})
@@ -2216,24 +2222,6 @@ class _RoomLobbyState extends State<RoomLobby>
         .toList();
   }
 
-  Future<void> _chooseDefaultStyle() async {
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      await _db.rpc('set_style_status',
-          params: {'p_room': widget.roomId, 'p_status': 'default'});
-      await _refreshPlayers();
-    } on PostgrestException catch (e) {
-      setState(() => _error = e.message);
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   Future<void> _openCustomize({bool readOnly = false}) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
@@ -2245,107 +2233,6 @@ class _RoomLobbyState extends State<RoomLobby>
       ),
     );
     if (mounted) _refreshPlayers();
-  }
-
-  /// Kartu pilihan tampilan: bawaan atau masuk ruang kustomisasi bersama.
-  Widget _buildStyleCard(Map<String, dynamic>? me) {
-    final status = (me?['style_status'] ?? 'pending').toString();
-    final others = _othersEditing;
-    final (label, color) = switch (status) {
-      'done' => ('Kustom', _Ui.greenSoft),
-      'default' => ('Bawaan', Colors.white70),
-      'editing' => ('Mengedit', _Ui.amber),
-      _ => ('Belum dipilih', Colors.white54),
-    };
-    return _SurfaceCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Icon(Icons.palette_rounded, size: 18, color: _Ui.amber),
-              const SizedBox(width: 8),
-              const Expanded(child: Text('Tampilan', style: _Ui.label)),
-              _Pill(label: label, color: color),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Pakai tampilan bawaan, atau ubah karakter & bangunanmu bersama pemain lain.',
-            style: _Ui.body(0.58).copyWith(fontSize: 12.5),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: _busy ? null : _chooseDefaultStyle,
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor:
-                    status == 'default' ? _Ui.amber : Colors.white,
-                    side: BorderSide(
-                      color: status == 'default'
-                          ? _Ui.amber
-                          : Colors.white.withValues(alpha: 0.22),
-                      width: status == 'default' ? 2 : 1,
-                    ),
-                    minimumSize: const Size.fromHeight(46),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  child: const Text('Bawaan',
-                      style: TextStyle(fontWeight: FontWeight.w800)),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: FilledButton.icon(
-                  onPressed: _busy || me == null ? null : _openCustomize,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: _Ui.green,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(46),
-                    shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14)),
-                  ),
-                  icon: const Icon(Icons.brush_rounded, size: 18),
-                  label: Text(
-                    status == 'done' ? 'Ubah lagi' : 'Kustomisasi',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (others.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                const SizedBox(
-                  width: 14,
-                  height: 14,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Menunggu ${others.map((p) => p['player_name']).join(', ')} '
-                        'selesai kustomisasi…',
-                    style: _Ui.body(0.7).copyWith(fontSize: 12.5),
-                  ),
-                ),
-                TextButton(
-                  onPressed: () => _openCustomize(readOnly: true),
-                  child: const Text('Lihat'),
-                ),
-              ],
-            ),
-          ],
-        ],
-      ),
-    );
   }
 
   Future<void> _copyCode() async {
@@ -2479,8 +2366,6 @@ class _RoomLobbyState extends State<RoomLobby>
                 SizedBox(height: streetH, child: _buildStreetArea(userId)),
                 _Ui.gap12,
                 _buildPlayerSummary(columns: 2),
-                _Ui.gap12,
-                _buildStyleCard(me),
                 _Ui.gap8,
               ],
             ),
@@ -2517,8 +2402,6 @@ class _RoomLobbyState extends State<RoomLobby>
                       _buildRoomCodeBanner(),
                       _Ui.gap12,
                       _buildPlayerSummary(columns: 1),
-                      _Ui.gap12,
-                      _buildStyleCard(me),
                     ],
                   ),
                 ),
@@ -2591,83 +2474,58 @@ class _RoomLobbyState extends State<RoomLobby>
   }
 
   Widget _buildRoomCodeBanner() {
-    return Semantics(
-      button: true,
-      label: 'Kode ruangan ${widget.roomCode}, ketuk untuk menyalin',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: _copyCode,
-          borderRadius: BorderRadius.circular(20),
-          child: Ink(
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF1E3C2B), Color(0xFF14281D)],
+    return Tooltip(
+      message: 'Salin kode ruangan',
+      waitDuration: const Duration(milliseconds: 300),
+      triggerMode: TooltipTriggerMode.longPress,
+      child: Semantics(
+        button: true,
+        label: 'Kode ruangan ${widget.roomCode}, ketuk untuk menyalin',
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: _copyCode,
+            borderRadius: BorderRadius.circular(20),
+            child: Ink(
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF1E3C2B), Color(0xFF14281D)],
+                ),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: _Ui.amber.withValues(alpha: 0.35)),
               ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: _Ui.amber.withValues(alpha: 0.35)),
-            ),
-            child: Row(
-              children: [
-                const GameIconBadge(GIcon.roomCode, size: 46, ring: _Ui.amber),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Kode ruangan · bagikan ke teman',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white.withValues(alpha: 0.68),
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          widget.roomCode,
-                          style: const TextStyle(
-                            color: _Ui.amber,
-                            fontSize: 30,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 6,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Container(
-                  padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: _Ui.amber.withValues(alpha: 0.14),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.copy_rounded, color: _Ui.amber, size: 18),
-                      SizedBox(width: 6),
-                      Text(
-                        'Salin',
-                        style: TextStyle(
+              child: Row(
+                children: [
+                  const GameIconBadge(GIcon.roomCode, size: 46, ring: _Ui.amber),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        widget.roomCode,
+                        style: const TextStyle(
                           color: _Ui.amber,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 13,
+                          fontSize: 30,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 6,
                         ),
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(width: 10),
+                  Container(
+                    padding: const EdgeInsets.all(11),
+                    decoration: BoxDecoration(
+                      color: _Ui.amber.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: const Icon(Icons.copy_rounded,
+                        color: _Ui.amber, size: 22),
+                  ),
+                ],
+              ),
             ),
           ),
         ),
@@ -2846,24 +2704,21 @@ class _RoomLobbyState extends State<RoomLobby>
     Colors.white70
     );
 
-    final readyBtn = _ActionButton(
-      label: _busy
-          ? 'Memproses…'
-          : ready
-          ? 'Batal siap'
-          : 'Saya siap!',
-      icon: ready ? Icons.pause_circle_outline : Icons.check_circle_rounded,
-      background: ready ? const Color(0xFF37474F) : _Ui.greenBright,
-      foreground: Colors.white,
-      onPressed: _busy || me == null ? null : _toggleReady,
+    const tileSize = 64.0;
+    final readyBtn = _IconTile(
+      asset: ready ? GIcon.cancel : GIcon.accept,
+      tip: ready ? 'Batal siap' : 'Saya siap!',
+      size: tileSize,
+      ring: ready ? Colors.white54 : _Ui.greenSoft,
+      busy: _busy,
+      onTap: _busy || me == null ? null : _toggleReady,
     );
-    final startBtn = _ActionButton(
-      label: 'Mulai game',
-      icon: Icons.play_arrow_rounded,
+    final startBtn = _IconTile(
       asset: GIcon.play,
-      background: _Ui.amber,
-      foreground: Colors.black87,
-      onPressed: _busy || !allReady ? null : _startGame,
+      tip: 'Mulai game',
+      size: tileSize,
+      ring: _Ui.amber,
+      onTap: _busy || !allReady ? null : _startGame,
     );
 
     return _GlassPanel(
@@ -2895,24 +2750,15 @@ class _RoomLobbyState extends State<RoomLobby>
             ],
           ),
           _Ui.gap12,
-          LayoutBuilder(
-            builder: (context, c) {
-              if (!isHost) return readyBtn;
-              // Di ruang sempit tumpuk vertikal agar teks tombol tidak terpotong.
-              if (c.maxWidth < 300) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [readyBtn, _Ui.gap8, startBtn],
-                );
-              }
-              return Row(
-                children: [
-                  Expanded(child: readyBtn),
-                  const SizedBox(width: 10),
-                  Expanded(child: startBtn),
-                ],
-              );
-            },
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              readyBtn,
+              if (isHost) ...[
+                const SizedBox(width: 20),
+                startBtn,
+              ],
+            ],
           ),
         ],
       ),
@@ -3018,6 +2864,23 @@ class _RoomLobbyState extends State<RoomLobby>
                       ),
                     ),
                   ),
+                ),
+                Positioned(
+                  top: 10,
+                  right: 10,
+                  child: Builder(builder: (context) {
+                    final me = _players
+                        .where((p) => p['player_id'] == userId)
+                        .firstOrNull;
+                    final done = me?['style_status'] == 'done';
+                    return _IconTile(
+                      asset: GIcon.setting,
+                      tip: done ? 'Ubah kustomisasi' : 'Kustomisasi tampilan',
+                      size: 46,
+                      selected: done,
+                      onTap: _busy || me == null ? null : _openCustomize,
+                    );
+                  }),
                 ),
               ],
             );
