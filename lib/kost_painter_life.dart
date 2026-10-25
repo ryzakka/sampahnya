@@ -1,5 +1,10 @@
 part of 'kost_scene.dart';
 
+/// Pengait suara pintu (diisi GameScreen; null = diam, mis. di layar pembuka).
+/// Dipanggil tiap frame gambar dengan seed rumah & apakah pintunya sedang
+/// terbuka; pemanggil yang mendeteksi tepi "baru terbuka".
+void Function(int seed, bool open)? kostDoorHook;
+
 /// Penghuni, pertahanan, sampah & hama.
 extension KostPainterResidents on KostPainter {
   // ------------------------------------------------------- penghuni kost
@@ -119,6 +124,7 @@ extension KostPainterResidents on KostPainter {
       open = math.max(open, _c01(1 - s.m / 0.4));
     }
     _drawDoor(canvas, open);
+    kostDoorHook?.call(d.seed, open > 0.02);
 
     final hit = _fxProgress(FxType.incoming, 1600) != null;
     for (final s in _resOut) {

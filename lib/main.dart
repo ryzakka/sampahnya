@@ -13,6 +13,7 @@ import 'customize_screen.dart';
 import 'game_screen.dart';
 import 'kost_scene.dart';
 import 'kost_style.dart';
+import 'sfx.dart';
 import 'survival_leaderboard.dart';
 
 const supabaseUrl = String.fromEnvironment(
@@ -34,6 +35,7 @@ const appVersion = '1.5.0 (2510:5)';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Bgm.instance.init();
+  await Sfx.instance.init();
 
   if (supabaseAnonKey.isEmpty) {
     runApp(const MissingKeyApp());

@@ -10,6 +10,7 @@ import 'kost_scene.dart';
 import 'kost_style.dart';
 import 'kost_warehouse.dart';
 import 'kost_pets.dart';
+import 'sfx.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.roomId, required this.roomCode});
@@ -177,6 +178,7 @@ class _GameScreenState extends State<GameScreen>
     _anim.addListener(_cam.step);
     _anim.addListener(_cineStep);
     _anim.addListener(_ghostStep);
+    kostDoorHook = _onDoor;
     _subscribe();
     _loadAll();
     _tickServer();
@@ -188,6 +190,17 @@ class _GameScreenState extends State<GameScreen>
         now - f.startMs > (f.durMs > 0 ? f.durMs + 800 : 6000));
       }
       _shots.removeWhere((sh) => sh.age > sh.durMs + 1500);
+      // dengung lalat saat sampah kost sendiri >= 50% (sama dengan visualnya)
+      final myS = _states[_me];
+      if (myS != null &&
+          myS['eliminated_at'] == null &&
+          _room['status'] != 'finished') {
+        final cap = _num(myS['trash_capacity']);
+        if (cap > 0) {
+          Sfx.instance.fliesTick(
+              (_live(myS).trash / cap).clamp(0.0, 1.0).toDouble());
+        }
+      }
       if (_incomingOffer != null &&
           _remaining(_incomingOffer!['expires_at']) <= 0) {
         _incomingOffer = null;
@@ -213,6 +226,8 @@ class _GameScreenState extends State<GameScreen>
     _uiTimer?.cancel();
     _tickTimer?.cancel();
     _noticeTimer?.cancel();
+    Sfx.instance.rainStop(immediate: true);
+    if (kostDoorHook == _onDoor) kostDoorHook = null;
     _anim.dispose();
     if (_channel != null) _db.removeChannel(_channel!);
     super.dispose();
@@ -243,6 +258,14 @@ class _GameScreenState extends State<GameScreen>
         final newRooms = _num(next['rooms_count']).toInt();
         if (_prevRooms[pid] != null && newRooms > _prevRooms[pid]!) {
           _ensureFx(pid, FxType.build);
+          if (pid == _me) {
+            // lantai = ceil(kamar/4) (maks 3): lantai bertambah -> derek,
+            // kamar baru di lantai yang sama -> palu
+            int fl(int r) => min(3, max(1, (r / 4).ceil()));
+            Sfx.instance.play(fl(newRooms) > fl(_prevRooms[pid]!)
+                ? 'construct-crane'
+                : 'construct-hammer');
+          }
         }
         _prevRooms[pid] = newRooms;
 
@@ -261,6 +284,7 @@ class _GameScreenState extends State<GameScreen>
         final newTier = _num(next['kost_tier']).toInt();
         if (_prevTier[pid] != null && newTier > _prevTier[pid]!) {
           _ensureFx(pid, FxType.tier);
+          if (pid == _me) Sfx.instance.play('upgrade');
         }
         _prevTier[pid] = newTier;
 
@@ -323,6 +347,9 @@ class _GameScreenState extends State<GameScreen>
         final before = _num(_wh[pid]?['tier']).toInt();
         final after = _num(row['tier']).toInt();
         setState(() => _wh[pid] = row);
+        if (pid == _me && before == 0 && after > 0) {
+          Sfx.instance.play('werehouse-open');
+        }
         if (pid == _me && after > before && before > 0) {
           _showNotice('Gudang naik jadi ${Wh.tierNames[after.clamp(0, Wh.maxTier).toInt()]}!',
               icon: Icons.warehouse_rounded, color: const Color(0xFFFB8C00));
@@ -547,6 +574,8 @@ class _GameScreenState extends State<GameScreen>
     if (_room['started_at'] != null && _elapsedSec > 40) return;
     final order = _order;
     if (order.isEmpty) return;
+    Sfx.instance.play(_isSurvival ? 'opening-single-player' : 'opening',
+        minGapMs: 0);
     _cine.playIntro(
       order: order,
       names: {for (final id in order) id: _names[id] ?? 'Pemain'},
@@ -557,6 +586,7 @@ class _GameScreenState extends State<GameScreen>
   void _playPolice(String? targetId, String? actorId, int amount,
       {required bool reflected}) {
     if (targetId == null) return;
+    Sfx.instance.play('police', minGapMs: 800);
     _cine.playPolice(
       targetId: targetId,
       targetName: _names[targetId] ?? 'Pemain',
@@ -585,9 +615,21 @@ class _GameScreenState extends State<GameScreen>
     final target = e['target_id']?.toString();
     final amt = _num(e['amount']);
 
+    // Peringatan: jendela Tangkis terbuka untuk saya
+    const launches = {
+      'throw_launch',
+      'sack_launch',
+      'smog_launch',
+      'inspect_launch',
+    };
+    if (launches.contains(e['type']) && target == _me) {
+      Sfx.instance.play('beep-warning', minGapMs: 400);
+    }
+
     switch (e['type']) {
       case 'burn':
         _ensureFx(actor, FxType.burn, amount: amt);
+        Sfx.instance.play('fireburn', gain: actor == _me ? 1.0 : 0.6);
         break;
       case 'build':
         _ensureFx(actor, FxType.build, amount: amt);
@@ -671,6 +713,11 @@ class _GameScreenState extends State<GameScreen>
         final hDist = (ha < 0 || hb < 0) ? 1 : max(1, (ha - hb).abs());
         final hDur = hijackDurationMs(hDist);
         _ensureFx(actor, FxType.hijack, amount: 1, peer: target, durMs: hDur);
+        if (actor == _me || target == _me) {
+          Sfx.instance.play('truck-beep');
+          Future<void>.delayed(const Duration(milliseconds: 700),
+                  () => Sfx.instance.play('truck-moving'));
+        }
         _ensureFx(target, FxType.hijack, amount: 2, peer: actor, durMs: hDur);
         break;
       case 'emoji':
@@ -690,6 +737,7 @@ class _GameScreenState extends State<GameScreen>
       case 'quake_hit':
       // dampak gempa di kost target (sampah tumpah, gudang retak)
         _ensureFx(target, FxType.quake, amount: amt);
+        Sfx.instance.play('collapse', gain: target == _me ? 1.0 : 0.6);
         break;
       case 'eliminated':
         if (target != null &&
@@ -706,8 +754,11 @@ class _GameScreenState extends State<GameScreen>
             amount: amt,
             delayMs: kBuriedCollapseMs,
           ));
+          Future<void>.delayed(Duration(milliseconds: kBuriedCollapseMs),
+                  () => Sfx.instance.play('building-collapse', minGapMs: 0));
         } else {
           _ensureFx(target, FxType.collapse, amount: amt);
+          Sfx.instance.play('building-collapse', minGapMs: 0);
         }
         break;
       default:
@@ -918,12 +969,35 @@ class _GameScreenState extends State<GameScreen>
     } catch (_) {}
   }
 
+  /// Suara konfirmasi untuk aksi yang BERHASIL. Aksi yang sudah punya suara
+  /// sendiri (build_room, upgrade_kost_tier, burn, lemparan, sabotase,
+  /// warehouse_pour) tidak ikut di sini.
+  void _sfxForAction(String fn) {
+    switch (fn) {
+      case 'warehouse_call_truck':
+        Sfx.instance.play('truck-beep');
+        Future<void>.delayed(const Duration(milliseconds: 700),
+                () => Sfx.instance.play('truck-moving'));
+      case 'upgrade_waste':
+      case 'hire_hauler':
+      case 'buy_defense':
+      case 'buy_pet':
+      case 'release_pet':
+      case 'rename_pet':
+      case 'warehouse_upgrade_tier':
+      case 'warehouse_buy_comp':
+      case 'open_trash_booth':
+        Sfx.instance.play('confirm');
+    }
+  }
+
   Future<void> _act(String fn, [Map<String, dynamic> extra = const {}]) async {
     if (_activeRpc != null) return;
     setState(() => _activeRpc = fn);
 
     try {
       await _db.rpc(fn, params: {'p_room': widget.roomId, ...extra});
+      _sfxForAction(fn);
     } on PostgrestException catch (e) {
       _toast(e.message, error: true);
     } catch (e) {
@@ -1002,7 +1076,32 @@ class _GameScreenState extends State<GameScreen>
   int _evEndMs = 0;
   bool _evChained = false; // hujan deras -> banjir langsung berlanjut
 
+  String? _pendSeen;
+  bool _endSfxDone = false;
+
+  // ---- suara pintu: penghuni keluar/masuk (deteksi tepi "baru terbuka")
+  final Map<int, bool> _doorWasOpen = {};
+
+  /// Harus sama dengan seed pada KostSceneData (lihat _sceneFor).
+  int _sceneSeed(String id) =>
+      id.codeUnits.fold<int>(7, (a, b) => (a * 31 + b) % 1000);
+
+  void _onDoor(int seed, bool open) {
+    final was = _doorWasOpen[seed] ?? false;
+    _doorWasOpen[seed] = open;
+    if (!open || was || !mounted) return;
+    // rumah saya: jelas; rumah lawan: pelan supaya tidak ramai
+    final mine = seed == _sceneSeed(_me);
+    Sfx.instance.play('door', gain: mine ? 1.0 : 0.25, minGapMs: mine ? 300 : 700);
+  }
+
   void _trackWorldEvent() {
+    // peringatan ±4 dtk sebelum event dunia dimulai
+    final pend = _pendingWorldEvent;
+    if (pend != _pendSeen) {
+      _pendSeen = pend;
+      if (pend != null) Sfx.instance.play('beep-warning', minGapMs: 400);
+    }
     final ev = _activeWorldEvent;
     if (ev == _evSeen) return;
     final prev = _evSeen;
@@ -1014,6 +1113,13 @@ class _GameScreenState extends State<GameScreen>
       _evLinger = null;
     }
     _evSeen = ev;
+    // Hujan berulang (loop) selama event hujan; berhenti saat event berakhir
+    // (hujan deras -> banjir menyambung tanpa putus).
+    if (ev == 'rain_flood' || ev == 'heavy_rain') {
+      Sfx.instance.rainStart();
+    } else {
+      Sfx.instance.rainStop();
+    }
   }
 
   double get _evSinceEnd => (sceneNowMs() - _evEndMs) / 1000.0;
@@ -3076,6 +3182,13 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Widget _finishedCard() {
+    if (!_endSfxDone) {
+      _endSfxDone = true;
+      final win = !_isSurvival && _room['winner_id'] == _me;
+      Sfx.instance.rainStop();
+      WidgetsBinding.instance.addPostFrameCallback((_) =>
+          Sfx.instance.play(win ? 'game-win' : 'game-lose', minGapMs: 0));
+    }
     if (_isSurvival) return _survivalFinishedCard();
     final winner = _room['winner_id'];
     final isWin = winner == _me;
