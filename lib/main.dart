@@ -570,6 +570,8 @@ class _SplashScreenState extends State<SplashScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+    precacheImage(const AssetImage('assets/icon/logo.png'), context);
+    precacheImage(const AssetImage('assets/icon/start.png'), context);
   }
 
   @override
@@ -758,13 +760,11 @@ class _SplashScreenState extends State<SplashScreen>
                               _reveal(
                                 0.0,
                                 0.5,
-                                Text(
-                                  'SAMPAHNYA!',
-                                  maxLines: 1,
-                                  textAlign: TextAlign.center,
-                                  style: _Ui.splashTitle.copyWith(
-                                    fontSize: short ? min(titleSize, 48) : titleSize,
-                                  ),
+                                Image.asset(
+                                  'assets/icon/logo.png',
+                                  width: short ? min(w * 0.6, 260.0) : min(w * 0.85, 440.0),
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.medium,
                                 ),
                               ),
                               const SizedBox(height: 6),
@@ -864,63 +864,37 @@ class _StartButton extends StatelessWidget {
 
   final VoidCallback onPressed;
   final Animation<double> pulse;
-  final double width;
+  final double width; // dipakai sebagai batas maksimum ukuran
 
   @override
   Widget build(BuildContext context) {
-    const radius = 32.0;
+    final size = min(150.0, width);
     return AnimatedBuilder(
       animation: pulse,
       builder: (context, child) {
         final p = Curves.easeInOut.transform(pulse.value);
-        return Container(
-          width: width,
-          height: 64,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(radius),
-            gradient: const LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [Color(0xFFFFD54F), Color(0xFFFFB300)],
+        return Transform.scale(
+          scale: 1.0 + 0.06 * p,
+          child: Container(
+            width: size,
+            height: size,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: _Ui.amber.withValues(alpha: 0.18 + 0.22 * p),
+                  blurRadius: 24 + 14 * p,
+                  spreadRadius: 2 + 4 * p,
+                ),
+              ],
             ),
-            boxShadow: [
-              BoxShadow(
-                color: _Ui.amber.withValues(alpha: 0.22 + 0.25 * p),
-                blurRadius: 18 + 14 * p,
-                spreadRadius: 1 + 3 * p,
-              ),
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.35),
-                blurRadius: 14,
-                offset: const Offset(0, 8),
-              ),
-            ],
+            child: child,
           ),
-          child: child,
         );
       },
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          borderRadius: BorderRadius.circular(radius),
-          onTap: onPressed,
-          child: const Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.play_arrow_rounded, size: 32, color: Colors.black87),
-              SizedBox(width: 6),
-              Text(
-                'MULAI',
-                style: TextStyle(
-                  color: Colors.black87,
-                  fontSize: 21,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: 3,
-                ),
-              ),
-            ],
-          ),
-        ),
+      child: GestureDetector(
+        onTap: onPressed,
+        child: Image.asset('assets/icon/start.png', fit: BoxFit.contain),
       ),
     );
   }
@@ -1368,15 +1342,11 @@ class _LobbyHomeState extends State<LobbyHome>
       crossAxisAlignment: align,
       mainAxisSize: MainAxisSize.min,
       children: [
-        FittedBox(
-          fit: BoxFit.scaleDown,
+        Image.asset(
+          'assets/icon/logo.png',
+          width: min(titleSize * 8, 380.0),
+          fit: BoxFit.contain,
           alignment: center ? Alignment.center : Alignment.centerLeft,
-          child: Text(
-            'SAMPAHNYA!',
-            maxLines: 1,
-            textAlign: textAlign,
-            style: _Ui.title.copyWith(fontSize: titleSize),
-          ),
         ),
         const SizedBox(height: 10),
         ConstrainedBox(
