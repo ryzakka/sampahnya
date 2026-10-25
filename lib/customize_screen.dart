@@ -379,40 +379,45 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         ),
         SizedBox(width: small ? 8 : 12),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                widget.readOnly ? 'Mode menonton' : 'Ruang kustomisasi',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.65),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Tooltip(
+              message: title,
+              triggerMode: TooltipTriggerMode.longPress,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GameIcon(
+                    widget.readOnly ? GIcon.ghost : GIcon.customization,
+                    size: small ? 34 : 40,
+                  ),
+                  const SizedBox(width: 10),
+                  if (editing > 0) ...[
+                    const GameIcon(GIcon.player, size: 24),
+                    const SizedBox(width: 4),
+                    Text(
+                      '$editing',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: small ? 15.5 : 18,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ] else
+                    GameIcon(GIcon.alreadyOrSip, size: small ? 28 : 32),
+                ],
               ),
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: small ? 15.5 : 18,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
+            ),
           ),
         ),
         if (tabs != null) ...[
-          const SizedBox(width: 8),
-          SizedBox(width: 230, child: tabs),
+          const SizedBox(width: 10),
+          tabs,
         ],
-        const SizedBox(width: 8),
+        const SizedBox(width: 10),
         Container(
           padding: EdgeInsets.symmetric(
-              horizontal: small ? 10 : 12, vertical: 7),
+              horizontal: small ? 10 : 12, vertical: 12),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(20),
@@ -432,21 +437,20 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   }
 
   Widget _tabs({bool dense = false}) {
-    Widget chip(int i, String asset, String tip) => Expanded(
-      child: Center(
-        child: GameIconButton(
-          asset: asset,
-          tip: tip,
-          size: dense ? 42 : 48,
-          selected: _tab == i,
-          onTap: () => setState(() => _tab = i),
-        ),
-      ),
+    Widget chip(int i, String asset, String tip) => GameIconButton(
+      asset: asset,
+      tip: tip,
+      size: dense ? 42 : 46,
+      selected: _tab == i,
+      onTap: () => setState(() => _tab = i),
     );
 
     return Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
       children: [
         chip(0, GIcon.home, 'Bangunan'),
+        const SizedBox(width: 8),
         chip(1, GIcon.character, 'Karakter'),
       ],
     );

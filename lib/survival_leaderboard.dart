@@ -33,7 +33,6 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   static const _amber = Color(0xFFFFCA28);
   static const _bg = Color(0xFF0A140F);
   static const _surface = Color(0xFF12221A);
-  static const _green = Color(0xFF81C784);
   static const _maxWidth = 520.0;
 
   static const _gold = Color(0xFFFFCA28);
@@ -134,39 +133,35 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
       padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
       child: Row(
         children: [
-          IconButton(
-            tooltip: 'Kembali',
-            onPressed: () => Navigator.of(context).maybePop(),
-            icon: const GameIconBadge(GIcon.back, size: 34),
+          GameIconButton(
+            asset: GIcon.back,
+            tip: 'Kembali',
+            size: 42,
+            onTap: () => Navigator.of(context).maybePop(),
           ),
+          const SizedBox(width: 12),
           const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'MODE KESINTASAN',
-                  style: TextStyle(
-                    color: _green,
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 1.6,
-                  ),
-                ),
-                Text(
-                  'Papan Skor',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 22,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ],
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  GameIcon(GIcon.survival, size: 38),
+                  SizedBox(width: 10),
+                  GameIcon(GIcon.leaderboard, size: 38),
+                ],
+              ),
             ),
           ),
-          IconButton(
+          IconButton.filledTonal(
             tooltip: 'Segarkan',
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withValues(alpha: 0.12),
+              foregroundColor: Colors.white,
+              fixedSize: const Size(42, 42),
+            ),
             onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded, color: Colors.white),
+            icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
@@ -209,19 +204,24 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   }
 
   Widget _headerRow() {
-    const style = TextStyle(
-      color: Colors.white38,
-      fontSize: 11,
-      fontWeight: FontWeight.w800,
-      letterSpacing: 1.2,
-    );
     return const Padding(
       padding: EdgeInsets.only(bottom: 8),
       child: Row(
         children: [
-          SizedBox(width: 36, child: Text('#', style: style)),
-          Expanded(child: Text('PEMAIN', style: style)),
-          Text('WAKTU', style: style),
+          SizedBox(
+            width: 36,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: GameIcon(GIcon.tier, size: 24),
+            ),
+          ),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: GameIcon(GIcon.player, size: 24),
+            ),
+          ),
+          GameIcon(GIcon.timer, size: 24),
         ],
       ),
     );
@@ -260,11 +260,28 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
                   ),
                 ),
                 const SizedBox(height: 2),
-                Text(
-                  '${r['rooms_count']} kamar · Bank Sampah Lv ${r['waste_level']}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                Row(
+                  children: [
+                    const GameIcon(GIcon.addRoom, size: 20),
+                    const SizedBox(width: 4),
+                    Text(
+                      '${r['rooms_count']}',
+                      style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 14),
+                    const GameIcon(GIcon.bin1, size: 20),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Lv ${r['waste_level']}',
+                      style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -330,25 +347,29 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
           mainAxisSize: MainAxisSize.min,
           children: [
             asset != null
-                ? GameIcon(asset, size: 72)
+                ? GameIcon(asset, size: 110)
                 : Icon(icon, size: 44, color: color),
-            const SizedBox(height: 14),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 18,
-                fontWeight: FontWeight.w900,
+            if (title.isNotEmpty) ...[
+              const SizedBox(height: 14),
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                  color: Colors.white60, fontSize: 13, height: 1.4),
-            ),
+            ],
+            if (message.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: Colors.white60, fontSize: 13, height: 1.4),
+              ),
+            ],
             if (action != null) ...[
               const SizedBox(height: 20),
               action,
@@ -362,44 +383,35 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   Widget _emptyState() => _stateCard(
     key: const ValueKey('empty'),
     icon: Icons.emoji_events_outlined,
-    asset: GIcon.leaderboard,
+    asset: GIcon.waiting,
     color: _amber,
-    title: 'Belum ada skor',
-    message: 'Main mode Kesintasan dan jadilah yang pertama\n'
-        'tercatat di papan skor!',
-    action: FilledButton.icon(
-      onPressed: () => Navigator.of(context).maybePop(),
-      style: FilledButton.styleFrom(
-        backgroundColor: _amber,
-        foregroundColor: Colors.black87,
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14)),
-      ),
-      icon: const GameIconBadge(GIcon.play, size: 30, ring: Colors.black87),
-      label: const Text('Main sekarang',
-          style: TextStyle(fontWeight: FontWeight.w900)),
+    title: '',
+    message: '',
+    action: GameIconButton(
+      asset: GIcon.play,
+      tip: 'Main sekarang',
+      size: 64,
+      ring: _amber,
+      onTap: () => Navigator.of(context).maybePop(),
     ),
   );
 
   Widget _errorState() => _stateCard(
     key: const ValueKey('error'),
     icon: Icons.cloud_off_rounded,
+    asset: GIcon.alert,
     color: Colors.redAccent,
-    title: 'Gagal memuat papan skor',
+    title: '',
     message: _error ?? 'Terjadi kesalahan.',
-    action: OutlinedButton.icon(
-      onPressed: _load,
-      style: OutlinedButton.styleFrom(
+    action: IconButton.filledTonal(
+      tooltip: 'Coba lagi',
+      style: IconButton.styleFrom(
+        backgroundColor: Colors.white.withValues(alpha: 0.12),
         foregroundColor: Colors.white,
-        side: BorderSide(color: Colors.white.withValues(alpha: 0.35)),
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14)),
+        fixedSize: const Size(56, 56),
       ),
-      icon: const Icon(Icons.refresh_rounded),
-      label: const Text('Coba lagi',
-          style: TextStyle(fontWeight: FontWeight.w800)),
+      onPressed: _load,
+      icon: const Icon(Icons.refresh_rounded, size: 28),
     ),
   );
 }

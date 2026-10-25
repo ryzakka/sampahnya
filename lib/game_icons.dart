@@ -83,7 +83,30 @@ abstract final class GIcon {
   static const String crown2 = '${_d}crown2.png'; //                juara / menang
   static const String alert = '${_d}alert.png'; //                  bahaya / kalah
 
+  // ---- set ikon ketiga ----
+  static const String offer = '${_d}penawaran.png'; //              tawaran titip sampah
+  static const String truckHijack = '${_d}truckbajak.png'; //       truk dibajak / mogok
+  static const String policeReport = '${_d}policereport.png'; //    lapor polisi
+  static const String defensive = '${_d}defensive.png'; //          pertahanan
+  static const String defensiveUp = '${_d}defensiveup.png'; //      pertahanan naik level
+  static const String bedroom = '${_d}bedroom.png'; //              kamar tidur
+  static const String room = '${_d}room.png'; //                    ruangan
+  static const String type = '${_d}type.png'; //                    jenis / tipe
+  static const String tier = '${_d}tingkatan.png'; //               tingkatan / level
+  static const String waiting = '${_d}waiting.png'; //              menunggu
+  static const String win = '${_d}menang.png'; //                   banner menang
+  static const String lose = '${_d}kalah.png'; //                   banner kalah
+  static const String timePlus = '${_d}timeplus.png'; //            tambah waktu
+  static const String recycle = '${_d}recycle.png'; //              daur ulang
+  static const String ghost = '${_d}ghost.png'; //                  hantu / penonton
+  static const String sound = '${_d}sound.png'; //                  efek suara
+  static const String music = '${_d}music.png'; //                  musik
+  static const String starts = '${_d}starts.png'; //                banner "Mulai!"
+
   static const List<String> all = [
+    offer, truckHijack, policeReport, defensive, defensiveUp, bedroom, room,
+    type, tier, waiting, win, lose, timePlus, recycle, ghost, sound, music,
+    starts,
     copy, player, alreadyOrSip, notYet, customization, crown, random, home,
     character, timeWait, gameMode, howTo, appInfo, otherGames, skip, left,
     right, crown2, alert,
@@ -180,6 +203,7 @@ String? assetForIcon(IconData i) {
   if (i == Icons.workspace_premium) return GIcon.upHouse;
   if (i == Icons.local_fire_department || i == Icons.factory) return GIcon.bin;
   if (i == Icons.emoji_emotions) return GIcon.emoji;
+  if (i == Icons.visibility) return GIcon.ghost;
   if (i == Icons.school) return GIcon.toga;
   if (i == Icons.thunderstorm ||
       i == Icons.water_drop ||

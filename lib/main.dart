@@ -1628,7 +1628,6 @@ class _LobbyHomeState extends State<LobbyHome>
 
   Widget _buildHero({required bool center, required double titleSize}) {
     final align = center ? CrossAxisAlignment.center : CrossAxisAlignment.start;
-    final textAlign = center ? TextAlign.center : TextAlign.left;
     return Column(
       crossAxisAlignment: align,
       mainAxisSize: MainAxisSize.min,
@@ -1639,19 +1638,6 @@ class _LobbyHomeState extends State<LobbyHome>
           fit: BoxFit.contain,
           alignment: center ? Alignment.center : Alignment.centerLeft,
           filterQuality: FilterQuality.medium,
-        ),
-        const SizedBox(height: 10),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 380),
-          child: Text(
-            'Bangun kamar, kelola limbah, atau timbun kost tetangga!',
-            textAlign: textAlign,
-            style: _Ui.body(0.86).copyWith(
-              fontSize: 15,
-              height: 1.45,
-              shadows: const [Shadow(color: Colors.black, blurRadius: 8)],
-            ),
-          ),
         ),
       ],
     );
@@ -1690,14 +1676,6 @@ class _LobbyHomeState extends State<LobbyHome>
               ),
             );
           },
-        ),
-        Text(
-          'Sampahnya! v$appVersion',
-          textAlign: left ? TextAlign.left : TextAlign.center,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.35),
-            fontSize: 11,
-          ),
         ),
       ],
     );
@@ -2378,17 +2356,16 @@ class _RoomLobbyState extends State<RoomLobby>
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Ruang tunggu', style: _Ui.label),
-              Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: _Ui.heading.copyWith(fontSize: 19),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Tooltip(
+              message: title,
+              triggerMode: TooltipTriggerMode.longPress,
+              child: GameIcon(
+                allReady ? GIcon.alreadyOrSip : GIcon.waiting,
+                size: 46,
               ),
-            ],
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -2487,13 +2464,20 @@ class _RoomLobbyState extends State<RoomLobby>
         children: [
           Row(
             children: [
-              const Expanded(child: Text('Pemain', style: _Ui.label)),
+              const Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: GameIcon(GIcon.player, size: 26),
+                ),
+              ),
+              const GameIcon(GIcon.alreadyOrSip, size: 24),
+              const SizedBox(width: 4),
               Text(
-                '$readyCount/${list.length} siap',
+                '$readyCount/${list.length}',
                 style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.6),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
+                  color: Colors.white.withValues(alpha: 0.75),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
                 ),
               ),
             ],
@@ -2538,18 +2522,7 @@ class _RoomLobbyState extends State<RoomLobby>
                 ringWidth: 1.5,
               ),
             ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Menunggu…',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.35),
-                  fontSize: 12.5,
-                ),
-              ),
-            ),
+            const Spacer(),
           ],
         ),
       );
@@ -2613,7 +2586,7 @@ class _RoomLobbyState extends State<RoomLobby>
   /// Bar aksi tetap di bawah: pesan status, error, lalu tombol Siap / Mulai.
   Widget _buildActionBar(
       bool ready, Map<String, dynamic>? me, bool isHost, bool allReady) {
-    final (IconData hintIcon, String hint, Color hintColor) =
+    final (_, String hint, _) =
     _othersEditing.isNotEmpty
         ? (
     Icons.brush_rounded,
@@ -2665,23 +2638,19 @@ class _RoomLobbyState extends State<RoomLobby>
             _ErrorBanner(_error!),
             _Ui.gap12,
           ],
-          Row(
-            children: [
-              Icon(hintIcon, size: 16, color: hintColor),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  hint,
-                  style: TextStyle(
-                    color: hintColor == Colors.white70
-                        ? Colors.white.withValues(alpha: 0.65)
-                        : hintColor,
-                    fontSize: 12.5,
-                    height: 1.3,
-                  ),
-                ),
+          Center(
+            child: Tooltip(
+              message: hint,
+              triggerMode: TooltipTriggerMode.longPress,
+              child: GameIcon(
+                _othersEditing.isNotEmpty
+                    ? GIcon.customization
+                    : (isHost && allReady
+                    ? GIcon.alreadyOrSip
+                    : GIcon.timeWait),
+                size: 34,
               ),
-            ],
+            ),
           ),
           _Ui.gap12,
           Row(
@@ -2736,9 +2705,7 @@ class _RoomLobbyState extends State<RoomLobby>
     final list = _ordered;
     final n = list.length;
     if (n == 0) {
-      return const Center(
-        child: Text('Menunggu pemain…', style: TextStyle(color: Colors.white70)),
-      );
+      return const Center(child: GameIcon(GIcon.waiting, size: 110));
     }
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),

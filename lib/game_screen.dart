@@ -2007,8 +2007,7 @@ class _GameScreenState extends State<GameScreen>
               Positioned.fill(
                 child: n == 0
                     ? const Center(
-                  child: Text('Menunggu pemain…',
-                      style: TextStyle(color: Colors.white70)),
+                  child: GameIcon(GIcon.waiting, size: 110),
                 )
                     : Listener(
                   onPointerSignal: (e) =>
@@ -2569,9 +2568,6 @@ class _GameScreenState extends State<GameScreen>
             children: [
               Row(
                 children: [
-                  Text(label,
-                      style:
-                      const TextStyle(color: Colors.white70, fontSize: 10.5)),
                   const Spacer(),
                   Text(value,
                       style: const TextStyle(
@@ -2595,13 +2591,22 @@ class _GameScreenState extends State<GameScreen>
     required String tooltip,
     required VoidCallback onTap,
     Color color = Colors.white,
+    double size = 38,
   }) =>
-      IconButton(
+      asset != null
+          ? GameIconButton(
+        asset: asset,
+        tip: tooltip,
+        size: size,
+        ring: color == Colors.white ? Colors.white38 : color,
+        onTap: onTap,
+      )
+          : IconButton(
         onPressed: onTap,
-        icon: asset != null ? GameIcon(asset, size: 28) : Icon(icon, color: color),
+        icon: Icon(icon, color: color),
         iconSize: 20,
         padding: EdgeInsets.zero,
-        constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+        constraints: BoxConstraints.tightFor(width: size, height: size),
         visualDensity: VisualDensity.compact,
         tooltip: tooltip,
       );
@@ -2610,14 +2615,17 @@ class _GameScreenState extends State<GameScreen>
       {required bool showStats, required bool showRate}) {
     final p = _pollution;
     final pc = _pollutionLevel(p).$2;
+    final bs = short ? 32.0 : 38.0; // ukuran seragam tombol ikon bilah atas
 
     final back = _hudIcon(
+      size: bs,
       icon: Icons.arrow_back,
       asset: GIcon.back,
       tooltip: 'Kembali',
       onTap: () => Navigator.of(context).maybePop(),
     );
     final history = _hudIcon(
+      size: bs,
       icon: Icons.history,
       tooltip: 'Kabar terbaru',
       asset: GIcon.list,
@@ -2626,6 +2634,7 @@ class _GameScreenState extends State<GameScreen>
     final perf = ValueListenableBuilder<int>(
       valueListenable: KostPerf.level,
       builder: (_, lv, __) => _hudIcon(
+        size: bs,
         icon: Icons.speed,
         asset: perfIcon(lv),
         tooltip: 'Mode Ringan: ${KostPerf.names[lv]} (ketuk untuk mengubah)',
@@ -2703,10 +2712,11 @@ class _GameScreenState extends State<GameScreen>
     // Lebar: SATU baris (kembali · kode · uang · [status] · meter · tombol).
     if (wide) {
       return _glass(
-        padding: EdgeInsets.symmetric(horizontal: 6, vertical: short ? 3 : 6),
+        padding: EdgeInsets.symmetric(horizontal: 8, vertical: short ? 4 : 6),
         child: Row(
           children: [
             back,
+            const SizedBox(width: 8),
             code,
             const SizedBox(width: 10),
             if (s != null) ...[
@@ -2720,8 +2730,9 @@ class _GameScreenState extends State<GameScreen>
               const SizedBox(width: 12),
             ],
             Expanded(child: polMeter),
-            const SizedBox(width: 2),
+            const SizedBox(width: 12),
             perf,
+            const SizedBox(width: 8),
             history,
           ],
         ),
@@ -2730,13 +2741,14 @@ class _GameScreenState extends State<GameScreen>
 
     // Sempit/potret: baris 1 = identitas & tombol, baris 2 = dua meter ramping.
     return _glass(
-      padding: const EdgeInsets.fromLTRB(2, 3, 8, 6),
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           Row(
             children: [
               back,
+              const SizedBox(width: 8),
               Expanded(
                 child: s == null
                     ? const SizedBox.shrink()
@@ -2748,14 +2760,15 @@ class _GameScreenState extends State<GameScreen>
               ),
               const SizedBox(width: 6),
               code,
-              const SizedBox(width: 2),
+              const SizedBox(width: 8),
               perf,
+              const SizedBox(width: 6),
               history,
             ],
           ),
-          const SizedBox(height: 2),
+          const SizedBox(height: 6),
           Padding(
-            padding: const EdgeInsets.only(left: 8),
+            padding: const EdgeInsets.only(left: 2),
             child: Row(
               children: [
                 if (trashMeter != null) ...[
@@ -3190,17 +3203,7 @@ class _GameScreenState extends State<GameScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const GameIcon(GIcon.timer, size: 64),
-          const SizedBox(height: 12),
-          const Text(
-            'KOST TERTIMBUN!',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1,
-            ),
-          ),
+          const GameIcon(GIcon.lose, size: 150),
           const SizedBox(height: 8),
           Text(
             'Bertahan ${_fmtDur(secs)}',
@@ -3264,22 +3267,7 @@ class _GameScreenState extends State<GameScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          CircleAvatar(
-            radius: 32,
-            backgroundColor: (isWin ? const Color(0xFFFFCA28) : Colors.redAccent)
-                .withValues(alpha: 0.2),
-            child: GameIcon(isWin ? GIcon.crown2 : GIcon.alert, size: 52),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            isWin ? 'JURAGAN TERBAIK!' : 'KOST TERTIMBUN!',
-            style: const TextStyle(
-              color: Colors.white,
-              fontSize: 22,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 1,
-            ),
-          ),
+          GameIcon(isWin ? GIcon.win : GIcon.lose, size: 150),
           const SizedBox(height: 8),
           Text(
             text,
@@ -3997,6 +3985,7 @@ class _GameScreenState extends State<GameScreen>
         add(_alertBubble(
           key: 'inspect-$id',
           icon: Icons.policy_rounded,
+          asset: GIcon.policeReport,
           color: const Color(0xFFE53935),
           title: 'Lapor ${_name(id)}',
           cost: inspectCost,
@@ -4010,6 +3999,7 @@ class _GameScreenState extends State<GameScreen>
         add(_alertBubble(
           key: 'hijack-$id',
           icon: Icons.u_turn_left_rounded,
+          asset: GIcon.truckHijack,
           color: const Color(0xFFFFB300),
           title: 'Bajak truk ${_name(id)}',
           cost: hijackCost,
@@ -4056,6 +4046,7 @@ class _GameScreenState extends State<GameScreen>
 
   Widget _alertBubble({
     required String key,
+    String? asset,
     required IconData icon,
     required Color color,
     required String title,
@@ -4101,11 +4092,16 @@ class _GameScreenState extends State<GameScreen>
                     children: [
                       if (left)
                         Icon(Icons.chevron_left, size: 16, color: color),
-                      Container(
+                      asset != null
+                          ? ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: GameIcon(asset, size: 40),
+                      )
+                          : Container(
                         width: 26,
                         height: 26,
-                        decoration:
-                        BoxDecoration(color: color, shape: BoxShape.circle),
+                        decoration: BoxDecoration(
+                            color: color, shape: BoxShape.circle),
                         child: Icon(icon, size: 16, color: Colors.black87),
                       ),
                       const SizedBox(width: 6),
@@ -4114,17 +4110,18 @@ class _GameScreenState extends State<GameScreen>
                           mainAxisSize: MainAxisSize.min,
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w800)),
+                            if (asset == null)
+                              Text(title,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800)),
                             Text('$cost',
-                                style: const TextStyle(
-                                    color: Color(0xFFFFCA28),
-                                    fontSize: 11,
+                                style: TextStyle(
+                                    color: const Color(0xFFFFCA28),
+                                    fontSize: asset != null ? 14 : 11,
                                     fontWeight: FontWeight.w900)),
                           ],
                         ),
@@ -4339,7 +4336,7 @@ class _GameScreenState extends State<GameScreen>
           icon: Icons.shield,
           color: Colors.lightBlueAccent,
           tip: maxed ? 'Pertahanan maksimal' : 'Pertahanan · $defCost',
-          asset: GIcon.addFence,
+          asset: maxed ? GIcon.defensive : GIcon.defensiveUp,
           badge: maxed ? 'Maks' : '$defense/$_maxDefense',
           dim: maxed || money < defCost,
           onTap: () {
@@ -5186,13 +5183,15 @@ class _GameScreenState extends State<GameScreen>
             children: [
               Row(
                 children: [
+                  const GameIcon(GIcon.offer, size: 40),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          '🏪 ${_name(o['sender_id'])} menitip $amt sampah',
+                          '${_name(o['sender_id'])} menitip $amt sampah',
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
