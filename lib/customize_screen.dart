@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'game_icons.dart';
 import 'kost_scene.dart';
 import 'kost_style.dart';
 
@@ -370,14 +371,11 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         : (small ? 'Semua sudah selesai' : 'Semua pemain sudah selesai');
     return Row(
       children: [
-        IconButton.filledTonal(
-          tooltip: widget.readOnly ? 'Kembali' : 'Selesai & kembali',
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.white.withValues(alpha: 0.12),
-            foregroundColor: Colors.white,
-          ),
-          onPressed: _leaving ? null : _finish,
-          icon: const Icon(Icons.arrow_back_rounded),
+        GameIconButton(
+          asset: GIcon.back,
+          tip: widget.readOnly ? 'Kembali' : 'Selesai & kembali',
+          size: 42,
+          onTap: _leaving ? null : _finish,
         ),
         SizedBox(width: small ? 8 : 12),
         Expanded(
@@ -434,48 +432,22 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   }
 
   Widget _tabs({bool dense = false}) {
-    Widget chip(int i, IconData icon, String label) {
-      final on = _tab == i;
-      return Expanded(
-        child: InkWell(
-          borderRadius: BorderRadius.circular(14),
+    Widget chip(int i, String asset, String tip) => Expanded(
+      child: Center(
+        child: GameIconButton(
+          asset: asset,
+          tip: tip,
+          size: dense ? 42 : 48,
+          selected: _tab == i,
           onTap: () => setState(() => _tab = i),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 160),
-            padding: EdgeInsets.symmetric(vertical: dense ? 9 : 11),
-            decoration: BoxDecoration(
-              color: on ? _amber : Colors.white.withValues(alpha: 0.08),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 18, color: on ? Colors.black87 : Colors.white70),
-                const SizedBox(width: 6),
-                Flexible(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: on ? Colors.black87 : Colors.white70,
-                      fontWeight: FontWeight.w900,
-                      fontSize: dense ? 13 : 14,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
         ),
-      );
-    }
+      ),
+    );
 
     return Row(
       children: [
-        chip(0, Icons.home_work_rounded, 'Bangunan'),
-        const SizedBox(width: 8),
-        chip(1, Icons.face_retouching_natural_rounded, 'Karakter'),
+        chip(0, GIcon.home, 'Bangunan'),
+        chip(1, GIcon.character, 'Karakter'),
       ],
     );
   }
@@ -493,8 +465,14 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     }
   }
 
+  String _statusAsset(String s) => switch (s) {
+    'editing' => GIcon.customization,
+    'done' => GIcon.alreadyOrSip,
+    _ => GIcon.home,
+  };
+
   Widget _tag(_Entry e) {
-    final (icon, label, color) = _statusInfo(e.status);
+    final (_, label, _) = _statusInfo(e.status);
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
       decoration: BoxDecoration(
@@ -534,20 +512,9 @@ class _CustomizeScreenState extends State<CustomizeScreen>
             ],
           ),
           const SizedBox(height: 2),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 12, color: color),
-              const SizedBox(width: 3),
-              Text(
-                label,
-                style: TextStyle(
-                  color: color,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
+          Tooltip(
+            message: label,
+            child: GameIcon(_statusAsset(e.status), size: 22),
           ),
         ],
       ),
@@ -784,7 +751,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
       );
 
   Widget _heroBar(_Entry e, {bool tight = false}) {
-    final (icon, label, color) = _statusInfo(e.status);
+    final (_, label, _) = _statusInfo(e.status);
     final bs = tight ? 30.0 : 34.0;
     final gap = tight ? 4.0 : 6.0;
     return Row(
@@ -825,23 +792,9 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                           fontWeight: FontWeight.w900,
                         ),
                       ),
-                      Row(
-                        children: [
-                          Icon(icon, size: 12, color: color),
-                          const SizedBox(width: 3),
-                          Flexible(
-                            child: Text(
-                              label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: color,
-                                fontSize: 10.5,
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                          ),
-                        ],
+                      Tooltip(
+                        message: label,
+                        child: GameIcon(_statusAsset(e.status), size: 20),
                       ),
                     ],
                   ),
@@ -914,19 +867,9 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                         fontWeight: FontWeight.w800,
                       ),
                     ),
-                    Row(
-                      children: [
-                        Icon(st.$1, size: 11, color: st.$3),
-                        const SizedBox(width: 3),
-                        Text(
-                          st.$2,
-                          style: TextStyle(
-                            color: st.$3,
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                          ),
-                        ),
-                      ],
+                    Tooltip(
+                      message: st.$2,
+                      child: GameIcon(_statusAsset(e.status), size: 18),
                     ),
                   ],
                 ),
@@ -959,19 +902,13 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     );
   }
 
-  Widget _doneButton(String label) => FilledButton.icon(
-    onPressed: _leaving ? null : _finish,
-    style: FilledButton.styleFrom(
-      backgroundColor: _amber,
-      foregroundColor: Colors.black87,
-      minimumSize: const Size.fromHeight(48),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-    ),
-    icon: Icon(_leaving ? Icons.hourglass_bottom_rounded : Icons.check_rounded),
-    label: Text(
-      _leaving ? 'Menyimpan…' : label,
-      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15),
-    ),
+  Widget _doneButton(String label) => GameIconButton(
+    asset: GIcon.accept,
+    tip: _leaving ? 'Menyimpan…' : label,
+    size: 56,
+    ring: _greenSoft,
+    busy: _leaving,
+    onTap: _leaving ? null : _finish,
   );
 
   Widget _editPanel() {
@@ -984,34 +921,17 @@ class _CustomizeScreenState extends State<CustomizeScreen>
       if (_tab == 0) _nameCtl.clear();
     }
 
-    // Layar sempit/pendek: Acak & Bawaan jadi tombol ikon di samping tombol
-    // Selesai, supaya area pilihan mendapat ruang lebih besar.
-    Widget iconAction(IconData icon, String tip, VoidCallback onTap) => Tooltip(
-      message: tip,
-      child: SizedBox(
-        width: 48,
-        height: 48,
-        child: OutlinedButton(
-          onPressed: onTap,
-          style: _outlined.copyWith(
-            padding: const WidgetStatePropertyAll(EdgeInsets.zero),
-          ),
-          child: Icon(icon, size: 22),
-        ),
-      ),
-    );
+    Widget iconAction(String asset, String tip, VoidCallback onTap) =>
+        GameIconButton(asset: asset, tip: tip, size: 48, onTap: onTap);
 
-    final footer = _compact
-        ? Row(
+    final footer = Row(
+      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
       children: [
-        iconAction(Icons.casino_rounded, 'Acak', randomize),
-        const SizedBox(width: 8),
-        iconAction(Icons.restart_alt_rounded, 'Kembali ke bawaan', reset),
-        const SizedBox(width: 8),
-        Expanded(child: _doneButton('Selesai')),
+        iconAction(GIcon.random, 'Acak', randomize),
+        iconAction(GIcon.cancel, 'Kembali ke bawaan', reset),
+        _doneButton('Selesai kustomisasi'),
       ],
-    )
-        : _doneButton('Selesai kustomisasi');
+    );
 
     return _panelShell(
       body: Column(
@@ -1048,30 +968,6 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               ),
             ),
           ),
-          if (!_compact) ...[
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: randomize,
-                    style: _outlined,
-                    icon: const Icon(Icons.casino_rounded, size: 18),
-                    label: const Text('Acak'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: reset,
-                    style: _outlined,
-                    icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                    label: const Text('Bawaan'),
-                  ),
-                ),
-              ],
-            ),
-          ],
         ],
       ),
       footer: footer,
@@ -1090,15 +986,20 @@ class _CustomizeScreenState extends State<CustomizeScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text('Pemain', style: _labelStyle),
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: GameIcon(GIcon.player, size: 28),
+            ),
             const SizedBox(height: 8),
             for (final e in entries)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(
                   children: [
-                    Icon(_statusInfo(e.status).$1,
-                        size: 18, color: _statusInfo(e.status).$3),
+                    Tooltip(
+                      message: _statusInfo(e.status).$2,
+                      child: GameIcon(_statusAsset(e.status), size: 28),
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -1109,28 +1010,13 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                             color: Colors.white, fontWeight: FontWeight.w700),
                       ),
                     ),
-                    Text(
-                      _statusInfo(e.status).$2,
-                      style: TextStyle(
-                          color: _statusInfo(e.status).$3,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w800),
-                    ),
                   ],
                 ),
               ),
-            const SizedBox(height: 12),
-            Text(
-              'Kamu memilih tampilan bawaan, jadi cukup menonton sementara '
-                  'pemain lain berkustomisasi. Permainan baru bisa dimulai '
-                  'setelah mereka selesai.',
-              style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.65), fontSize: 12.5),
-            ),
           ],
         ),
       ),
-      footer: _doneButton('Kembali ke lobi'),
+      footer: Center(child: _doneButton('Kembali ke lobi')),
     );
   }
 

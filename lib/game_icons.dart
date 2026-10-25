@@ -62,7 +62,31 @@ abstract final class GIcon {
   static const String incineratorPlus = '${_d}inseneratorplus.png'; //       upgrade insinerator polusi
   static const String incineratorEcoPlus = '${_d}inseneratorecoplus.png'; // upgrade insinerator eco
 
+  // ---- set ikon tambahan ----
+  static const String copy = '${_d}copy.png'; //                    salin
+  static const String player = '${_d}player.png'; //                jumlah / daftar pemain
+  static const String alreadyOrSip = '${_d}alreadyorsip.png'; //    sudah siap / selesai
+  static const String notYet = '${_d}notyet.png'; //                belum siap
+  static const String customization = '${_d}customization.png'; //  kustomisasi
+  static const String crown = '${_d}crown.png'; //                  host
+  static const String random = '${_d}random.png'; //                acak
+  static const String home = '${_d}home.png'; //                    beranda / bangunan
+  static const String character = '${_d}character.png'; //          karakter
+  static const String timeWait = '${_d}timewait.png'; //            menunggu
+  static const String gameMode = '${_d}gamemode.png'; //            mode permainan
+  static const String howTo = '${_d}howto.png'; //                  cara main
+  static const String appInfo = '${_d}appinfo.png'; //              info aplikasi
+  static const String otherGames = '${_d}othergames.png'; //        gim lain
+  static const String skip = '${_d}skip.png'; //                    lewati
+  static const String left = '${_d}left.png'; //                    sebelumnya
+  static const String right = '${_d}right.png'; //                  berikutnya
+  static const String crown2 = '${_d}crown2.png'; //                juara / menang
+  static const String alert = '${_d}alert.png'; //                  bahaya / kalah
+
   static const List<String> all = [
+    copy, player, alreadyOrSip, notYet, customization, crown, random, home,
+    character, timeWait, gameMode, howTo, appInfo, otherGames, skip, left,
+    right, crown2, alert,
     addRoom, addBin, upHouse, callTruck, bin, addFence, addPet, coinBunk,
     emoji, warehouse, binBig, polutan, timer, construct, cancel, accept,
     agree, load, truckLoad, list, warning, defence, virus, disaster,
@@ -174,4 +198,110 @@ Widget gIcon(IconData i, double size, Color color) {
   final a = assetForIcon(i);
   if (a != null) return GameIcon(a, size: size * 1.35);
   return Icon(i, size: size, color: color);
+}
+
+/// Tombol kotak berisi ikon PNG penuh (tanpa teks). Keterangan muncul saat
+/// ditahan (layar sentuh) atau kursor diarahkan (desktop/web).
+class GameIconButton extends StatefulWidget {
+  const GameIconButton({
+    super.key,
+    required this.asset,
+    required this.tip,
+    required this.onTap,
+    this.size = 48,
+    this.ring = Colors.white54,
+    this.selected = false,
+    this.busy = false,
+  });
+
+  final String asset;
+  final String tip;
+  final VoidCallback? onTap;
+  final double size;
+  final Color ring;
+  final bool selected;
+  final bool busy;
+
+  @override
+  State<GameIconButton> createState() => _GameIconButtonState();
+}
+
+class _GameIconButtonState extends State<GameIconButton> {
+  bool _down = false;
+
+  void _setDown(bool v) {
+    if (_down != v && mounted) setState(() => _down = v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = widget.onTap != null;
+    final size = widget.size;
+    final ring = widget.selected ? const Color(0xFFFFCA28) : widget.ring;
+    return Tooltip(
+      message: widget.tip,
+      waitDuration: const Duration(milliseconds: 300),
+      triggerMode: TooltipTriggerMode.longPress,
+      child: Semantics(
+        button: true,
+        enabled: enabled,
+        label: widget.tip,
+        child: MouseRegion(
+          cursor:
+          enabled ? SystemMouseCursors.click : SystemMouseCursors.basic,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTapDown: enabled ? (_) => _setDown(true) : null,
+            onTapUp: (_) => _setDown(false),
+            onTapCancel: () => _setDown(false),
+            onTap: widget.onTap,
+            child: AnimatedScale(
+              scale: _down ? 0.92 : 1,
+              duration: const Duration(milliseconds: 90),
+              child: Opacity(
+                opacity: (enabled || widget.busy) ? 1 : 0.45,
+                child: Container(
+                  width: size,
+                  height: size,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(size * 0.26),
+                    border: Border.all(
+                        color: ring, width: widget.selected ? 3 : 2),
+                    boxShadow: const [
+                      BoxShadow(
+                          color: Colors.black45,
+                          blurRadius: 8,
+                          offset: Offset(0, 3)),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(size * 0.2),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        GameIcon(widget.asset, size: size),
+                        if (widget.busy)
+                          Container(
+                            color: Colors.black54,
+                            alignment: Alignment.center,
+                            child: SizedBox(
+                              width: size * 0.38,
+                              height: size * 0.38,
+                              child: const CircularProgressIndicator(
+                                strokeWidth: 3,
+                                color: Color(0xFFFFCA28),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

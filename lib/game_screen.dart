@@ -2413,17 +2413,17 @@ class _GameScreenState extends State<GameScreen>
                               children: [
                                 ready
                                     ? const GameIcon(GIcon.defence, size: 36)
-                                    : const Icon(Icons.hourglass_bottom,
-                                    color: Colors.white, size: 28),
-                                Text(
-                                  ready ? 'TANGKIS' : '${cd.ceil()}s',
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w900,
-                                    letterSpacing: 1,
+                                    : const GameIcon(GIcon.timeWait, size: 30),
+                                if (!ready)
+                                  Text(
+                                    '${cd.ceil()}s',
+                                    style: const TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 12.5,
+                                      fontWeight: FontWeight.w900,
+                                      letterSpacing: 1,
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
                           ],
@@ -3217,18 +3217,13 @@ class _GameScreenState extends State<GameScreen>
             style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
           const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFFFCA28),
-                foregroundColor: Colors.black87,
-                textStyle: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              onPressed: () =>
-                  Navigator.of(context).popUntil((r) => r.isFirst),
-              child: const Text('KEMBALI KE BERANDA'),
+          Center(
+            child: GameIconButton(
+              asset: GIcon.home,
+              tip: 'Kembali ke beranda',
+              size: 60,
+              ring: const Color(0xFFFFCA28),
+              onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
             ),
           ),
         ],
@@ -3273,11 +3268,7 @@ class _GameScreenState extends State<GameScreen>
             radius: 32,
             backgroundColor: (isWin ? const Color(0xFFFFCA28) : Colors.redAccent)
                 .withValues(alpha: 0.2),
-            child: Icon(
-              isWin ? Icons.emoji_events_rounded : Icons.delete_forever_rounded,
-              size: 36,
-              color: isWin ? const Color(0xFFFFCA28) : Colors.redAccent,
-            ),
+            child: GameIcon(isWin ? GIcon.crown2 : GIcon.alert, size: 52),
           ),
           const SizedBox(height: 14),
           Text(
@@ -3296,18 +3287,13 @@ class _GameScreenState extends State<GameScreen>
             style: const TextStyle(color: Colors.white70, fontSize: 14),
           ),
           const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            height: 48,
-            child: FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFFFCA28),
-                foregroundColor: Colors.black87,
-                textStyle: const TextStyle(fontWeight: FontWeight.w900),
-              ),
-              onPressed: () =>
-                  Navigator.of(context).popUntil((r) => r.isFirst),
-              child: const Text('KEMBALI KE BERANDA'),
+          Center(
+            child: GameIconButton(
+              asset: GIcon.home,
+              tip: 'Kembali ke beranda',
+              size: 60,
+              ring: const Color(0xFFFFCA28),
+              onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
             ),
           ),
         ],
@@ -3889,11 +3875,14 @@ class _GameScreenState extends State<GameScreen>
                       child: SizedBox(
                         width: bubble - 6,
                         height: bubble - 6,
-                        child: Center(
-                          child: k.asset != null
-                              ? GameIcon(k.asset!, size: (bubble - 6) * 0.84)
-                              : Text(k.icon,
-                              style: const TextStyle(fontSize: 26)),
+                        child: Tooltip(
+                          message: k.label,
+                          child: Center(
+                            child: k.asset != null
+                                ? GameIcon(k.asset!, size: (bubble - 6) * 0.84)
+                                : Text(k.icon,
+                                style: const TextStyle(fontSize: 26)),
+                          ),
                         ),
                       ),
                     ),
@@ -3901,12 +3890,6 @@ class _GameScreenState extends State<GameScreen>
                 ),
               ),
               const SizedBox(height: 3),
-              Text(k.label,
-                  style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w800,
-                      shadows: [Shadow(blurRadius: 4, color: Colors.black)])),
               Text('${k.cost}',
                   style: const TextStyle(
                       color: Color(0xFFFFCA28),
@@ -5237,14 +5220,7 @@ class _GameScreenState extends State<GameScreen>
                   OutlinedButton(
                     style: btnPad,
                     onPressed: _offerBusy ? null : () => _respondOffer(false),
-                    child: const Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GameIcon(GIcon.cancel, size: 20),
-                        SizedBox(width: 4),
-                        Text('Tolak'),
-                      ],
-                    ),
+                    child: const GameIcon(GIcon.cancel, size: 22),
                   ),
                   const SizedBox(width: 6),
                   FilledButton(
@@ -5333,12 +5309,14 @@ class _GameScreenState extends State<GameScreen>
               'Rumah sebelumnya',
               false,
               overview ? null : () => _stepFocus(-1),
+              asset: GIcon.left,
             ),
             btn(
               Icons.chevron_right_rounded,
               'Rumah berikutnya',
               false,
               overview ? null : () => _stepFocus(1),
+              asset: GIcon.right,
             ),
           ],
         ],

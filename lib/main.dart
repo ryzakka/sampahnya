@@ -487,54 +487,14 @@ class _MoreGamesCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final align = center ? CrossAxisAlignment.center : CrossAxisAlignment.start;
-    return Semantics(
-      button: true,
-      label: 'Buka gim Linguistic Hegemony di browser',
-      child: InkWell(
+    return Align(
+      alignment: center ? Alignment.center : Alignment.centerLeft,
+      child: _IconTile(
+        asset: GIcon.otherGames,
+        tip: 'Gim lain: Linguistic Hegemony',
+        size: 56,
+        ring: _Ui.violet,
         onTap: () => _Ui.openLink(context, linguistifyUrl),
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            mainAxisAlignment:
-            center ? MainAxisAlignment.center : MainAxisAlignment.start,
-            children: [
-              const Icon(Icons.translate_rounded, color: _Ui.violet, size: 22),
-              const SizedBox(width: 12),
-              Flexible(
-                child: Column(
-                  crossAxisAlignment: align,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text(
-                      'Gim lain dari kami',
-                      style: TextStyle(
-                        color: _Ui.violet,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    const Text(
-                      'Linguistic Hegemony',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 15.5,
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              const Icon(Icons.open_in_new_rounded,
-                  size: 16, color: _Ui.violet),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -1079,7 +1039,7 @@ class MainMenu extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                               _IconTile(
-                                asset: GIcon.info,
+                                asset: GIcon.appInfo,
                                 tip: 'Info',
                                 size: 68,
                                 onTap: () => Navigator.of(context).push(
@@ -1150,13 +1110,16 @@ class MainMenu extends StatelessWidget {
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
-  Widget _section(String title, String body) => Padding(
+  Widget _section(String asset, String body) => Padding(
     padding: const EdgeInsets.only(bottom: 16),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(title, style: _Ui.label),
-        const SizedBox(height: 4),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: GameIcon(asset, size: 40),
+        ),
+        const SizedBox(height: 6),
         Text(body, style: _Ui.body(0.85)),
       ],
     ),
@@ -1201,12 +1164,14 @@ class AboutScreen extends StatelessWidget {
                   padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
                   child: Row(
                     children: [
-                      IconButton(
-                        tooltip: 'Kembali',
-                        onPressed: () => Navigator.of(context).maybePop(),
-                        icon: const GameIconBadge(GIcon.back, size: 34),
+                      _IconTile(
+                        asset: GIcon.back,
+                        tip: 'Kembali',
+                        size: 42,
+                        onTap: () => Navigator.of(context).maybePop(),
                       ),
-                      const Text('Info', style: _Ui.heading),
+                      const SizedBox(width: 12),
+                      const GameIcon(GIcon.appInfo, size: 38),
                     ],
                   ),
                 ),
@@ -1232,13 +1197,13 @@ class AboutScreen extends StatelessWidget {
                                 ),
                               ),
                               _section(
-                                'TENTANG GIM',
+                                GIcon.info,
                                 'Kamu juragan kost. Bangun kamar, kelola sampah, '
                                     'dan bertahan dari tekanan sampah yang terus '
                                     'naik. Jangan sampai kostmu tertimbun!',
                               ),
                               _section(
-                                'CARA BERMAIN',
+                                GIcon.howTo,
                                 '• Bangun kamar untuk menambah income.\n'
                                     '• Pasang kotak sampah, gudang, dan insinerator '
                                     'untuk mengelola limbah.\n'
@@ -1251,7 +1216,7 @@ class AboutScreen extends StatelessWidget {
                                     'mungkin.',
                               ),
                               _section(
-                                'MODE',
+                                GIcon.gameMode,
                                 'Multipemain 2–4 orang lewat kode ruangan, atau '
                                     'main sendiri di mode Kesintasan dengan papan '
                                     'skor.',
@@ -1562,15 +1527,11 @@ class _LobbyHomeState extends State<LobbyHome>
               alignment: Alignment.topLeft,
               child: Padding(
                 padding: const EdgeInsets.all(8),
-                child: IconButton.filledTonal(
-                  tooltip: 'Kembali',
-                  style: IconButton.styleFrom(
-                    backgroundColor: Colors.white.withValues(alpha: 0.10),
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed:
-                  _busy ? null : () => Navigator.of(context).maybePop(),
-                  icon: const GameIconBadge(GIcon.back, size: 32),
+                child: _IconTile(
+                  asset: GIcon.back,
+                  tip: 'Kembali',
+                  size: 42,
+                  onTap: _busy ? null : () => Navigator.of(context).maybePop(),
                 ),
               ),
             ),
@@ -1718,15 +1679,11 @@ class _LobbyHomeState extends State<LobbyHome>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    GameIconBadge(perfIcon(lv), size: 26, ring: col, ringWidth: 1.8),
-                    const SizedBox(width: 6),
-                    Text(
-                      'Mode Ringan: ${KostPerf.names[lv]}  (ketuk untuk ganti)',
-                      style: TextStyle(
-                        color: col,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    Tooltip(
+                      message:
+                      'Mode Ringan: ${KostPerf.names[lv]} (ketuk untuk ganti)',
+                      child: GameIconBadge(perfIcon(lv),
+                          size: 34, ring: col, ringWidth: 1.8),
                     ),
                   ],
                 ),
@@ -1762,8 +1719,6 @@ class _LobbyHomeState extends State<LobbyHome>
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text('Nama pemain', style: _Ui.label),
-          const SizedBox(height: 8),
           TextField(
             controller: _nameController,
             focusNode: _nameFocus,
@@ -1912,8 +1867,6 @@ class _LobbyHomeState extends State<LobbyHome>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Kode ruangan', style: _Ui.label),
-        _Ui.gap8,
         Row(
           children: [
             Expanded(
@@ -1977,12 +1930,6 @@ class _LobbyHomeState extends State<LobbyHome>
               onTap: _busy ? null : _joinRoom,
             ),
           ],
-        ),
-        const SizedBox(height: 6),
-        Text(
-          'Minta kode 6 karakter dari pembuat ruangan.',
-          textAlign: TextAlign.center,
-          style: _Ui.body(0.55).copyWith(fontSize: 12),
         ),
       ],
     );
@@ -2423,14 +2370,11 @@ class _RoomLobbyState extends State<RoomLobby>
         : 'Menunggu semua siap…');
     return Row(
       children: [
-        IconButton.filledTonal(
-          tooltip: 'Kembali',
-          style: IconButton.styleFrom(
-            backgroundColor: Colors.white.withValues(alpha: 0.10),
-            foregroundColor: Colors.white,
-          ),
-          onPressed: () => Navigator.of(context).maybePop(),
-          icon: const GameIconBadge(GIcon.back, size: 32),
+        _IconTile(
+          asset: GIcon.back,
+          tip: 'Kembali',
+          size: 42,
+          onTap: () => Navigator.of(context).maybePop(),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -2457,7 +2401,7 @@ class _RoomLobbyState extends State<RoomLobby>
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.people_alt_rounded, size: 16, color: _Ui.amber),
+              const GameIcon(GIcon.player, size: 22),
               const SizedBox(width: 6),
               Text(
                 '${_players.length}/$_maxPlayers',
@@ -2515,14 +2459,9 @@ class _RoomLobbyState extends State<RoomLobby>
                     ),
                   ),
                   const SizedBox(width: 10),
-                  Container(
-                    padding: const EdgeInsets.all(11),
-                    decoration: BoxDecoration(
-                      color: _Ui.amber.withValues(alpha: 0.14),
-                      borderRadius: BorderRadius.circular(14),
-                    ),
-                    child: const Icon(Icons.copy_rounded,
-                        color: _Ui.amber, size: 22),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: const GameIcon(GIcon.copy, size: 44),
                   ),
                 ],
               ),
@@ -2620,7 +2559,6 @@ class _RoomLobbyState extends State<RoomLobby>
     final editing = p['style_status'] == 'editing';
     final isMe = pid == userId;
     final isHost = pid == _hostId;
-    final accent = ready ? _Ui.greenSoft : Colors.amber.shade300;
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2658,18 +2596,14 @@ class _RoomLobbyState extends State<RoomLobby>
           if (isHost)
             const Padding(
               padding: EdgeInsets.only(left: 4),
-              child: Icon(Icons.workspace_premium_rounded,
-                  size: 15, color: _Ui.amber),
+              child: GameIcon(GIcon.crown, size: 22),
             ),
           const SizedBox(width: 6),
-          Icon(
+          GameIcon(
             editing
-                ? Icons.brush_rounded
-                : (ready
-                ? Icons.check_circle_rounded
-                : Icons.hourglass_bottom_rounded),
-            size: 16,
-            color: accent,
+                ? GIcon.customization
+                : (ready ? GIcon.alreadyOrSip : GIcon.notYet),
+            size: 26,
           ),
         ],
       ),
@@ -2874,7 +2808,7 @@ class _RoomLobbyState extends State<RoomLobby>
                         .firstOrNull;
                     final done = me?['style_status'] == 'done';
                     return _IconTile(
-                      asset: GIcon.setting,
+                      asset: GIcon.customization,
                       tip: done ? 'Ubah kustomisasi' : 'Kustomisasi tampilan',
                       size: 46,
                       selected: done,
@@ -2924,7 +2858,6 @@ class _RoomLobbyState extends State<RoomLobby>
   Widget _nameTag(Map<String, dynamic> p, bool isMe, bool isHost) {
     final ready = p['is_ready'] == true;
     final editing = p['style_status'] == 'editing';
-    final accent = ready ? _Ui.greenSoft : Colors.amber.shade300;
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 5, 8, 5),
       decoration: BoxDecoration(
@@ -2962,8 +2895,7 @@ class _RoomLobbyState extends State<RoomLobby>
               if (isHost)
                 const Padding(
                   padding: EdgeInsets.only(right: 4),
-                  child: Icon(Icons.workspace_premium_rounded,
-                      size: 13, color: _Ui.amber),
+                  child: GameIcon(GIcon.crown, size: 18),
                 ),
               Flexible(
                 child: Text(
@@ -2980,26 +2912,11 @@ class _RoomLobbyState extends State<RoomLobby>
             ],
           ),
           const SizedBox(height: 2),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                editing
-                    ? Icons.brush_rounded
-                    : (ready ? Icons.lightbulb_rounded : Icons.lightbulb_outline),
-                size: 12,
-                color: accent,
-              ),
-              const SizedBox(width: 3),
-              Text(
-                editing ? 'Kustomisasi…' : (ready ? 'Siap' : 'Belum siap'),
-                style: TextStyle(
-                  color: accent,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ],
+          GameIcon(
+            editing
+                ? GIcon.customization
+                : (ready ? GIcon.alreadyOrSip : GIcon.notYet),
+            size: 24,
           ),
         ],
       ),
