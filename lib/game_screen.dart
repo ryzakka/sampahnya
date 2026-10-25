@@ -10,6 +10,7 @@ import 'kost_scene.dart';
 import 'kost_style.dart';
 import 'kost_warehouse.dart';
 import 'kost_pets.dart';
+import 'bgm.dart';
 import 'sfx.dart';
 
 class GameScreen extends StatefulWidget {
@@ -179,6 +180,7 @@ class _GameScreenState extends State<GameScreen>
     _anim.addListener(_cineStep);
     _anim.addListener(_ghostStep);
     kostDoorHook = _onDoor;
+    Bgm.instance.enterGame(); // musik latar dipelankan + lagu diacak
     _subscribe();
     _loadAll();
     _tickServer();
@@ -226,7 +228,8 @@ class _GameScreenState extends State<GameScreen>
     _uiTimer?.cancel();
     _tickTimer?.cancel();
     _noticeTimer?.cancel();
-    Sfx.instance.rainStop(immediate: true);
+    Sfx.instance.stopAll(); // hujan + semua efek yang masih bunyi
+    Bgm.instance.enterLobby();
     if (kostDoorHook == _onDoor) kostDoorHook = null;
     _anim.dispose();
     if (_channel != null) _db.removeChannel(_channel!);
@@ -715,8 +718,8 @@ class _GameScreenState extends State<GameScreen>
         _ensureFx(actor, FxType.hijack, amount: 1, peer: target, durMs: hDur);
         if (actor == _me || target == _me) {
           Sfx.instance.play('truck-beep');
-          Future<void>.delayed(const Duration(milliseconds: 700),
-                  () => Sfx.instance.play('truck-moving'));
+          // truk bergerak selama adegan bajak saja (hDur ms)
+          Sfx.instance.playLater('truck-moving', 700, maxMs: hDur - 700);
         }
         _ensureFx(target, FxType.hijack, amount: 2, peer: actor, durMs: hDur);
         break;
@@ -754,8 +757,8 @@ class _GameScreenState extends State<GameScreen>
             amount: amt,
             delayMs: kBuriedCollapseMs,
           ));
-          Future<void>.delayed(Duration(milliseconds: kBuriedCollapseMs),
-                  () => Sfx.instance.play('building-collapse', minGapMs: 0));
+          Sfx.instance.playLater('building-collapse', kBuriedCollapseMs,
+              minGapMs: 0);
         } else {
           _ensureFx(target, FxType.collapse, amount: amt);
           Sfx.instance.play('building-collapse', minGapMs: 0);
@@ -976,8 +979,9 @@ class _GameScreenState extends State<GameScreen>
     switch (fn) {
       case 'warehouse_call_truck':
         Sfx.instance.play('truck-beep');
-        Future<void>.delayed(const Duration(milliseconds: 700),
-                () => Sfx.instance.play('truck-moving'));
+        // truk bergerak selama adegan truk gudang (Wh.truckSec detik)
+        Sfx.instance.playLater('truck-moving', 700,
+            maxMs: (Wh.truckSec(_whLive(_me).comps) * 1000).round() - 700);
       case 'upgrade_waste':
       case 'hire_hauler':
       case 'buy_defense':

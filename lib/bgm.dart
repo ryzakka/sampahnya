@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:audioplayers/audioplayers.dart';
@@ -28,7 +29,10 @@ class Bgm with WidgetsBindingObserver {
   bool _playing = false; // sudah berhasil memutar minimal satu lagu
   bool _muted = false;
   bool _pausedByApp = false;
-  double _volume = 0.5;
+  static const double lobbyVolume = 0.5;
+  static const double gameVolume = 0.14; // pelan tapi tetap terdengar
+  double _volume = lobbyVolume;
+  Timer? _fade;
 
   bool get muted => _muted;
 
@@ -53,6 +57,38 @@ class Bgm with WidgetsBindingObserver {
     await init();
     _last = _intro;
     await _play(_intro);
+  }
+
+  /// Mulai pertandingan: musik dipelankan (mulus) dan lagu diacak ulang;
+  /// lagu baru dijamin berbeda dari yang sedang diputar (beach1 di lobi).
+  Future<void> enterGame() async {
+    await init();
+    _fadeTo(gameVolume);
+    _bag.clear();
+    await _playNext();
+  }
+
+  /// Kembali ke lobi: volume normal dan lagu pembuka (beach1) lagi.
+  Future<void> enterLobby() async {
+    await init();
+    _fadeTo(lobbyVolume);
+    _bag.clear();
+    _last = _intro;
+    await _play(_intro);
+  }
+
+  void _fadeTo(double target, {int ms = 800}) {
+    _fade?.cancel();
+    final from = _volume;
+    const tick = 50;
+    final steps = math.max(1, ms ~/ tick);
+    var i = 0;
+    _fade = Timer.periodic(const Duration(milliseconds: tick), (t) {
+      i++;
+      final v = i >= steps ? target : from + (target - from) * i / steps;
+      setVolume(v);
+      if (i >= steps) t.cancel();
+    });
   }
 
   Future<void> _playNext() async {

@@ -37,9 +37,34 @@ class Sfx {
     'werehouse-open': 0.8, // sesuai nama file (typo "werehouse")
   };
 
+  /// Batas lama bunyi (ms) = lama animasinya. Setelah itu suara dipudarkan
+  /// dan dihentikan, walau file mp3-nya lebih panjang. Tanpa entri = putar
+  /// sampai selesai sendiri.
+  static const Map<String, int> _cap = {
+    'construct-hammer': 2600, // animasi kamar di lantai yang sama
+    'construct-crane': 5200, //  animasi lantai baru
+    'fireburn': 4500,
+    'upgrade': 3200,
+    'collapse': 2800, //         dampak gempa
+    'building-collapse': 3500,
+    'police': 11800, //          kPoliceTotalMs
+    'opening': 12800, //         kIntroMs
+    'opening-single-player': 12800,
+    'door': 1400,
+    'fly1': 2500,
+    'fly2': 2500,
+    'confirm': 1500,
+    'beep-warning': 4000,
+    'truck-beep': 2500,
+    'werehouse-open': 3000,
+  };
+
   static const int _poolSize = 6;
   final List<AudioPlayer> _pool = [];
   int _next = 0;
+  final List<int> _token = List<int>.filled(_poolSize, 0);
+  final List<Timer?> _stopTimer = List<Timer?>.filled(_poolSize, null);
+  int _epoch = 0; // naik tiap stopAll(): membatalkan playLater yang tertunda
   final Map<String, int> _lastMs = {};
   final math.Random _rng = math.Random();
 
@@ -76,21 +101,67 @@ class Sfx {
   void setMaster(double v) => _master = v.clamp(0.0, 1.0).toDouble();
 
   /// Putar sekali. [minGapMs] mencegah bunyi yang sama menumpuk.
-  Future<void> play(String name, {double gain = 1.0, int minGapMs = 150}) async {
+  /// [maxMs] memotong bunyi (dengan fade 250 ms) agar berhenti bersamaan
+  /// dengan animasinya; bila null dipakai batas bawaan di [_cap].
+  Future<void> play(String name,
+      {double gain = 1.0, int minGapMs = 150, int? maxMs}) async {
     if (_muted || !_inited) return;
     final now = DateTime.now().millisecondsSinceEpoch;
     if (now - (_lastMs[name] ?? 0) < minGapMs) return;
     _lastMs[name] = now;
     try {
-      final p = _pool[_next];
+      final slot = _next;
+      final p = _pool[slot];
       _next = (_next + 1) % _pool.length;
-      final v = ((_vol[name] ?? 0.7) * gain * _master).clamp(0.0, 1.0);
+      final v = ((_vol[name] ?? 0.7) * gain * _master).clamp(0.0, 1.0).toDouble();
+      final token = ++_token[slot];
+      _stopTimer[slot]?.cancel();
       await p.stop();
-      await p.setVolume(v.toDouble());
+      await p.setVolume(v);
       await p.play(AssetSource('$_dir$name.mp3'));
+      final cap = maxMs ?? _cap[name];
+      if (cap != null && cap > 0) {
+        _stopTimer[slot] =
+            Timer(Duration(milliseconds: cap), () => _fadeStop(slot, token, v));
+      }
     } catch (e) {
       debugPrint('Sfx gagal memutar $name: $e');
     }
+  }
+
+  /// Pudarkan lalu hentikan slot [slot], hanya bila masih memutar bunyi yang
+  /// sama (token cocok) - bunyi baru di slot itu tidak ikut terpotong.
+  void _fadeStop(int slot, int token, double from) {
+    const steps = 5;
+    var i = 0;
+    Timer.periodic(const Duration(milliseconds: 50), (t) async {
+      if (_token[slot] != token) {
+        t.cancel();
+        return;
+      }
+      i++;
+      try {
+        if (i >= steps) {
+          t.cancel();
+          await _pool[slot].stop();
+        } else {
+          await _pool[slot].setVolume(from * (1 - i / steps));
+        }
+      } catch (_) {
+        t.cancel();
+      }
+    });
+  }
+
+  /// Putar setelah [delayMs]; dibatalkan otomatis bila [stopAll] dipanggil
+  /// (mis. pemain keluar dari game) sebelum waktunya.
+  void playLater(String name, int delayMs,
+      {double gain = 1.0, int minGapMs = 150, int? maxMs}) {
+    final e = _epoch;
+    Timer(Duration(milliseconds: delayMs), () {
+      if (e != _epoch) return;
+      play(name, gain: gain, minGapMs: minGapMs, maxMs: maxMs);
+    });
   }
 
   // ------------------------------------------------------ hujan (loop)
@@ -154,7 +225,12 @@ class Sfx {
   }
 
   Future<void> stopAll() async {
+    _epoch++;
     await rainStop(immediate: true);
+    for (var i = 0; i < _pool.length; i++) {
+      _token[i]++;
+      _stopTimer[i]?.cancel();
+    }
     for (final p in _pool) {
       try {
         await p.stop();
