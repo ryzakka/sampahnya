@@ -28,7 +28,7 @@ const supabaseAnonKey = String.fromEnvironment(
 const linguistifyUrl = 'https://linguistify.vercel.app/';
 
 /// Nomor versi yang tampil di layar pembuka dan beranda.
-const appVersion = '1.4.9 (2410:2)';
+const appVersion = '1.5.0 (2510:5)';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();

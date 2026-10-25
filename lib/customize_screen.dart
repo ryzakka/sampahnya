@@ -1242,6 +1242,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     required int selected,
     required KostLook Function(int) lookOf,
     required void Function(int) pick,
+    bool body = false,
   }) {
     return LayoutBuilder(
       builder: (context, c) {
@@ -1274,7 +1275,9 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      KostHeadIcon(look: lookOf(i), size: 46),
+                      body
+                          ? KostBodyIcon(look: lookOf(i), size: 58)
+                          : KostHeadIcon(look: lookOf(i), size: 46),
                       const SizedBox(height: 5),
                       Text(
                         labels[i],
@@ -1598,6 +1601,10 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     'Cokelat',
     'Gelap',
     'Pucat',
+    'Kemerahan',
+    'Zaitun',
+    'Madu',
+    'Eboni',
   ];
 
   static const List<String> _shirtNames = [
@@ -1613,6 +1620,10 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     'Abu gelap',
     'Putih',
     'Hijau muda',
+    'Biru tua',
+    'Marun',
+    'Krem',
+    'Hitam',
   ];
 
   static const List<String> _hairColorNames = [
@@ -1629,17 +1640,21 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   static const List<(IconData, String)> _charCats = [
     (Icons.face_rounded, 'Kulit'),
     (Icons.checkroom_rounded, 'Baju'),
+    (Icons.accessibility_new_rounded, 'Celana'),
     (Icons.content_cut_rounded, 'Rambut'),
     (Icons.palette_rounded, 'Warna'),
     (Icons.auto_awesome_rounded, 'Aksesori'),
   ];
 
   /// Tampilan karakterku dengan satu opsi diganti (untuk pratinjau kotak).
-  KostLook _lookWith({int? hair, int? acc}) {
+  KostLook _lookWith({int? hair, int? acc, int? top, int? pstyle}) {
     final base = kostLookFor(_myId ?? '', _draft);
     return KostLook(
       skin: base.skin,
       shirt: base.shirt,
+      shirtStyle: top ?? base.shirtStyle,
+      pants: base.pants,
+      pantsStyle: pstyle ?? base.pantsStyle,
       hair: hair ?? base.hair,
       hairColor: base.hairColor,
       acc: acc ?? base.acc,
@@ -1709,14 +1724,55 @@ class _CustomizeScreenState extends State<CustomizeScreen>
           );
         }
       case 1:
-        return _section(
-          'Warna baju',
-          _swatches(KostPalette.shirts, _draft.shirt,
-                  (i) => _edit((s) => s.copyWith(shirt: i)),
-              names: _shirtNames),
-          value: _draft.shirt == null ? 'Bawaan' : _shirtNames[_draft.shirt!],
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _section(
+              'Model baju',
+              _tileGrid(
+                labels: KostPalette.topNames,
+                selected: _draft.top,
+                lookOf: (i) => _lookWith(top: i),
+                pick: (i) => _edit((s) => s.copyWith(top: i)),
+                body: true,
+              ),
+              value: KostPalette.topNames[_draft.top],
+            ),
+            _section(
+              'Warna baju',
+              _swatches(KostPalette.shirts, _draft.shirt,
+                      (i) => _edit((s) => s.copyWith(shirt: i)),
+                  names: _shirtNames),
+              value:
+              _draft.shirt == null ? 'Bawaan' : _shirtNames[_draft.shirt!],
+            ),
+          ],
         );
       case 2:
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _section(
+              'Model celana',
+              _tileGrid(
+                labels: KostPalette.pantsStyleNames,
+                selected: _draft.pantsStyle,
+                lookOf: (i) => _lookWith(pstyle: i),
+                pick: (i) => _edit((s) => s.copyWith(pantsStyle: i)),
+                body: true,
+              ),
+              value: KostPalette.pantsStyleNames[_draft.pantsStyle],
+            ),
+            _section(
+              'Warna celana',
+              _swatches(KostPalette.pants, _draft.pants,
+                      (i) => _edit((s) => s.copyWith(pants: i)),
+                  names: KostPalette.pantsNames),
+              value: KostPalette.pantsNames[_draft.pants],
+            ),
+          ],
+        );
+      case 3:
         return _section(
           'Gaya rambut',
           _tileGrid(
@@ -1727,7 +1783,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
           ),
           value: KostPalette.hairNames[_draft.hair],
         );
-      case 3:
+      case 4:
         return _section(
           'Warna rambut / topi',
           Column(
@@ -1736,7 +1792,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               _swatches(KostPalette.hairColors, _draft.hairColor,
                       (i) => _edit((s) => s.copyWith(hairColor: i)),
                   names: _hairColorNames),
-              if (_draft.hair == 0 && _draft.acc != 4)
+              if (_draft.hair == 0 && _draft.acc != 4 && _draft.acc != 9)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
                   child: Row(
@@ -1748,7 +1804,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                       Expanded(
                         child: Text(
                           'Warna ini baru terlihat setelah kamu memilih gaya '
-                              'rambut, topi, atau kumis.',
+                              'rambut, topi, kumis, atau jenggot.',
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.55),
                             fontSize: 11.5,
