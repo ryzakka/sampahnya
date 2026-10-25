@@ -4,6 +4,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -25,6 +26,9 @@ const supabaseAnonKey = String.fromEnvironment(
 
 /// Gim lain buatan Anda, ditampilkan di beranda.
 const linguistifyUrl = 'https://linguistify.vercel.app/';
+
+/// Nomor versi yang tampil di layar pembuka dan beranda.
+const appVersion = '1.4.9 (2410:2)';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -91,6 +95,15 @@ class _Ui {
     letterSpacing: 2,
     height: 1.05,
     shadows: [Shadow(color: Colors.black87, blurRadius: 16, offset: Offset(0, 5))],
+  );
+  /// Judul layar pembuka (font Lilita One, tebal dan ceria).
+  static TextStyle get splashTitle => GoogleFonts.lilitaOne(
+    color: Colors.white,
+    letterSpacing: 2.5,
+    height: 1.05,
+    shadows: const [
+      Shadow(color: Colors.black87, blurRadius: 16, offset: Offset(0, 5)),
+    ],
   );
   static const heading = TextStyle(
     color: Colors.white,
@@ -360,87 +373,59 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-/// Kartu tautan ke gim lain (Linguistify).
+/// Tautan ke gim lain (Linguistify), tanpa wadah.
 class _MoreGamesCard extends StatelessWidget {
-  const _MoreGamesCard();
+  const _MoreGamesCard({this.center = false});
+  final bool center;
 
   @override
   Widget build(BuildContext context) {
+    final align = center ? CrossAxisAlignment.center : CrossAxisAlignment.start;
     return Semantics(
       button: true,
       label: 'Buka gim Linguistic Hegemony di browser',
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: () => _Ui.openLink(context, linguistifyUrl),
-          borderRadius: BorderRadius.circular(20),
-          child: Ink(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  const Color(0xFF1E2350).withValues(alpha: 0.85),
-                  const Color(0xFF14283A).withValues(alpha: 0.85),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(20),
-              border: Border.all(
-                color: _Ui.violet.withValues(alpha: 0.35),
-              ),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: _Ui.violet.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(13),
-                  ),
-                  child: const Icon(Icons.translate_rounded,
-                      color: _Ui.violet, size: 24),
+      child: InkWell(
+        onTap: () => _Ui.openLink(context, linguistifyUrl),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment:
+            center ? MainAxisAlignment.center : MainAxisAlignment.start,
+            children: [
+              const Icon(Icons.translate_rounded, color: _Ui.violet, size: 22),
+              const SizedBox(width: 12),
+              Flexible(
+                child: Column(
+                  crossAxisAlignment: align,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text(
+                      'Gim lain dari kami',
+                      style: TextStyle(
+                        color: _Ui.violet,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const Text(
+                      'Linguistic Hegemony',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'Gim lain dari kami',
-                        style: TextStyle(
-                          color: _Ui.violet,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                      const SizedBox(height: 1),
-                      const Text(
-                        'Linguistic Hegemony',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 16.5,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Strategi bahasa dan politik, ala Plague Inc.',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: _Ui.body(0.66).copyWith(fontSize: 12),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 8),
-                const Icon(Icons.open_in_new_rounded,
-                    size: 18, color: _Ui.violet),
-              ],
-            ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.open_in_new_rounded,
+                  size: 16, color: _Ui.violet),
+            ],
           ),
         ),
       ),
@@ -754,19 +739,33 @@ class _SplashScreenState extends State<SplashScreen>
                           child: Column(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              if (!short) ...[
-                                _reveal(0.0, 0.45, _buildLogo()),
-                                const SizedBox(height: 16),
-                              ],
                               _reveal(
-                                0.1,
-                                0.6,
+                                0.0,
+                                0.5,
                                 Text(
                                   'SAMPAHNYA!',
                                   maxLines: 1,
                                   textAlign: TextAlign.center,
-                                  style: _Ui.title.copyWith(
+                                  style: _Ui.splashTitle.copyWith(
                                     fontSize: short ? min(titleSize, 48) : titleSize,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              _reveal(
+                                0.1,
+                                0.6,
+                                Text(
+                                  'VERSI $appVersion',
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    color: Colors.white.withValues(alpha: 0.8),
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: 1.8,
+                                    shadows: const [
+                                      Shadow(color: Colors.black, blurRadius: 8),
+                                    ],
                                   ),
                                 ),
                               ),
@@ -830,60 +829,10 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                 ),
-                // 5) Versi di dasar layar.
-                Positioned(
-                  left: 0,
-                  right: 0,
-                  bottom: 6,
-                  child: SafeArea(
-                    top: false,
-                    child: Text(
-                      'Sampahnya! v1.4.9 (2410:2)',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.4),
-                        fontSize: 11,
-                        shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
-                      ),
-                    ),
-                  ),
-                ),
               ],
             );
           },
         ),
-      ),
-    );
-  }
-
-  /// Ikon logo yang melayang pelan naik-turun.
-  Widget _buildLogo() {
-    return AnimatedBuilder(
-      animation: _pulse,
-      builder: (context, child) => Transform.translate(
-        offset: Offset(0, _reduceMotion ? 0 : -4 * Curves.easeInOut.transform(_pulse.value)),
-        child: child,
-      ),
-      child: Container(
-        width: 64,
-        height: 64,
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFFFFD54F), Color(0xFFFFA000)],
-          ),
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(
-              color: _Ui.amber.withValues(alpha: 0.4),
-              blurRadius: 22,
-              offset: const Offset(0, 8),
-            ),
-          ],
-        ),
-        child: const Icon(Icons.delete_sweep_rounded,
-            size: 34, color: Colors.black87),
       ),
     );
   }
@@ -1333,7 +1282,7 @@ class _LobbyHomeState extends State<LobbyHome>
               const SizedBox(height: 28),
               _buildFormPanel(compact: compact),
               _Ui.gap12,
-              const _MoreGamesCard(),
+              const _MoreGamesCard(center: true),
               _Ui.gap16,
               _buildFooter(),
             ],
@@ -1403,28 +1352,6 @@ class _LobbyHomeState extends State<LobbyHome>
       crossAxisAlignment: align,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Container(
-          width: 56,
-          height: 56,
-          decoration: BoxDecoration(
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFFFFD54F), Color(0xFFFFA000)],
-            ),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: _Ui.amber.withValues(alpha: 0.35),
-                blurRadius: 18,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
-          child: const Icon(Icons.delete_sweep_rounded,
-              size: 30, color: Colors.black87),
-        ),
-        const SizedBox(height: 16),
         FittedBox(
           fit: BoxFit.scaleDown,
           alignment: center ? Alignment.center : Alignment.centerLeft,
@@ -1454,7 +1381,7 @@ class _LobbyHomeState extends State<LobbyHome>
 
   Widget _buildFooter({bool left = false}) {
     return Text(
-      'Sampahnya! v1.4.9 (2410:2)',
+      'Sampahnya! v$appVersion',
       textAlign: left ? TextAlign.left : TextAlign.center,
       style: TextStyle(
         color: Colors.white.withValues(alpha: 0.35),
@@ -1465,8 +1392,8 @@ class _LobbyHomeState extends State<LobbyHome>
 
   /// Panel form: 1) nama → 2) pilih mode → 3) aksi → (error).
   Widget _buildFormPanel({required bool compact}) {
-    return _GlassPanel(
-      padding: EdgeInsets.all(compact ? 16 : 22),
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: compact ? 0 : 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -1533,7 +1460,7 @@ class _LobbyHomeState extends State<LobbyHome>
       prefixIcon: Icon(icon, color: _Ui.amber, size: 22),
       counterText: '',
       filled: true,
-      fillColor: Colors.black.withValues(alpha: 0.28),
+      fillColor: Colors.white.withValues(alpha: 0.07),
       contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(_Ui.radiusField),
@@ -1548,10 +1475,10 @@ class _LobbyHomeState extends State<LobbyHome>
 
   Widget _buildModeSwitcher() {
     return Container(
-      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(_Ui.radiusField + 2),
+        border: Border(
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
+        ),
       ),
       child: Row(
         children: [
@@ -1580,6 +1507,7 @@ class _LobbyHomeState extends State<LobbyHome>
     required String label,
   }) {
     final selected = _tab == index;
+    final color = selected ? _Ui.amber : Colors.white60;
     return Semantics(
       button: true,
       selected: selected,
@@ -1596,23 +1524,17 @@ class _LobbyHomeState extends State<LobbyHome>
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 12),
           decoration: BoxDecoration(
-            color: selected ? _Ui.green : Colors.transparent,
-            borderRadius: BorderRadius.circular(_Ui.radiusField - 2),
-            boxShadow: selected
-                ? [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.25),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
-              )
-            ]
-                : null,
+            border: Border(
+              bottom: BorderSide(
+                color: selected ? _Ui.amber : Colors.transparent,
+                width: 2.5,
+              ),
+            ),
           ),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon,
-                  size: 18, color: selected ? Colors.white : Colors.white60),
+              Icon(icon, size: 18, color: color),
               const SizedBox(width: 7),
               Flexible(
                 child: Text(
@@ -1620,7 +1542,7 @@ class _LobbyHomeState extends State<LobbyHome>
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    color: selected ? Colors.white : Colors.white60,
+                    color: color,
                     fontWeight: FontWeight.w800,
                     fontSize: 13.5,
                   ),
@@ -1730,7 +1652,7 @@ class _LobbyHomeState extends State<LobbyHome>
             ),
             counterText: '',
             filled: true,
-            fillColor: Colors.black.withValues(alpha: 0.28),
+            fillColor: Colors.white.withValues(alpha: 0.07),
             contentPadding: const EdgeInsets.symmetric(vertical: 16),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(_Ui.radiusField),
