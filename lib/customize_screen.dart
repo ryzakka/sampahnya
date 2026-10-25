@@ -80,6 +80,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
   bool _leaving = false;
   String? _error;
   int _tab = 0; // 0 bangunan, 1 karakter
+  bool _compact = false; // layar sempit/pendek: kontrol dirapatkan
   int _previewTier = 0;
 
   // ruang kostum
@@ -268,6 +269,12 @@ class _CustomizeScreenState extends State<CustomizeScreen>
             builder: (context, c) {
               final wide = c.maxWidth >= 860 ||
                   (c.maxWidth > c.maxHeight && c.maxWidth >= 640);
+              final shortH = c.maxHeight < 520;
+              // Layar pendek tapi cukup lebar (lanskap ponsel): tab pindah ke
+              // bilah atas agar area kerja tidak habis oleh header.
+              final inlineTabs = shortH && c.maxWidth >= 560;
+              _compact = !wide || shortH;
+
               final view = _loading
                   ? const Center(child: CircularProgressIndicator())
                   : (_tab == 0 ? _streetView(entries) : _stageView(entries));
@@ -278,11 +285,8 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               // lebarnya supaya tidak melebar di monitor besar.
               final t = ((c.maxWidth - 320) / (1100 - 320)).clamp(0.0, 1.0);
               final pad = 12 + 8 * t;
-              final panelW = 320 + 60 * t; // 320..380
-              final maxW = wide ? 1100.0 : 560.0;
-              // Ponsel pendek (mis. keyboard muncul): gulir seluruh halaman
-              // dan beri tinggi minimum agar tampilan & panel tidak gepeng.
-              final scrollNarrow = !wide && c.maxHeight < 640;
+              final panelW = 320 + 80 * t; // 320..400
+              final maxW = wide ? 1200.0 : 560.0;
 
               Widget body;
               if (wide) {
@@ -294,26 +298,37 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                     SizedBox(width: panelW, child: panel),
                   ],
                 );
-              } else if (scrollNarrow) {
-                body = SingleChildScrollView(
-                  physics: const ClampingScrollPhysics(),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(height: 240, child: view),
-                      const SizedBox(height: 10),
-                      SizedBox(height: 420, child: panel),
-                    ],
-                  ),
-                );
               } else {
-                body = Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(flex: 6, child: view),
-                    const SizedBox(height: 10),
-                    Expanded(flex: 5, child: panel),
-                  ],
+                // Satu kolom: pratinjau ~40% tinggi, panel mengisi sisanya.
+                // Bila sisa terlalu kecil (ponsel pendek / keyboard muncul),
+                // seluruh halaman digulir dengan tinggi yang tetap nyaman.
+                body = LayoutBuilder(
+                  builder: (context, bc) {
+                    final h = bc.maxHeight;
+                    final viewH = (h * 0.40).clamp(200.0, 360.0).toDouble();
+                    final panelH = h - viewH - 10;
+                    if (panelH < 300) {
+                      return SingleChildScrollView(
+                        physics: const ClampingScrollPhysics(),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            SizedBox(height: 240, child: view),
+                            const SizedBox(height: 10),
+                            SizedBox(height: 420, child: panel),
+                          ],
+                        ),
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(height: viewH, child: view),
+                        const SizedBox(height: 10),
+                        Expanded(child: panel),
+                      ],
+                    );
+                  },
                 );
               }
 
@@ -325,9 +340,15 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _topBar(entries),
-                        const SizedBox(height: 10),
-                        _tabs(),
+                        _topBar(
+                          entries,
+                          small: c.maxWidth < 400,
+                          tabs: inlineTabs ? _tabs(dense: true) : null,
+                        ),
+                        if (!inlineTabs) ...[
+                          const SizedBox(height: 10),
+                          _tabs(),
+                        ],
                         const SizedBox(height: 10),
                         Expanded(child: body),
                       ],
@@ -342,8 +363,11 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     );
   }
 
-  Widget _topBar(List<_Entry> entries) {
+  Widget _topBar(List<_Entry> entries, {required bool small, Widget? tabs}) {
     final editing = entries.where((e) => e.status == 'editing').length;
+    final title = editing > 0
+        ? (small ? '$editing pemain mengedit' : '$editing pemain sedang berkustomisasi')
+        : (small ? 'Semua sudah selesai' : 'Semua pemain sudah selesai');
     return Row(
       children: [
         IconButton.filledTonal(
@@ -355,13 +379,15 @@ class _CustomizeScreenState extends State<CustomizeScreen>
           onPressed: _leaving ? null : _finish,
           icon: const Icon(Icons.arrow_back_rounded),
         ),
-        const SizedBox(width: 12),
+        SizedBox(width: small ? 8 : 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
                 widget.readOnly ? 'Mode menonton' : 'Ruang kustomisasi',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.65),
                   fontSize: 12,
@@ -369,33 +395,37 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                 ),
               ),
               Text(
-                editing > 0
-                    ? '$editing pemain sedang berkustomisasi'
-                    : 'Semua pemain sudah selesai',
+                title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
+                style: TextStyle(
                   color: Colors.white,
-                  fontSize: 18,
+                  fontSize: small ? 15.5 : 18,
                   fontWeight: FontWeight.w900,
                 ),
               ),
             ],
           ),
         ),
+        if (tabs != null) ...[
+          const SizedBox(width: 8),
+          SizedBox(width: 230, child: tabs),
+        ],
         const SizedBox(width: 8),
         Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          padding: EdgeInsets.symmetric(
+              horizontal: small ? 10 : 12, vertical: 7),
           decoration: BoxDecoration(
             color: Colors.white.withValues(alpha: 0.12),
             borderRadius: BorderRadius.circular(20),
           ),
           child: Text(
             widget.roomCode,
-            style: const TextStyle(
+            style: TextStyle(
               color: _amber,
               fontWeight: FontWeight.w900,
-              letterSpacing: 2,
+              fontSize: small ? 13 : 14,
+              letterSpacing: small ? 1 : 2,
             ),
           ),
         ),
@@ -403,7 +433,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     );
   }
 
-  Widget _tabs() {
+  Widget _tabs({bool dense = false}) {
     Widget chip(int i, IconData icon, String label) {
       final on = _tab == i;
       return Expanded(
@@ -412,7 +442,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
           onTap: () => setState(() => _tab = i),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 160),
-            padding: const EdgeInsets.symmetric(vertical: 10),
+            padding: EdgeInsets.symmetric(vertical: dense ? 9 : 11),
             decoration: BoxDecoration(
               color: on ? _amber : Colors.white.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(14),
@@ -430,6 +460,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                     style: TextStyle(
                       color: on ? Colors.black87 : Colors.white70,
                       fontWeight: FontWeight.w900,
+                      fontSize: dense ? 13 : 14,
                     ),
                   ),
                 ),
@@ -669,11 +700,8 @@ class _CustomizeScreenState extends State<CustomizeScreen>
       );
     }
     final hero = _hero(list);
-    final others = [
-      for (final e in list)
-        if (e.id != hero.id) e,
-    ];
     final heroLook = kostLookFor(hero.id, hero.style);
+    final showRoster = n > 1;
     return ClipRRect(
       borderRadius: BorderRadius.circular(22),
       child: DecoratedBox(
@@ -682,55 +710,66 @@ class _CustomizeScreenState extends State<CustomizeScreen>
           border: Border.all(
               color: Colors.white.withValues(alpha: 0.16), width: 1.5),
         ),
-        child: Stack(
-          children: [
-            Positioned.fill(
-              child: CustomPaint(painter: _StagePainter(_anim, heroLook.shirt)),
-            ),
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 22, 12, 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Expanded(
-                      child: CustomPaint(
-                        painter: _AvatarPainter(
-                          look: heroLook,
-                          anim: _anim,
-                          pose: _pose,
-                          phase: 0,
-                          faceRight: _faceRight,
-                          highlight: hero.isMe,
-                          accent: heroLook.shirt,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    _heroBar(hero),
-                    if (others.isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      _roster(others),
-                    ],
-                  ],
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final tight = c.maxWidth < 440;
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: CustomPaint(
+                      painter: _StagePainter(_anim, heroLook.shirt)),
                 ),
-              ),
-            ),
-          ],
+                Positioned.fill(
+                  child: Padding(
+                    padding: EdgeInsets.fromLTRB(12, showRoster ? 62 : 22, 12, 10),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(
+                          child: CustomPaint(
+                            painter: _AvatarPainter(
+                              look: heroLook,
+                              anim: _anim,
+                              pose: _pose,
+                              phase: 0,
+                              faceRight: _faceRight,
+                              highlight: hero.isMe,
+                              accent: heroLook.shirt,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        _heroBar(hero, tight: tight),
+                      ],
+                    ),
+                  ),
+                ),
+                // Pemilih pemain di atas (sama seperti tampilan jalan).
+                if (showRoster)
+                  Positioned(
+                    left: 10,
+                    right: 10,
+                    top: 8,
+                    child: _roster(list, selected: hero.id),
+                  ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _miniBtn(IconData icon, String tip, bool on, VoidCallback onTap) =>
+  Widget _miniBtn(IconData icon, String tip, bool on, VoidCallback onTap,
+      {double size = 34}) =>
       Tooltip(
         message: tip,
         child: GestureDetector(
           onTap: onTap,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 140),
-            width: 34,
-            height: 34,
+            width: size,
+            height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
               color: on ? _amber : Colors.white.withValues(alpha: 0.12),
@@ -738,18 +777,21 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                 color: on ? _amber : Colors.white.withValues(alpha: 0.2),
               ),
             ),
-            child: Icon(icon, size: 18, color: on ? Colors.black87 : Colors.white70),
+            child: Icon(icon,
+                size: size * 0.53, color: on ? Colors.black87 : Colors.white70),
           ),
         ),
       );
 
-  Widget _heroBar(_Entry e) {
+  Widget _heroBar(_Entry e, {bool tight = false}) {
     final (icon, label, color) = _statusInfo(e.status);
+    final bs = tight ? 30.0 : 34.0;
+    final gap = tight ? 4.0 : 6.0;
     return Row(
       children: [
         Expanded(
           child: Container(
-            padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+            padding: EdgeInsets.fromLTRB(tight ? 6 : 8, 6, tight ? 8 : 12, 6),
             decoration: BoxDecoration(
               color: _surface.withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(16),
@@ -764,10 +806,10 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               children: [
                 KostHeadIcon(
                   look: kostLookFor(e.id, e.style),
-                  size: 30,
+                  size: tight ? 26 : 30,
                   ring: e.isMe ? _amber : null,
                 ),
-                const SizedBox(width: 8),
+                SizedBox(width: tight ? 6 : 8),
                 Expanded(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
@@ -787,12 +829,16 @@ class _CustomizeScreenState extends State<CustomizeScreen>
                         children: [
                           Icon(icon, size: 12, color: color),
                           const SizedBox(width: 3),
-                          Text(
-                            label,
-                            style: TextStyle(
-                              color: color,
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w800,
+                          Flexible(
+                            child: Text(
+                              label,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: color,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800,
+                              ),
                             ),
                           ),
                         ],
@@ -804,13 +850,15 @@ class _CustomizeScreenState extends State<CustomizeScreen>
             ),
           ),
         ),
-        const SizedBox(width: 8),
+        SizedBox(width: tight ? 6 : 8),
         _miniBtn(Icons.flip_rounded, 'Balik arah', false,
-                () => setState(() => _faceRight = !_faceRight)),
+                () => setState(() => _faceRight = !_faceRight),
+            size: bs),
         for (final (pose, pIcon, pLabel) in _poses) ...[
-          const SizedBox(width: 6),
+          SizedBox(width: gap),
           _miniBtn(pIcon, pLabel, _pose == pose,
-                  () => setState(() => _pose = pose)),
+                  () => setState(() => _pose = pose),
+              size: bs),
         ],
       ],
     );
@@ -894,7 +942,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
 
   Widget _panelShell({required Widget body, required Widget footer}) {
     return Container(
-      padding: const EdgeInsets.all(14),
+      padding: EdgeInsets.all(_compact ? 10 : 14),
       decoration: BoxDecoration(
         color: Colors.white.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(18),
@@ -916,7 +964,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     style: FilledButton.styleFrom(
       backgroundColor: _amber,
       foregroundColor: Colors.black87,
-      minimumSize: const Size.fromHeight(50),
+      minimumSize: const Size.fromHeight(48),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
     ),
     icon: Icon(_leaving ? Icons.hourglass_bottom_rounded : Icons.check_rounded),
@@ -928,6 +976,43 @@ class _CustomizeScreenState extends State<CustomizeScreen>
 
   Widget _editPanel() {
     final chars = _tab == 1;
+
+    void randomize() => _edit((s) =>
+    _tab == 0 ? s.randomBuilding(_rnd) : s.randomCharacter(_rnd));
+    void reset() {
+      _edit((s) => _tab == 0 ? s.clearBuilding() : s.clearCharacter());
+      if (_tab == 0) _nameCtl.clear();
+    }
+
+    // Layar sempit/pendek: Acak & Bawaan jadi tombol ikon di samping tombol
+    // Selesai, supaya area pilihan mendapat ruang lebih besar.
+    Widget iconAction(IconData icon, String tip, VoidCallback onTap) => Tooltip(
+      message: tip,
+      child: SizedBox(
+        width: 48,
+        height: 48,
+        child: OutlinedButton(
+          onPressed: onTap,
+          style: _outlined.copyWith(
+            padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+          ),
+          child: Icon(icon, size: 22),
+        ),
+      ),
+    );
+
+    final footer = _compact
+        ? Row(
+      children: [
+        iconAction(Icons.casino_rounded, 'Acak', randomize),
+        const SizedBox(width: 8),
+        iconAction(Icons.restart_alt_rounded, 'Kembali ke bawaan', reset),
+        const SizedBox(width: 8),
+        Expanded(child: _doneButton('Selesai')),
+      ],
+    )
+        : _doneButton('Selesai kustomisasi');
+
     return _panelShell(
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -954,7 +1039,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               }
             }),
           ),
-          const SizedBox(height: 12),
+          SizedBox(height: _compact ? 10 : 12),
           Expanded(
             child: SingleChildScrollView(
               child: Column(
@@ -963,39 +1048,33 @@ class _CustomizeScreenState extends State<CustomizeScreen>
               ),
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    _edit((s) => _tab == 0
-                        ? s.randomBuilding(_rnd)
-                        : s.randomCharacter(_rnd));
-                  },
-                  style: _outlined,
-                  icon: const Icon(Icons.casino_rounded, size: 18),
-                  label: const Text('Acak'),
+          if (!_compact) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: randomize,
+                    style: _outlined,
+                    icon: const Icon(Icons.casino_rounded, size: 18),
+                    label: const Text('Acak'),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: () {
-                    _edit((s) =>
-                    _tab == 0 ? s.clearBuilding() : s.clearCharacter());
-                    if (_tab == 0) _nameCtl.clear();
-                  },
-                  style: _outlined,
-                  icon: const Icon(Icons.restart_alt_rounded, size: 18),
-                  label: const Text('Bawaan'),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: reset,
+                    style: _outlined,
+                    icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                    label: const Text('Bawaan'),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
-      footer: _doneButton('Selesai kustomisasi'),
+      footer: footer,
     );
   }
 
@@ -1167,7 +1246,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     return LayoutBuilder(
       builder: (context, c) {
         const gap = 8.0;
-        final cols = c.maxWidth >= 300 ? 3 : 2;
+        final cols = ((c.maxWidth + gap) / (92 + gap)).floor().clamp(2, 5);
         final w = (c.maxWidth - gap * (cols - 1)) / cols;
         return Wrap(
           spacing: gap,
@@ -1305,7 +1384,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     return LayoutBuilder(
       builder: (context, c) {
         const gap = 8.0;
-        final cols = c.maxWidth >= 320 ? 4 : 3;
+        final cols = ((c.maxWidth + gap) / (72 + gap)).floor().clamp(3, 6);
         final w = (c.maxWidth - gap * (cols - 1)) / cols;
         return Wrap(
           spacing: gap,
@@ -1355,7 +1434,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
     );
   }
 
-  Widget _tierCard(int i, String desc) {
+  Widget _tierCard(int i, String desc, {bool small = false}) {
     final on = _previewTier == i;
     return Expanded(
       child: GestureDetector(
@@ -1376,7 +1455,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
           ),
           child: Column(
             children: [
-              _houseThumb(tier: i, w: 70, h: 56),
+              _houseThumb(tier: i, w: small ? 56 : 70, h: small ? 44 : 56),
               const SizedBox(height: 6),
               Text(
                 _tierNames[i],
@@ -1495,13 +1574,18 @@ class _CustomizeScreenState extends State<CustomizeScreen>
       default:
         return _section(
           'Pratinjau kelas kost (hanya di layarmu)',
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _tierCard(0, 'Rumah biasa'),
-              _tierCard(1, 'Jendela biru'),
-              _tierCard(2, 'Atap emas'),
-            ],
+          LayoutBuilder(
+            builder: (context, c) {
+              final small = c.maxWidth < 290;
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _tierCard(0, 'Rumah biasa', small: small),
+                  _tierCard(1, 'Jendela biru', small: small),
+                  _tierCard(2, 'Atap emas', small: small),
+                ],
+              );
+            },
           ),
         );
     }
@@ -1570,7 +1654,7 @@ class _CustomizeScreenState extends State<CustomizeScreen>
       onTap: () => on(i),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 160),
-        padding: const EdgeInsets.symmetric(vertical: 8),
+        padding: EdgeInsets.symmetric(vertical: _compact ? 6 : 8),
         decoration: BoxDecoration(
           color: sel
               ? _amber.withValues(alpha: 0.18)
