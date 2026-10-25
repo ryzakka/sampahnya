@@ -327,6 +327,11 @@ extension KostPainterAmbient on KostPainter {
   /// menyala, atau lampu standby kecil bila kamar gelap (tidur).
   void _drawRoomScene(
       Canvas canvas, Rect w, int idx, double t, bool lit, _NightState st) {
+    // Sangat Ringan: jendela menyala = satu bidang hangat (tanpa adegan penghuni)
+    if (_ultra && lit) {
+      _aFill(canvas, w, const Color(0xFFFFD98A).withValues(alpha: 0.85));
+      return;
+    }
     canvas.save();
     canvas.clipRect(w);
     if (!lit) {
@@ -707,7 +712,7 @@ extension KostPainterAmbient on KostPainter {
   double get _walkerDensity {
     if (d.dayPhase == null) return 1.0;
     final k = _trafficDensity * 1.15 * (1 - 0.45 * _night);
-    return k.clamp(0.03, 1.0).toDouble();
+    return (k * (KostPerf.on ? 0.6 : 1.0)).clamp(0.03, 1.0).toDouble();
   }
 
   // ====================================================== PEJALAN KAKI
@@ -716,7 +721,7 @@ extension KostPainterAmbient on KostPainter {
   /// mengikuti [_walkerDensity] (sepi tengah malam / hujan / udara beracun),
   /// bermasker bila udara kotor, memakai payung saat hujan.
   void _drawStreetWalkers(Canvas canvas, double t, double worldL, double worldR) {
-    if (d.compact) return;
+    if (d.compact || _ultra) return;
     final dens = _walkerDensity;
     final air = _air;
     final rain = _isRainy;

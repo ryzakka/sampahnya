@@ -180,9 +180,11 @@ class _GameScreenState extends State<GameScreen>
       ..repeat();
     // Kamera jalan bergerak halus menuju targetnya di setiap frame.
     _scenePulse = ThrottledListenable(_anim);
-    KostPerf.onAutoEnabled = () {
+    KostPerf.onAutoRaised = (lv) {
       if (!mounted) return;
-      _showNotice('Perangkat terasa berat: Mode Ringan dinyalakan otomatis (ikon ⚡ untuk mematikan).',
+      _showNotice(
+          'Perangkat terasa berat: Mode ${KostPerf.names[lv.clamp(0, 2).toInt()]} '
+              'dinyalakan otomatis (ikon ⚡ untuk mengubah).',
           icon: Icons.speed, color: const Color(0xFFFFA000));
     };
     KostPerf.startAutoDetect();
@@ -196,8 +198,9 @@ class _GameScreenState extends State<GameScreen>
     _tickServer();
     _uiTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!mounted) return;
-      // Mode Ringan: rebuild UI tiap 100 ms (bukan 50 ms)
-      if (KostPerf.on && (_uiTick++).isOdd) return;
+      // Mode Ringan: rebuild UI tiap 100 ms, Sangat Ringan 150 ms (bukan 50)
+      final every = KostPerf.uiEvery;
+      if (every > 1 && (_uiTick++) % every != 0) return;
       final now = sceneNowMs();
       for (final l in _fx.values) {
         l.removeWhere((f) =>
@@ -243,7 +246,7 @@ class _GameScreenState extends State<GameScreen>
     Sfx.instance.stopAll(); // hujan + semua efek yang masih bunyi
     Bgm.instance.enterLobby();
     if (kostDoorHook == _onDoor) kostDoorHook = null;
-    KostPerf.onAutoEnabled = null;
+    KostPerf.onAutoRaised = null;
     _scenePulse.dispose();
     _anim.dispose();
     if (_channel != null) _db.removeChannel(_channel!);
@@ -2604,15 +2607,17 @@ class _GameScreenState extends State<GameScreen>
       tooltip: 'Kabar terbaru',
       onTap: _showFeed,
     );
-    final perf = ValueListenableBuilder<bool>(
-      valueListenable: KostPerf.lite,
-      builder: (_, on, __) => _hudIcon(
+    final perf = ValueListenableBuilder<int>(
+      valueListenable: KostPerf.level,
+      builder: (_, lv, __) => _hudIcon(
         icon: Icons.speed,
-        tooltip: on ? 'Mode Ringan: AKTIF (ketuk untuk mematikan)' : 'Mode Ringan',
-        color: on ? const Color(0xFFFFCA28) : Colors.white54,
-        onTap: () {
-          KostPerf.set(!on);
-          _toast(on ? 'Mode Ringan dimatikan.' : 'Mode Ringan dinyalakan: tampilan lebih hemat.');
+        tooltip: 'Mode Ringan: ${KostPerf.names[lv]} (ketuk untuk mengubah)',
+        color: lv == 0
+            ? Colors.white54
+            : (lv == 1 ? const Color(0xFFFFCA28) : const Color(0xFFFF7043)),
+        onTap: () async {
+          await KostPerf.cycle();
+          _toast('Mode Ringan: ${KostPerf.name}.');
         },
       ),
     );

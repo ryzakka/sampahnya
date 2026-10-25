@@ -190,9 +190,9 @@ class _GlassPanel extends StatelessWidget {
       borderRadius: BorderRadius.circular(radius),
       // Mode Ringan: tanpa blur kaca (BackdropFilter mahal di GPU lemah);
       // panel sudah hampir buram (alpha 0,84) jadi tampilan nyaris sama.
-      child: ValueListenableBuilder<bool>(
-        valueListenable: KostPerf.lite,
-        builder: (_, lite, __) => lite
+      child: ValueListenableBuilder<int>(
+        valueListenable: KostPerf.level,
+        builder: (_, lv, __) => lv >= 1
             ? panel
             : BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
@@ -1401,43 +1401,37 @@ class _LobbyHomeState extends State<LobbyHome>
       left ? CrossAxisAlignment.start : CrossAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Mode Ringan: untuk perangkat rendah (fps dibatasi, efek dikurangi)
-        ValueListenableBuilder<bool>(
-          valueListenable: KostPerf.lite,
-          builder: (_, on, __) => InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: () => KostPerf.set(!on),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.speed,
-                      size: 16, color: on ? _Ui.amber : Colors.white54),
-                  const SizedBox(width: 6),
-                  Text(
-                    on ? 'Mode Ringan: AKTIF' : 'Mode Ringan: mati',
-                    style: TextStyle(
-                      color: on ? _Ui.amber : Colors.white54,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  SizedBox(
-                    height: 24,
-                    child: FittedBox(
-                      child: Switch(
-                        value: on,
-                        onChanged: (v) => KostPerf.set(v),
-                        activeColor: _Ui.amber,
+        // Mode Ringan bertingkat: Mati -> Ringan -> Sangat Ringan
+        ValueListenableBuilder<int>(
+          valueListenable: KostPerf.level,
+          builder: (_, lv, __) {
+            final col = lv == 0
+                ? Colors.white54
+                : (lv == 1 ? _Ui.amber : const Color(0xFFFF7043));
+            return InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: KostPerf.cycle,
+              child: Padding(
+                padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.speed, size: 16, color: col),
+                    const SizedBox(width: 6),
+                    Text(
+                      'Mode Ringan: ${KostPerf.names[lv]}  (ketuk untuk ganti)',
+                      style: TextStyle(
+                        color: col,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         ),
         Text(
           'Sampahnya! v$appVersion',

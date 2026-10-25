@@ -4,26 +4,36 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-/// Mode Ringan untuk perangkat rendah.
-///  - gambar adegan dibatasi ±30 fps (bukan 60/120)
-///  - partikel cuaca/efek dikurangi, berkas cahaya & gagak dimatikan
-///  - rebuild UI game diperlambat (20 Hz -> 10 Hz)
-///  - tanpa blur kaca di menu
-/// Bisa dinyalakan manual, atau otomatis bila perangkat terdeteksi patah-patah.
+/// Mode Ringan bertingkat untuk perangkat rendah.
+///
+///  0 = Normal
+///  1 = Ringan        : adegan ±30 fps, partikel dikurangi, lalu lintas &
+///                      pejalan kaki ~60%, tanpa berkas cahaya/gagak/blur kaca,
+///                      UI diperbarui 10 Hz
+///  2 = Sangat Ringan : adegan 20 fps, tanpa pejalan kaki & cakrawala kota,
+///                      lalu lintas ~35%, tanpa lalat/bau, tikus, isi jendela
+///                      malam disederhanakan, UI ~7 Hz
 class KostPerf {
   KostPerf._();
 
-  static final ValueNotifier<bool> lite = ValueNotifier<bool>(false);
-  static bool get on => lite.value;
+  static final ValueNotifier<int> level = ValueNotifier<int>(0);
+  static bool get on => level.value >= 1;
+  static bool get ultra => level.value >= 2;
 
   /// Jeda minimum antar gambar ulang adegan (ms). 0 = tanpa batas (normal).
-  static int get frameMs => on ? 33 : 0;
+  static int get frameMs => ultra ? 50 : (on ? 33 : 0);
 
-  /// Diisi layar game agar bisa memberi tahu pemain saat mode ringan
-  /// dinyalakan otomatis.
-  static VoidCallback? onAutoEnabled;
+  /// UI game diperbarui tiap N tick timer 50 ms.
+  static int get uiEvery => ultra ? 3 : (on ? 2 : 1);
 
-  static const String _kLite = 'perf_lite';
+  static const List<String> names = ['Mati', 'Ringan', 'Sangat Ringan'];
+  static String get name => names[level.value.clamp(0, 2).toInt()];
+
+  /// Diisi layar game: dipanggil saat tingkat dinaikkan otomatis.
+  static void Function(int newLevel)? onAutoRaised;
+
+  static const String _kLevel = 'perf_level';
+  static const String _kLegacy = 'perf_lite'; // versi lama (bool)
   static const String _kUser = 'perf_user'; // pemain sudah memilih sendiri
   static bool _userDecided = false;
   static bool _watching = false;
@@ -31,26 +41,29 @@ class KostPerf {
   static Future<void> load() async {
     try {
       final p = await SharedPreferences.getInstance();
-      lite.value = p.getBool(_kLite) ?? false;
+      level.value = p.getInt(_kLevel) ?? ((p.getBool(_kLegacy) ?? false) ? 1 : 0);
       _userDecided = p.getBool(_kUser) ?? false;
     } catch (e) {
       debugPrint('KostPerf.load gagal: $e');
     }
   }
 
-  /// [byUser] true = pilihan manual; deteksi otomatis tidak akan menimpanya.
-  static Future<void> set(bool v, {bool byUser = true}) async {
-    lite.value = v;
+  /// [byUser] true = pilihan manual; deteksi otomatis tidak menimpanya.
+  static Future<void> setLevel(int v, {bool byUser = true}) async {
+    level.value = v.clamp(0, 2).toInt();
     if (byUser) {
       _userDecided = true;
       _stopWatching();
     }
     try {
       final p = await SharedPreferences.getInstance();
-      await p.setBool(_kLite, v);
+      await p.setInt(_kLevel, level.value);
       if (byUser) await p.setBool(_kUser, true);
     } catch (_) {}
   }
+
+  /// Mati -> Ringan -> Sangat Ringan -> Mati.
+  static Future<void> cycle() => setLevel((level.value + 1) % 3);
 
   // ------------------------------------------------- deteksi otomatis
 
@@ -61,9 +74,10 @@ class KostPerf {
   static int _inWindow = 0;
   static int _slow = 0;
 
-  /// Mulai memantau waktu frame. Aman dipanggil berulang.
+  /// Mulai memantau waktu frame. Aman dipanggil berulang. Bila masih patah-
+  /// patah di tingkat Ringan, otomatis naik ke Sangat Ringan.
   static void startAutoDetect() {
-    if (_watching || _userDecided || on) return;
+    if (_watching || _userDecided || ultra) return;
     _watching = true;
     SchedulerBinding.instance.addTimingsCallback(_onTimings);
   }
@@ -85,9 +99,14 @@ class KostPerf {
         _inWindow = 0;
         _slow = 0;
         if (bad > 0.4) {
-          _stopWatching();
-          set(true, byUser: false);
-          onAutoEnabled?.call();
+          final next = level.value + 1;
+          setLevel(next, byUser: false);
+          onAutoRaised?.call(next);
+          if (next >= 2) {
+            _stopWatching();
+          } else {
+            _seen = 0; // beri pemanasan lagi sebelum menilai tingkat baru
+          }
           return;
         }
       }

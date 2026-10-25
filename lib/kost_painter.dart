@@ -151,6 +151,9 @@ class KostPainter extends CustomPainter {
   /// Mode hemat: kamera jauh (compact) ATAU Mode Ringan pemain menyala.
   bool get _lite => d.compact || KostPerf.on;
 
+  /// Mode Sangat Ringan: buang lagi hiasan latar & isi jendela.
+  bool get _ultra => KostPerf.ultra;
+
   int get _floors => math.min(3, math.max(1, (d.rooms / 4).ceil()));
   double get _roofY => _gy - _floors * _fh;
   bool get _critical => d.trashRatio >= 0.9 && !d.eliminated;
@@ -933,7 +936,7 @@ extension KostPainterScenery on KostPainter {
   }
 
   void _drawSkyline(Canvas canvas, double p) {
-    if (d.biome != KostBiome.kota) return;
+    if (d.biome != KostBiome.kota || _ultra) return;
     final c = _mix(const Color(0xFFB5CFDB), const Color(0xFF8E857A), p);
     final start = (_vl / 34).floor();
     final end = (_vr / 34).ceil();
@@ -1164,11 +1167,11 @@ extension KostPainterScenery on KostPainter {
       viewR: _vr,
       worldL: worldL - 350,
       worldR: worldR + 350,
-      lowDetail: d.compact,
+      lowDetail: _lite,
       pollution: _c01(d.pollution / 100),
       lights: d.pollution > 60 || _isRainy || d.worldEvent == 'blackout' || _night > 0.3,
       rain: _isRainy,
-      density: _trafficDensity,
+      density: _trafficDensity * (_ultra ? 0.35 : (KostPerf.on ? 0.6 : 1.0)),
     );
   }
 

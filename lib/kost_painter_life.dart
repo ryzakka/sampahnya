@@ -805,7 +805,7 @@ extension KostPainterResidents on KostPainter {
 
   void _drawRats(Canvas canvas, double t) {
     final plague = d.worldEvent == 'rat_plague';
-    if (d.compact || !(d.trashRatio >= 0.75 || d.eliminated || plague)) return;
+    if (d.compact || _ultra || !(d.trashRatio >= 0.75 || d.eliminated || plague)) return;
     final guards = ((d.pets?.hasSpecies(PetSpecies.cat) ?? false) ? 2 : 4) *
         (plague ? 2 : 1); // wabah tikus: dua kali lipat
     for (var k = 0; k < guards; k++) {
@@ -854,7 +854,7 @@ extension KostPainterResidents on KostPainter {
   }
 
   void _drawStinkAndFlies(Canvas canvas, double t) {
-    if (!(d.trashRatio >= 0.5 || d.eliminated)) return;
+    if (_ultra || !(d.trashRatio >= 0.5 || d.eliminated)) return;
     final ratio = d.eliminated ? 1.0 : d.trashRatio;
 
     _p
