@@ -11,6 +11,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'bgm.dart';
 import 'customize_screen.dart';
 import 'game_screen.dart';
+import 'game_icons.dart';
 import 'kost_scene.dart';
 import 'kost_style.dart';
 import 'perf.dart';
@@ -309,7 +310,10 @@ class _ActionButton extends StatelessWidget {
     this.busy = false,
     this.outlined = false,
     this.height = 54,
+    this.asset,
   });
+
+  final String? asset;
 
   final String label;
   final IconData icon;
@@ -351,7 +355,9 @@ class _ActionButton extends StatelessWidget {
           height: 18,
           child: CircularProgressIndicator(strokeWidth: 2.5, color: fg),
         )
-            : Icon(icon, size: 20),
+            : (asset != null
+            ? GameIcon(asset!, size: 28)
+            : Icon(icon, size: 20)),
         label: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
@@ -1849,6 +1855,7 @@ class _LobbyHomeState extends State<LobbyHome>
         _ActionButton(
           label: _busyKey == 'create' ? 'Membuka lahan…' : 'Buat ruangan baru',
           icon: Icons.rocket_launch_rounded,
+          asset: GIcon.construct,
           busy: _busyKey == 'create',
           onPressed: _busy ? null : _createRoom,
         ),
@@ -1860,6 +1867,7 @@ class _LobbyHomeState extends State<LobbyHome>
             final survival = _ActionButton(
               label: _busyKey == 'survival' ? 'Menyiapkan…' : 'Kesintasan',
               icon: Icons.timer_rounded,
+              asset: GIcon.timer,
               busy: _busyKey == 'survival',
               outlined: true,
               height: 48,
@@ -1956,6 +1964,7 @@ class _LobbyHomeState extends State<LobbyHome>
         _ActionButton(
           label: _busyKey == 'join' ? 'Menyambungkan…' : 'Gabung sekarang',
           icon: Icons.login_rounded,
+          asset: GIcon.agree,
           busy: _busyKey == 'join',
           background: _Ui.greenBright,
           foreground: Colors.white,

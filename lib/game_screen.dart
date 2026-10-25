@@ -13,6 +13,7 @@ import 'kost_pets.dart';
 import 'perf.dart';
 import 'bgm.dart';
 import 'sfx.dart';
+import 'game_icons.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.roomId, required this.roomCode});
@@ -236,6 +237,12 @@ class _GameScreenState extends State<GameScreen>
     });
     _tickTimer =
         Timer.periodic(const Duration(seconds: 4), (_) => _tickServer());
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    precacheGameIcons(context);
   }
 
   @override
@@ -2404,11 +2411,10 @@ class _GameScreenState extends State<GameScreen>
                             Column(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(
-                                  ready ? Icons.security : Icons.hourglass_bottom,
-                                  color: Colors.white,
-                                  size: 28,
-                                ),
+                                ready
+                                    ? const GameIcon(GIcon.defence, size: 36)
+                                    : const Icon(Icons.hourglass_bottom,
+                                    color: Colors.white, size: 28),
                                 Text(
                                   ready ? 'TANGKIS' : '${cd.ceil()}s',
                                   style: const TextStyle(
@@ -2504,7 +2510,7 @@ class _GameScreenState extends State<GameScreen>
     final amount = Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.payments, size: 20, color: Color(0xFFFFC107)),
+        const GameIcon(GIcon.coinBunk, size: 26),
         const SizedBox(width: 6),
         Text(live.money.floor().toString(),
             style: const TextStyle(
@@ -2538,6 +2544,7 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Widget _hudMeter({
+    String? asset,
     required IconData icon,
     required String label,
     required String value,
@@ -2547,7 +2554,9 @@ class _GameScreenState extends State<GameScreen>
   }) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: color),
+        asset != null
+            ? GameIcon(asset, size: 22)
+            : Icon(icon, size: 16, color: color),
         const SizedBox(width: 6),
         Expanded(
           child: Column(
@@ -2577,6 +2586,7 @@ class _GameScreenState extends State<GameScreen>
   }
 
   Widget _hudIcon({
+    String? asset,
     required IconData icon,
     required String tooltip,
     required VoidCallback onTap,
@@ -2584,7 +2594,7 @@ class _GameScreenState extends State<GameScreen>
   }) =>
       IconButton(
         onPressed: onTap,
-        icon: Icon(icon, color: color),
+        icon: asset != null ? GameIcon(asset, size: 28) : Icon(icon, color: color),
         iconSize: 20,
         padding: EdgeInsets.zero,
         constraints: const BoxConstraints.tightFor(width: 34, height: 34),
@@ -2605,6 +2615,7 @@ class _GameScreenState extends State<GameScreen>
     final history = _hudIcon(
       icon: Icons.history,
       tooltip: 'Kabar terbaru',
+      asset: GIcon.list,
       onTap: _showFeed,
     );
     final perf = ValueListenableBuilder<int>(
@@ -2650,6 +2661,7 @@ class _GameScreenState extends State<GameScreen>
 
       trashMeter = _hudMeter(
         icon: inBin ? Icons.delete_outline : Icons.delete_forever,
+        asset: GIcon.binBig,
         label: inBin ? 'Di Kotak' : (wl > 0 ? 'Meluber!' : 'Sampah'),
         value: '${live.trash.floor()}/${cap.floor()}',
         v: live.trash,
@@ -2674,6 +2686,7 @@ class _GameScreenState extends State<GameScreen>
     final polMeter = _hudMeter(
       icon: Icons.cloud,
       label: 'Polusi',
+      asset: GIcon.polutan,
       value: '${p.round()}%',
       v: p,
       maxV: 100,
@@ -2913,7 +2926,7 @@ class _GameScreenState extends State<GameScreen>
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(icon, size: 13, color: Colors.white),
+                  gIcon(icon, 13, Colors.white),
                   const SizedBox(width: 4),
                   Flexible(
                     child: Text(
@@ -2990,7 +3003,7 @@ class _GameScreenState extends State<GameScreen>
                               color: it.color,
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: Icon(it.icon, size: 15, color: Colors.white),
+                            child: gIcon(it.icon, 15, Colors.white),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -3090,8 +3103,7 @@ class _GameScreenState extends State<GameScreen>
                       shape: BoxShape.circle,
                       color: n.color.withValues(alpha: 0.28),
                     ),
-                    child: Icon(n.icon,
-                        size: 14, color: Color.lerp(n.color, Colors.white, 0.5)),
+                    child: gIcon(n.icon, 14, Color.lerp(n.color, Colors.white, 0.5)!),
                   ),
                   const SizedBox(width: 8),
                   Flexible(
@@ -3139,8 +3151,7 @@ class _GameScreenState extends State<GameScreen>
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(_eventIcon(e['type']).$1,
-                          size: 18, color: _eventIcon(e['type']).$2),
+                      gIcon(_eventIcon(e['type']).$1, 18, _eventIcon(e['type']).$2),
                       const SizedBox(width: 10),
                       Expanded(child: Text(_eventText(e))),
                     ],
@@ -3172,7 +3183,7 @@ class _GameScreenState extends State<GameScreen>
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.timer_rounded, size: 40, color: Color(0xFFFFCA28)),
+          const GameIcon(GIcon.timer, size: 64),
           const SizedBox(height: 12),
           const Text(
             'KOST TERTIMBUN!',
@@ -3335,6 +3346,7 @@ class _GameScreenState extends State<GameScreen>
       _ActionButton(
         mode: mode,
         icon: Icons.add_home_work,
+        asset: GIcon.addRoom,
         color: Colors.lightBlue,
         title: rooms >= _maxRooms ? 'Kamar Penuh' : 'Bangun Kamar',
         shortTitle: 'Kamar',
@@ -3356,6 +3368,7 @@ class _GameScreenState extends State<GameScreen>
       _ActionButton(
         mode: mode,
         icon: wasteLv >= 7 ? Icons.factory : Icons.recycling,
+        asset: GIcon.addBin,
         color: wasteLv == 7 || wasteLv == 8
             ? Colors.amber
             : Colors.lightGreenAccent.shade700,
@@ -3374,6 +3387,7 @@ class _GameScreenState extends State<GameScreen>
       _ActionButton(
         mode: mode,
         icon: Icons.workspace_premium,
+        asset: GIcon.upHouse,
         color: Colors.amber,
         title:
         tier >= _maxTier ? 'Kost Sultan' : 'Kost ${_tierNames[nextTier]}',
@@ -3397,6 +3411,7 @@ class _GameScreenState extends State<GameScreen>
       _ActionButton(
         mode: mode,
         icon: Icons.local_shipping,
+        asset: GIcon.callTruck,
         color: Colors.green,
         title: 'Truk Sampah',
         shortTitle: 'Truk',
@@ -3420,6 +3435,7 @@ class _GameScreenState extends State<GameScreen>
       _ActionButton(
         mode: mode,
         icon: Icons.local_fire_department,
+        asset: GIcon.bin,
         color: Colors.deepOrangeAccent,
         title: 'Bakar Sampah',
         shortTitle: 'Bakar',
@@ -4186,6 +4202,7 @@ class _GameScreenState extends State<GameScreen>
   // ------------------------------------------------ tombol mengambang
 
   Widget _fab({
+    String? asset,
     required IconData icon,
     required Color color,
     required String tip,
@@ -4213,7 +4230,9 @@ class _GameScreenState extends State<GameScreen>
                   child: InkWell(
                     customBorder: const CircleBorder(),
                     onTap: onTap,
-                    child: Icon(icon, size: size * 0.48, color: color),
+                    child: asset != null
+                        ? Center(child: GameIcon(asset, size: size * 0.78))
+                        : Icon(icon, size: size * 0.48, color: color),
                   ),
                 ),
               ),
@@ -4256,6 +4275,7 @@ class _GameScreenState extends State<GameScreen>
             icon: boothOpen ? Icons.storefront : Icons.storefront_outlined,
             color: boothOpen ? const Color(0xFF69F0AE) : Colors.white,
             tip: 'Loket Sampah',
+            asset: GIcon.agree,
             badge: boothOpen ? '${boothLeft.ceil()}s' : null,
             onTap: _openBooth,
           ),
@@ -4267,6 +4287,7 @@ class _GameScreenState extends State<GameScreen>
               : Icons.emoji_emotions_outlined,
           color: const Color(0xFFFFCA28),
           tip: 'Kirim Emoji Reaksi',
+          asset: GIcon.emoji,
           onTap: () => setState(() => _emojiBarOpen = !_emojiBarOpen),
         ),
       ],
@@ -4292,6 +4313,7 @@ class _GameScreenState extends State<GameScreen>
           icon: Icons.pets,
           color: Colors.pinkAccent,
           tip: 'Hewan peliharaan',
+          asset: GIcon.addPet,
           badge: '$pets/${Pets.maxSlots}',
           onTap: _openPets,
         ),
@@ -4300,6 +4322,7 @@ class _GameScreenState extends State<GameScreen>
           icon: Icons.shield,
           color: Colors.lightBlueAccent,
           tip: maxed ? 'Pertahanan maksimal' : 'Pertahanan · $defCost',
+          asset: GIcon.addFence,
           badge: maxed ? 'Maks' : '$defense/$_maxDefense',
           dim: maxed || money < defCost,
           onTap: () {
@@ -4336,6 +4359,7 @@ class _GameScreenState extends State<GameScreen>
                           icon: Icons.local_shipping_rounded,
                           color: Colors.orangeAccent,
                           tip: 'Buang gudang (panggil truk)',
+                          asset: GIcon.truckLoad,
                           size: 40,
                           badge: w.truckProgress != null
                               ? '${w.truckLeft.ceil()}s'
@@ -4352,6 +4376,7 @@ class _GameScreenState extends State<GameScreen>
                           icon: Icons.move_down_rounded,
                           color: Colors.lightGreenAccent,
                           tip: 'Kirim sampah ke gudang',
+                          asset: GIcon.load,
                           size: 40,
                           badge: w.pourLeft > 0
                               ? '${w.pourLeft.ceil()}s'
@@ -4372,6 +4397,7 @@ class _GameScreenState extends State<GameScreen>
           icon: Icons.warehouse_rounded,
           color: Colors.orange,
           tip: w.built ? 'Upgrade gudang' : 'Bangun gudang',
+          asset: GIcon.warehouse,
           badge: w.built
               ? '${w.stored.floor()}/${w.cap.floor()}'
               : '${Wh.tierCost[1]}',
@@ -5022,7 +5048,8 @@ class _GameScreenState extends State<GameScreen>
                     children: [
                       Row(
                         children: [
-                          const Text('🏪 ', style: TextStyle(fontSize: 22)),
+                          const GameIcon(GIcon.agree, size: 32),
+                          const SizedBox(width: 8),
                           const Expanded(
                             child: Text(
                               'Loket Sampah',
@@ -5176,14 +5203,28 @@ class _GameScreenState extends State<GameScreen>
                   OutlinedButton(
                     style: btnPad,
                     onPressed: _offerBusy ? null : () => _respondOffer(false),
-                    child: const Text('Tolak'),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        GameIcon(GIcon.cancel, size: 20),
+                        SizedBox(width: 4),
+                        Text('Tolak'),
+                      ],
+                    ),
                   ),
                   const SizedBox(width: 6),
                   FilledButton(
                     style: btnPad,
                     onPressed:
                     (_offerBusy || fatal) ? null : () => _respondOffer(true),
-                    child: Text('+$price'),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const GameIcon(GIcon.accept, size: 20),
+                        const SizedBox(width: 4),
+                        Text('+$price'),
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -5275,9 +5316,11 @@ class _ActionButton extends StatelessWidget {
     required this.onTap,
     this.shortTitle,
     this.shortSub,
+    this.asset,
     this.busy = false,
   });
 
+  final String? asset;
   final String? shortTitle;
   final String? shortSub;
   final int mode;
@@ -5287,6 +5330,29 @@ class _ActionButton extends StatelessWidget {
   final String subtitle;
   final VoidCallback? onTap;
   final bool busy;
+
+  Widget _assetAvatar(double r) {
+    final d = r * 2 + 2;
+    return SizedBox(
+      width: d,
+      height: d,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          Opacity(opacity: busy ? 0.4 : 1, child: GameIcon(asset!, size: d)),
+          if (busy)
+            SizedBox(
+              width: r,
+              height: r,
+              child: const CircularProgressIndicator(
+                strokeWidth: 2,
+                color: Colors.white,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -5298,7 +5364,9 @@ class _ActionButton extends StatelessWidget {
     final titleText = mode == 1 ? (shortTitle ?? title) : title;
     final subText = mode == 1 ? (shortSub ?? subtitle) : subtitle;
 
-    final avatar = CircleAvatar(
+    final avatar = asset != null
+        ? _assetAvatar(avatarR)
+        : CircleAvatar(
       radius: avatarR,
       backgroundColor: c,
       child: busy
