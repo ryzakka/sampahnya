@@ -7,8 +7,9 @@ import 'game_icons.dart';
 
 // ====================================================================
 //  PAPAN SKOR KESINTASAN
-//  Daftar sederhana: peringkat, pemain, waktu bertahan.
-//  Membaca RPC `survival_leaderboard`.
+//  Podium 3 besar + daftar peringkat 4..10. Membaca RPC
+//  `survival_leaderboard` (kolom: player_name, seconds, rooms_count,
+//  waste_level).
 //  Buka dari beranda:
 //    Navigator.of(context).push(
 //      MaterialPageRoute(builder: (_) => const SurvivalLeaderboardScreen()));
@@ -33,7 +34,8 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   static const _amber = Color(0xFFFFCA28);
   static const _bg = Color(0xFF0A140F);
   static const _surface = Color(0xFF12221A);
-  static const _maxWidth = 520.0;
+  static const _green = Color(0xFF81C784);
+  static const _maxWidth = 560.0;
 
   static const _gold = Color(0xFFFFCA28);
   static const _silver = Color(0xFFCFD8DC);
@@ -91,7 +93,6 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
 
   // ------------------------------------------------------------ util
 
-  /// Warna angka peringkat: emas, perak, perunggu, lalu abu-abu.
   Color _rankColor(int i) => switch (i) {
     0 => _gold,
     1 => _silver,
@@ -101,36 +102,92 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
 
   double _sec(Map<String, dynamic> r) => (r['seconds'] as num).toDouble();
 
+  static const _tabular = [FontFeature.tabularFigures()];
+
+  /// Muncul pelan dari bawah; [index] menunda sedikit agar berurutan.
+  Widget _enter(int index, Widget child) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween<double>(begin: 0, end: 1),
+      duration: Duration(milliseconds: 360 + index * 70),
+      curve: Curves.easeOutCubic,
+      builder: (context, v, c) => Opacity(
+        opacity: v,
+        child: Transform.translate(offset: Offset(0, (1 - v) * 16), child: c),
+      ),
+      child: child,
+    );
+  }
+
+  /// Ikon + keterangan pendek ("3 kamar", "Bank Lv 2").
+  Widget _stat(String asset, String text, {double icon = 20}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GameIcon(asset, size: icon),
+        const SizedBox(width: 4),
+        Text(
+          text,
+          style: const TextStyle(
+            color: Colors.white70,
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+
   // ------------------------------------------------------------ build
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _bg,
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: _maxWidth),
-            child: Column(
-              children: [
-                _topBar(),
-                Expanded(
-                  child: AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 200),
-                    child: _body(),
+      body: Stack(
+        children: [
+          // cahaya hangat di atas, supaya podium terasa "disorot"
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: RadialGradient(
+                    center: const Alignment(0, -0.85),
+                    radius: 1.0,
+                    colors: [
+                      _amber.withValues(alpha: 0.13),
+                      Colors.transparent,
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
-        ),
+          SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: _maxWidth),
+                child: Column(
+                  children: [
+                    _topBar(),
+                    Expanded(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        child: _body(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
 
   Widget _topBar() {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 4),
       child: Row(
         children: [
           GameIconButton(
@@ -140,19 +197,37 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
             onTap: () => Navigator.of(context).maybePop(),
           ),
           const SizedBox(width: 12),
+          const GameIcon(GIcon.leaderboard, size: 44),
+          const SizedBox(width: 10),
           const Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  GameIcon(GIcon.survival, size: 38),
-                  SizedBox(width: 10),
-                  GameIcon(GIcon.leaderboard, size: 38),
-                ],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'MODE KESINTASAN',
+                  style: TextStyle(
+                    color: _green,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 1.6,
+                  ),
+                ),
+                Text(
+                  'Papan Skor',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 23,
+                    fontWeight: FontWeight.w900,
+                    height: 1.15,
+                  ),
+                ),
+              ],
             ),
           ),
+          const SizedBox(width: 8),
           IconButton.filledTonal(
             tooltip: 'Segarkan',
             style: IconButton.styleFrom(
@@ -178,11 +253,6 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   // ------------------------------------------------------------ daftar
 
   Widget _content() {
-    final divider = Divider(
-      height: 1,
-      thickness: 1,
-      color: Colors.white.withValues(alpha: 0.08),
-    );
     return RefreshIndicator(
       color: _amber,
       backgroundColor: _surface,
@@ -190,57 +260,147 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
       child: ListView(
         key: const ValueKey('content'),
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(20, 12, 20, 28),
+        padding: const EdgeInsets.fromLTRB(16, 14, 16, 32),
         children: [
-          _headerRow(),
-          divider,
-          for (var i = 0; i < _rows.length; i++) ...[
-            _row(_rows[i], i),
-            if (i != _rows.length - 1) divider,
+          _podium(),
+          if (_rows.length > 3) ...[
+            const SizedBox(height: 20),
+            for (var i = 3; i < _rows.length; i++) ...[
+              _enter(i, _rankCard(i)),
+              if (i != _rows.length - 1) const SizedBox(height: 8),
+            ],
           ],
         ],
       ),
     );
   }
 
-  Widget _headerRow() {
-    return const Padding(
-      padding: EdgeInsets.only(bottom: 8),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 36,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: GameIcon(GIcon.tier, size: 24),
-            ),
-          ),
+  /// Podium: juara 2 – juara 1 (tengah, lebih besar) – juara 3.
+  Widget _podium() {
+    final order = [1, 0, 2].where((i) => i < _rows.length).toList();
+    if (order.length == 1) {
+      return Center(
+        child: SizedBox(width: 230, child: _enter(0, _podiumCard(0))),
+      );
+    }
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        for (var k = 0; k < order.length; k++) ...[
+          if (k > 0) const SizedBox(width: 10),
           Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: GameIcon(GIcon.player, size: 24),
+            flex: order[k] == 0 ? 11 : 10,
+            child: _enter(order[k], _podiumCard(order[k])),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _podiumCard(int i) {
+    final r = _rows[i];
+    final color = _rankColor(i);
+    final first = i == 0;
+    return Container(
+      padding: EdgeInsets.fromLTRB(8, first ? 12 : 10, 8, 12),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: [color.withValues(alpha: 0.24), _surface],
+        ),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: color.withValues(alpha: 0.75),
+          width: first ? 2.5 : 1.5,
+        ),
+        boxShadow: first
+            ? [BoxShadow(color: color.withValues(alpha: 0.28), blurRadius: 20)]
+            : null,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          GameIcon(first ? GIcon.crown2 : GIcon.crown, size: first ? 54 : 42),
+          const SizedBox(height: 4),
+          Container(
+            width: 26,
+            height: 26,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            child: Text(
+              '${i + 1}',
+              style: const TextStyle(
+                color: Colors.black87,
+                fontSize: 14,
+                fontWeight: FontWeight.w900,
+              ),
             ),
           ),
-          GameIcon(GIcon.timer, size: 24),
+          const SizedBox(height: 8),
+          Text(
+            '${r['player_name']}',
+            maxLines: 2,
+            textAlign: TextAlign.center,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: first ? 15 : 13.5,
+              fontWeight: FontWeight.w800,
+              height: 1.2,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GameIcon(GIcon.timer, size: first ? 22 : 18),
+              const SizedBox(width: 4),
+              Text(
+                formatSurvivalTime(_sec(r)),
+                style: TextStyle(
+                  color: color,
+                  fontSize: first ? 21 : 17,
+                  fontWeight: FontWeight.w900,
+                  fontFeatures: _tabular,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            alignment: WrapAlignment.center,
+            spacing: 10,
+            runSpacing: 2,
+            children: [
+              _stat(GIcon.addRoom, '${r['rooms_count']} kamar', icon: 18),
+              _stat(GIcon.bin1, 'Bank Lv ${r['waste_level']}', icon: 18),
+            ],
+          ),
         ],
       ),
     );
   }
 
-  Widget _row(Map<String, dynamic> r, int index) {
-    final top = index < 3;
-    final color = _rankColor(index);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 12),
+  Widget _rankCard(int i) {
+    final r = _rows[i];
+    return Container(
+      padding: const EdgeInsets.fromLTRB(6, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: _surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
       child: Row(
         children: [
           SizedBox(
-            width: 36,
+            width: 38,
             child: Text(
-              '${index + 1}',
-              style: TextStyle(
-                color: color,
-                fontSize: top ? 18 : 15,
+              '${i + 1}',
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white54,
+                fontSize: 17,
                 fontWeight: FontWeight.w900,
               ),
             ),
@@ -259,41 +419,28 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 2),
-                Row(
+                const SizedBox(height: 5),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 2,
                   children: [
-                    const GameIcon(GIcon.addRoom, size: 20),
-                    const SizedBox(width: 4),
-                    Text(
-                      '${r['rooms_count']}',
-                      style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(width: 14),
-                    const GameIcon(GIcon.bin1, size: 20),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Lv ${r['waste_level']}',
-                      style: const TextStyle(
-                          color: Colors.white70,
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700),
-                    ),
+                    _stat(GIcon.addRoom, '${r['rooms_count']} kamar'),
+                    _stat(GIcon.bin1, 'Bank Lv ${r['waste_level']}'),
                   ],
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
+          const GameIcon(GIcon.timer, size: 22),
+          const SizedBox(width: 4),
           Text(
             formatSurvivalTime(_sec(r)),
-            style: TextStyle(
-              color: top ? color : Colors.white,
-              fontSize: 17,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 18,
               fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
+              fontFeatures: _tabular,
             ),
           ),
         ],
@@ -309,21 +456,33 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
       animation: _pulse,
       builder: (context, _) {
         final a = 0.05 + 0.07 * _pulse.value;
+        Widget box(double h, {double? w}) => Container(
+          height: h,
+          width: w,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: a),
+            borderRadius: BorderRadius.circular(18),
+          ),
+        );
         return ListView(
           physics: const NeverScrollableScrollPhysics(),
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
           children: [
-            for (var i = 0; i < 6; i++)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                child: Container(
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withValues(alpha: a),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                ),
-              ),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Expanded(child: box(170)),
+                const SizedBox(width: 10),
+                Expanded(flex: 11, child: box(200)),
+                const SizedBox(width: 10),
+                Expanded(child: box(160)),
+              ],
+            ),
+            const SizedBox(height: 20),
+            for (var i = 0; i < 4; i++) ...[
+              box(64),
+              const SizedBox(height: 8),
+            ],
           ],
         );
       },
@@ -331,49 +490,39 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   }
 
   Widget _stateCard({
-    required IconData icon,
-    required Color color,
+    required String asset,
     required String title,
     required String message,
-    Widget? action,
-    String? asset,
+    required Widget action,
     Key? key,
   }) {
     return Center(
       key: key,
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(28),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            asset != null
-                ? GameIcon(asset, size: 110)
-                : Icon(icon, size: 44, color: color),
-            if (title.isNotEmpty) ...[
-              const SizedBox(height: 14),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 18,
-                  fontWeight: FontWeight.w900,
-                ),
+            GameIcon(asset, size: 120),
+            const SizedBox(height: 14),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 20,
+                fontWeight: FontWeight.w900,
               ),
-            ],
-            if (message.isNotEmpty) ...[
-              const SizedBox(height: 6),
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                    color: Colors.white60, fontSize: 13, height: 1.4),
-              ),
-            ],
-            if (action != null) ...[
-              const SizedBox(height: 20),
-              action,
-            ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                  color: Colors.white60, fontSize: 13.5, height: 1.4),
+            ),
+            const SizedBox(height: 22),
+            action,
           ],
         ),
       ),
@@ -382,36 +531,50 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
 
   Widget _emptyState() => _stateCard(
     key: const ValueKey('empty'),
-    icon: Icons.emoji_events_outlined,
     asset: GIcon.waiting,
-    color: _amber,
-    title: '',
-    message: '',
-    action: GameIconButton(
-      asset: GIcon.play,
-      tip: 'Main sekarang',
-      size: 64,
-      ring: _amber,
-      onTap: () => Navigator.of(context).maybePop(),
+    title: 'Belum ada skor',
+    message: 'Main mode Kesintasan dan jadilah yang pertama\n'
+        'tercatat di papan skor!',
+    action: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        GameIconButton(
+          asset: GIcon.play,
+          tip: 'Main sekarang',
+          size: 68,
+          ring: _amber,
+          onTap: () => Navigator.of(context).maybePop(),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Main',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+      ],
     ),
   );
 
   Widget _errorState() => _stateCard(
     key: const ValueKey('error'),
-    icon: Icons.cloud_off_rounded,
     asset: GIcon.alert,
-    color: Colors.redAccent,
-    title: '',
+    title: 'Gagal memuat papan skor',
     message: _error ?? 'Terjadi kesalahan.',
-    action: IconButton.filledTonal(
-      tooltip: 'Coba lagi',
-      style: IconButton.styleFrom(
+    action: FilledButton.tonalIcon(
+      onPressed: _load,
+      style: FilledButton.styleFrom(
         backgroundColor: Colors.white.withValues(alpha: 0.12),
         foregroundColor: Colors.white,
-        fixedSize: const Size(56, 56),
+        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14)),
       ),
-      onPressed: _load,
-      icon: const Icon(Icons.refresh_rounded, size: 28),
+      icon: const Icon(Icons.refresh_rounded),
+      label: const Text('Coba lagi',
+          style: TextStyle(fontWeight: FontWeight.w800)),
     ),
   );
 }
