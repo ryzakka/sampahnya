@@ -8,6 +8,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import 'bgm.dart';
 import 'customize_screen.dart';
 import 'game_screen.dart';
 import 'kost_scene.dart';
@@ -32,6 +33,7 @@ const appVersion = '1.5.0 (2510:5)';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await Bgm.instance.init();
 
   if (supabaseAnonKey.isEmpty) {
     runApp(const MissingKeyApp());
@@ -529,6 +531,7 @@ class _SplashScreenState extends State<SplashScreen>
   @override
   void initState() {
     super.initState();
+    Bgm.instance.startLobby(); // di web bisa diblokir; dicoba lagi di _start()
     _t0 = sceneNowMs();
     for (var i = 0; i < _houseCount; i++) {
       final id = 'splash$i';
@@ -599,6 +602,7 @@ class _SplashScreenState extends State<SplashScreen>
   void _start() {
     if (_leaving) return;
     _leaving = true;
+    Bgm.instance.startLobby(); // gestur pengguna: aman untuk autoplay web
     HapticFeedback.selectionClick();
     Navigator.of(context).pushReplacement(
       PageRouteBuilder<void>(
