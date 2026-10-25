@@ -30,8 +30,14 @@ const supabaseAnonKey = String.fromEnvironment(
 /// Gim lain buatan Anda, ditampilkan di beranda.
 const linguistifyUrl = 'https://linguistify.vercel.app/';
 
-/// Nomor versi yang tampil di layar pembuka dan beranda.
+/// Nomor versi yang tampil di menu dan layar info.
 const appVersion = '1.5.0 (2510:5)';
+
+/// Ganti dengan nama Anda / studio Anda.
+const developerName = 'ryzakka';
+
+const logoAsset = 'assets/icon/logo.png';
+const startAsset = 'assets/icon/start.png';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -102,7 +108,8 @@ class _Ui {
     height: 1.05,
     shadows: [Shadow(color: Colors.black87, blurRadius: 16, offset: Offset(0, 5))],
   );
-  /// Judul layar pembuka (font Lilita One, tebal dan ceria).
+
+  /// Judul (font Lilita One, tebal dan ceria). Cadangan bila logo tak dipakai.
   static TextStyle get splashTitle => GoogleFonts.lilitaOne(
     color: Colors.white,
     letterSpacing: 2.5,
@@ -148,7 +155,6 @@ class _Ui {
     }
   }
 }
-
 
 // ====================================================================
 //  KOMPONEN UMUM
@@ -447,6 +453,55 @@ class _MoreGamesCard extends StatelessWidget {
   }
 }
 
+/// Latar kost beranimasi + penggelap lembut, dipakai menu, info, dan lobi.
+class _KostBackground extends StatelessWidget {
+  const _KostBackground({
+    this.rooms = 10,
+    this.defense = 2,
+    this.pollution = 12,
+    this.trashRatio = 0.15,
+    this.topAlpha = 0.55,
+    this.bottomAlpha = 0.86,
+  });
+
+  final int rooms;
+  final int defense;
+  final double pollution;
+  final double trashRatio;
+  final double topAlpha;
+  final double bottomAlpha;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: KostBackdrop(
+            rooms: rooms,
+            defense: defense,
+            pollution: pollution,
+            trashRatio: trashRatio,
+          ),
+        ),
+        Positioned.fill(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  _Ui.bg.withValues(alpha: topAlpha),
+                  _Ui.bg.withValues(alpha: bottomAlpha),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 // ====================================================================
 //  APLIKASI
 // ====================================================================
@@ -480,7 +535,7 @@ class SampahnyaApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sampahnya',
+      title: 'Sampahnya!',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
@@ -510,12 +565,11 @@ class SampahnyaApp extends StatelessWidget {
 }
 
 // ====================================================================
-//  LAYAR PEMBUKA
+//  LAYAR PEMBUKA (logo + tombol mulai)
 // ====================================================================
 
-/// Layar pertama: jalan kost beranimasi (kamera menyusuri jalan, langit
-/// berubah dari siang ke senja, penghuni beraktivitas, sampah beterbangan)
-/// dengan judul dan tombol MULAI. Menekan MULAI membuka [LobbyHome].
+/// Layar pertama: jalan kost beranimasi dengan logo dan tombol mulai.
+/// Menekan tombol membuka [MainMenu].
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
 
@@ -530,8 +584,8 @@ class _SplashScreenState extends State<SplashScreen>
   static const List<int> _tiers = [0, 1, 0, 2, 0, 1, 0];
 
   late final AnimationController _anim; // pemicu gambar ulang (1 dtk, berulang)
-  late final AnimationController _enter; // animasi masuk judul & tombol
-  late final AnimationController _pulse; // denyut tombol MULAI
+  late final AnimationController _enter; // animasi masuk logo & tombol
+  late final AnimationController _pulse; // denyut tombol mulai
   final KostStreetCamera _cam = KostStreetCamera();
   final List<KostOwner> _owners = [];
   final FocusNode _focus = FocusNode();
@@ -570,8 +624,8 @@ class _SplashScreenState extends State<SplashScreen>
   void didChangeDependencies() {
     super.didChangeDependencies();
     _reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    precacheImage(const AssetImage('assets/icon/logo.png'), context);
-    precacheImage(const AssetImage('assets/icon/start.png'), context);
+    precacheImage(const AssetImage(logoAsset), context);
+    precacheImage(const AssetImage(startAsset), context);
   }
 
   @override
@@ -622,7 +676,7 @@ class _SplashScreenState extends State<SplashScreen>
       PageRouteBuilder<void>(
         transitionDuration: const Duration(milliseconds: 650),
         reverseTransitionDuration: const Duration(milliseconds: 300),
-        pageBuilder: (_, __, ___) => const LobbyHome(),
+        pageBuilder: (_, __, ___) => const MainMenu(),
         transitionsBuilder: (_, animation, __, child) {
           final c = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
           return FadeTransition(
@@ -677,7 +731,7 @@ class _SplashScreenState extends State<SplashScreen>
             final w = c.maxWidth;
             final h = c.maxHeight;
             // Rumah memenuhi ±40% tinggi layar di bagian bawah; sisanya
-            // (langit) dipakai untuk judul dan tombol.
+            // (langit) dipakai untuk logo dan tombol.
             final scale = min(
               min(w / (kStreetSlotW * 1.5), h * 0.40 / kStreetSlotH),
               1.5,
@@ -685,7 +739,6 @@ class _SplashScreenState extends State<SplashScreen>
             _scale = scale;
             _cam.setTarget(_panX(_seconds), scale);
             final contentH = max(150.0, h - 250 * scale - 8);
-            final titleSize = _Ui.fluid(w, 40, 76, from: 320, to: 1100);
             final short = contentH < 300;
             final btnW = min(300.0, max(200.0, w - 64));
 
@@ -714,7 +767,7 @@ class _SplashScreenState extends State<SplashScreen>
                     },
                   ),
                 ),
-                // 2) Penggelap lembut di langit agar judul terbaca.
+                // 2) Penggelap lembut di langit agar logo terbaca.
                 Positioned.fill(
                   child: IgnorePointer(
                     child: DecoratedBox(
@@ -740,7 +793,7 @@ class _SplashScreenState extends State<SplashScreen>
                       child: CustomPaint(painter: _DriftPainter(_anim, _t0)),
                     ),
                   ),
-                // 4) Judul + tombol.
+                // 4) Logo + tombol mulai.
                 Positioned(
                   left: 0,
                   right: 0,
@@ -761,54 +814,17 @@ class _SplashScreenState extends State<SplashScreen>
                                 0.0,
                                 0.5,
                                 Image.asset(
-                                  'assets/icon/logo.png',
-                                  width: short ? min(w * 0.6, 260.0) : min(w * 0.85, 440.0),
+                                  logoAsset,
+                                  width: short
+                                      ? min(w * 0.6, 260.0)
+                                      : min(w * 0.85, 440.0),
                                   fit: BoxFit.contain,
                                   filterQuality: FilterQuality.medium,
                                 ),
                               ),
-                              const SizedBox(height: 6),
-                              _reveal(
-                                0.1,
-                                0.6,
-                                Text(
-                                  'VERSI $appVersion',
-                                  textAlign: TextAlign.center,
-                                  style: TextStyle(
-                                    color: Colors.white.withValues(alpha: 0.8),
-                                    fontSize: 12.5,
-                                    fontWeight: FontWeight.w700,
-                                    letterSpacing: 1.8,
-                                    shadows: const [
-                                      Shadow(color: Colors.black, blurRadius: 8),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                              if (!short) ...[
-                                const SizedBox(height: 12),
-                                _reveal(
-                                  0.25,
-                                  0.75,
-                                  ConstrainedBox(
-                                    constraints: const BoxConstraints(maxWidth: 380),
-                                    child: Text(
-                                      'Bangun kamar, kelola limbah, atau timbun kost tetangga!',
-                                      textAlign: TextAlign.center,
-                                      style: _Ui.body(0.9).copyWith(
-                                        fontSize: 15.5,
-                                        height: 1.45,
-                                        shadows: const [
-                                          Shadow(color: Colors.black, blurRadius: 10),
-                                        ],
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
                               SizedBox(height: short ? 16 : 30),
                               _reveal(
-                                0.45,
+                                0.3,
                                 1.0,
                                 Semantics(
                                   button: true,
@@ -820,24 +836,6 @@ class _SplashScreenState extends State<SplashScreen>
                                   ),
                                 ),
                               ),
-                              if (!short) ...[
-                                const SizedBox(height: 14),
-                                _reveal(
-                                  0.6,
-                                  1.0,
-                                  Text(
-                                    'Multipemain 2–4 orang, atau main sendiri',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      color: Colors.white.withValues(alpha: 0.6),
-                                      fontSize: 12.5,
-                                      shadows: const [
-                                        Shadow(color: Colors.black, blurRadius: 8),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              ],
                             ],
                           ),
                         ),
@@ -854,7 +852,7 @@ class _SplashScreenState extends State<SplashScreen>
   }
 }
 
-/// Tombol MULAI berbentuk pil dengan cahaya yang berdenyut.
+/// Tombol MULAI bergambar (start.png) dengan cahaya yang berdenyut.
 class _StartButton extends StatelessWidget {
   const _StartButton({
     required this.onPressed,
@@ -864,7 +862,7 @@ class _StartButton extends StatelessWidget {
 
   final VoidCallback onPressed;
   final Animation<double> pulse;
-  final double width; // dipakai sebagai batas maksimum ukuran
+  final double width; // batas maksimum ukuran
 
   @override
   Widget build(BuildContext context) {
@@ -894,7 +892,7 @@ class _StartButton extends StatelessWidget {
       },
       child: GestureDetector(
         onTap: onPressed,
-        child: Image.asset('assets/icon/start.png', fit: BoxFit.contain),
+        child: Image.asset(startAsset, fit: BoxFit.contain),
       ),
     );
   }
@@ -954,7 +952,260 @@ class _DriftPainter extends CustomPainter {
 }
 
 // ====================================================================
-//  LAYAR MASUK / BERANDA
+//  MENU UTAMA (logo, Mulai permainan, Info)
+// ====================================================================
+
+class MainMenu extends StatelessWidget {
+  const MainMenu({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Stack(
+        children: [
+          const Positioned.fill(child: _KostBackground()),
+          SafeArea(
+            child: LayoutBuilder(
+              builder: (context, c) {
+                return Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(24),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(maxWidth: 360),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Center(
+                            child: Image.asset(
+                              logoAsset,
+                              width: min(c.maxWidth * 0.85, 400.0),
+                              fit: BoxFit.contain,
+                              filterQuality: FilterQuality.medium,
+                            ),
+                          ),
+                          const SizedBox(height: 36),
+                          _ActionButton(
+                            label: 'Mulai permainan',
+                            icon: Icons.play_arrow_rounded,
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const LobbyHome(),
+                              ),
+                            ),
+                          ),
+                          _Ui.gap12,
+                          _ActionButton(
+                            label: 'Info',
+                            icon: Icons.info_outline_rounded,
+                            outlined: true,
+                            onPressed: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const AboutScreen(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 20),
+                          // Mode Ringan bertingkat: Mati -> Ringan -> Sangat Ringan
+                          ValueListenableBuilder<int>(
+                            valueListenable: KostPerf.level,
+                            builder: (_, lv, __) {
+                              final col = lv == 0
+                                  ? Colors.white54
+                                  : (lv == 1
+                                  ? _Ui.amber
+                                  : const Color(0xFFFF7043));
+                              return Center(
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(12),
+                                  onTap: KostPerf.cycle,
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 12, vertical: 8),
+                                    child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Icon(Icons.speed, size: 16, color: col),
+                                        const SizedBox(width: 6),
+                                        Flexible(
+                                          child: Text(
+                                            'Mode Ringan: ${KostPerf.names[lv]}  (ketuk untuk ganti)',
+                                            style: TextStyle(
+                                              color: col,
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w700,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'v$appVersion',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              color: Colors.white.withValues(alpha: 0.35),
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ====================================================================
+//  INFO / TENTANG
+// ====================================================================
+
+class AboutScreen extends StatelessWidget {
+  const AboutScreen({super.key});
+
+  Widget _section(String title, String body) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: _Ui.label),
+        const SizedBox(height: 4),
+        Text(body, style: _Ui.body(0.85)),
+      ],
+    ),
+  );
+
+  Widget _row(String k, String v) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: 104,
+          child: Text(k, style: _Ui.body(0.55)),
+        ),
+        Expanded(
+          child: Text(
+            v,
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _Ui.bg,
+      body: Stack(
+        children: [
+          const Positioned.fill(
+            child: _KostBackground(topAlpha: 0.7, bottomAlpha: 0.92),
+          ),
+          SafeArea(
+            child: Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 6, 8, 0),
+                  child: Row(
+                    children: [
+                      IconButton(
+                        tooltip: 'Kembali',
+                        onPressed: () => Navigator.of(context).maybePop(),
+                        icon: const Icon(Icons.arrow_back_rounded,
+                            color: Colors.white),
+                      ),
+                      const Text('Info', style: _Ui.heading),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Center(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(maxWidth: 520),
+                        child: _GlassPanel(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Center(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(bottom: 18),
+                                  child: Image.asset(
+                                    logoAsset,
+                                    width: 240,
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.medium,
+                                  ),
+                                ),
+                              ),
+                              _section(
+                                'TENTANG GIM',
+                                'Kamu juragan kost. Bangun kamar, kelola sampah, '
+                                    'dan bertahan dari tekanan sampah yang terus '
+                                    'naik. Jangan sampai kostmu tertimbun!',
+                              ),
+                              _section(
+                                'CARA BERMAIN',
+                                '• Bangun kamar untuk menambah income.\n'
+                                    '• Pasang kotak sampah, gudang, dan insinerator '
+                                    'untuk mengelola limbah.\n'
+                                    '• Sabotase tetangga: lempar sampah, lapor '
+                                    'sidak dinas, atau bajak truk. Lawan bisa '
+                                    'menangkis!\n'
+                                    '• Waspadai cuaca dan kejadian acak.\n'
+                                    '• Multipemain: jadi kost terakhir yang '
+                                    'bertahan. Mode Kesintasan: bertahan selama '
+                                    'mungkin.',
+                              ),
+                              _section(
+                                'MODE',
+                                'Multipemain 2–4 orang lewat kode ruangan, atau '
+                                    'main sendiri di mode Kesintasan dengan papan '
+                                    'skor.',
+                              ),
+                              const Divider(color: Colors.white12, height: 24),
+                              _row('Versi', appVersion),
+                              _row('Pengembang', developerName),
+                              _row('Dibuat dengan', 'Flutter & Supabase'),
+                              const SizedBox(height: 10),
+                              const Center(
+                                  child: _MoreGamesCard(center: true)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ====================================================================
+//  LAYAR MASUK (logo + nama pemain, buat/gabung ruangan)
 // ====================================================================
 
 class LobbyHome extends StatefulWidget {
@@ -1056,10 +1307,12 @@ class _LobbyHomeState extends State<LobbyHome>
     } catch (e) {
       setState(() => _error = _friendlyError(e));
     } finally {
-      if (mounted) setState(() {
-        _busy = false;
-        _busyKey = null;
-      });
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyKey = null;
+        });
+      }
     }
   }
 
@@ -1102,10 +1355,12 @@ class _LobbyHomeState extends State<LobbyHome>
     } catch (e) {
       setState(() => _error = _friendlyError(e));
     } finally {
-      if (mounted) setState(() {
-        _busy = false;
-        _busyKey = null;
-      });
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyKey = null;
+        });
+      }
     }
   }
 
@@ -1160,10 +1415,12 @@ class _LobbyHomeState extends State<LobbyHome>
     } catch (e) {
       setState(() => _error = _friendlyError(e));
     } finally {
-      if (mounted) setState(() {
-        _busy = false;
-        _busyKey = null;
-      });
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _busyKey = null;
+        });
+      }
     }
   }
 
@@ -1193,6 +1450,7 @@ class _LobbyHomeState extends State<LobbyHome>
     _codeFocus.dispose();
     super.dispose();
   }
+
   // ------------------------------------------------------------------
   //  UI
   // ------------------------------------------------------------------
@@ -1211,30 +1469,8 @@ class _LobbyHomeState extends State<LobbyHome>
       resizeToAvoidBottomInset: true,
       body: Stack(
         children: [
-          // Latar kost beranimasi di belakang layar masuk.
-          const Positioned.fill(
-            child: KostBackdrop(
-              rooms: 10,
-              defense: 2,
-              pollution: 12,
-              trashRatio: 0.15,
-            ),
-          ),
-          // Penggelap lembut agar judul dan panel selalu terbaca.
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    _Ui.bg.withValues(alpha: 0.55),
-                    _Ui.bg.withValues(alpha: 0.86),
-                  ],
-                ),
-              ),
-            ),
-          ),
+          // Latar kost beranimasi + penggelap lembut.
+          const Positioned.fill(child: _KostBackground()),
           SafeArea(
             child: LayoutBuilder(
               builder: (context, c) {
@@ -1245,24 +1481,43 @@ class _LobbyHomeState extends State<LobbyHome>
               },
             ),
           ),
+          // Tombol kembali ke menu.
+          SafeArea(
+            child: Align(
+              alignment: Alignment.topLeft,
+              child: Padding(
+                padding: const EdgeInsets.all(8),
+                child: IconButton.filledTonal(
+                  tooltip: 'Kembali',
+                  style: IconButton.styleFrom(
+                    backgroundColor: Colors.white.withValues(alpha: 0.10),
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed:
+                  _busy ? null : () => Navigator.of(context).maybePop(),
+                  icon: const Icon(Icons.arrow_back_rounded),
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
   }
 
-  /// Ponsel / jendela sempit: satu kolom, urutan = judul → form → gim lain.
+  /// Ponsel / jendela sempit: satu kolom, urutan = logo → form → gim lain.
   Widget _buildNarrow(BoxConstraints c) {
     final compact = c.maxWidth < 380;
     final hPad = _Ui.fluid(c.maxWidth, 16, 28, to: 600);
     final titleSize = _Ui.fluid(c.maxWidth, 34, 44, to: 480);
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: EdgeInsets.fromLTRB(hPad, 24, hPad, 24),
+      padding: EdgeInsets.fromLTRB(hPad, 60, hPad, 24),
       child: Center(
         child: ConstrainedBox(
           constraints: BoxConstraints(
             maxWidth: _Ui.maxNarrow,
-            minHeight: max(0.0, c.maxHeight - 48),
+            minHeight: max(0.0, c.maxHeight - 84),
           ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -1282,7 +1537,7 @@ class _LobbyHomeState extends State<LobbyHome>
     );
   }
 
-  /// Tablet / desktop / lanskap: judul di kiri, form di kanan.
+  /// Tablet / desktop / lanskap: logo di kiri, form di kanan.
   /// Lebar konten dikunci agar tidak melebar di monitor besar.
   Widget _buildWide(BoxConstraints c) {
     final hPad = _Ui.fluid(c.maxWidth, 24, 40, from: 640, to: 1100);
@@ -1343,10 +1598,11 @@ class _LobbyHomeState extends State<LobbyHome>
       mainAxisSize: MainAxisSize.min,
       children: [
         Image.asset(
-          'assets/icon/logo.png',
+          logoAsset,
           width: min(titleSize * 8, 380.0),
           fit: BoxFit.contain,
           alignment: center ? Alignment.center : Alignment.centerLeft,
+          filterQuality: FilterQuality.medium,
         ),
         const SizedBox(height: 10),
         ConstrainedBox(
@@ -1431,7 +1687,8 @@ class _LobbyHomeState extends State<LobbyHome>
             maxLength: 18,
             enabled: !_busy,
             textCapitalization: TextCapitalization.words,
-            textInputAction: _tab == 1 ? TextInputAction.next : TextInputAction.done,
+            textInputAction:
+            _tab == 1 ? TextInputAction.next : TextInputAction.done,
             onChanged: (_) => _clearError(),
             onSubmitted: (_) {
               if (_tab == 1) {
@@ -1868,7 +2125,7 @@ class _RoomLobbyState extends State<RoomLobby>
       if (room['status'] == 'playing' && !_navigated) {
         _navigated = true;
         // pushAndRemoveUntil: lobi DAN layar kustomisasi (bila sedang terbuka
-        // di atasnya) sama-sama dibuang; halaman awal tetap di bawah.
+        // di atasnya) sama-sama dibuang; halaman awal (menu) tetap di bawah.
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (_) => GameScreen(
@@ -2098,7 +2355,6 @@ class _RoomLobbyState extends State<RoomLobby>
     }
     super.dispose();
   }
-
 
   // ------------------------------------------------------------------
   //  UI
@@ -2533,7 +2789,8 @@ class _RoomLobbyState extends State<RoomLobby>
   /// Bar aksi tetap di bawah: pesan status, error, lalu tombol Siap / Mulai.
   Widget _buildActionBar(
       bool ready, Map<String, dynamic>? me, bool isHost, bool allReady) {
-    final (IconData hintIcon, String hint, Color hintColor) = _othersEditing.isNotEmpty
+    final (IconData hintIcon, String hint, Color hintColor) =
+    _othersEditing.isNotEmpty
         ? (
     Icons.brush_rounded,
     'Menunggu pemain lain selesai kustomisasi…',
