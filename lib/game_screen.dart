@@ -2482,25 +2482,29 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
-  Widget _hudStat(IconData icon, String text, {Color? color}) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(
-      color: (color ?? Colors.white).withValues(alpha: 0.14),
-      borderRadius: BorderRadius.circular(20),
-    ),
-    child: Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 13, color: color ?? Colors.white70),
-        const SizedBox(width: 4),
-        Text(text,
-            style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700)),
-      ],
-    ),
-  );
+  Widget _hudStat(IconData icon, String text,
+      {Color? color, String? asset}) =>
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: (color ?? Colors.white).withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            asset != null
+                ? GameIcon(asset, size: 18)
+                : Icon(icon, size: 13, color: color ?? Colors.white70),
+            const SizedBox(width: 4),
+            Text(text,
+                style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
 
   Widget _moneyChip(Map<String, dynamic> s,
       {bool stacked = false, bool showRate = true}) {
@@ -2609,6 +2613,7 @@ class _GameScreenState extends State<GameScreen>
 
     final back = _hudIcon(
       icon: Icons.arrow_back,
+      asset: GIcon.back,
       tooltip: 'Kembali',
       onTap: () => Navigator.of(context).maybePop(),
     );
@@ -2622,6 +2627,7 @@ class _GameScreenState extends State<GameScreen>
       valueListenable: KostPerf.level,
       builder: (_, lv, __) => _hudIcon(
         icon: Icons.speed,
+        asset: perfIcon(lv),
         tooltip: 'Mode Ringan: ${KostPerf.names[lv]} (ketuk untuk mengubah)',
         color: lv == 0
             ? Colors.white54
@@ -2674,7 +2680,8 @@ class _GameScreenState extends State<GameScreen>
           _hudStat(Icons.meeting_room,
               '${_num(s['rooms_count']).toInt()}/$_maxRooms'),
           const SizedBox(width: 5),
-          _hudStat(Icons.recycling, 'Lv $wl', color: const Color(0xFF81C784)),
+          _hudStat(Icons.recycling, 'Lv $wl',
+              color: const Color(0xFF81C784), asset: GIcon.bin1),
           const SizedBox(width: 5),
           _hudStat(Icons.workspace_premium, _tierNames[tier],
               color: const Color(0xFFFFCA28)),
@@ -3368,7 +3375,9 @@ class _GameScreenState extends State<GameScreen>
       _ActionButton(
         mode: mode,
         icon: wasteLv >= 7 ? Icons.factory : Icons.recycling,
-        asset: GIcon.addBin,
+        asset: nextWasteLv >= 10
+            ? GIcon.incineratorEcoPlus
+            : (nextWasteLv >= 8 ? GIcon.incineratorPlus : GIcon.binPlus),
         color: wasteLv == 7 || wasteLv == 8
             ? Colors.amber
             : Colors.lightGreenAccent.shade700,
@@ -3730,7 +3739,7 @@ class _GameScreenState extends State<GameScreen>
   /// Rumah lawan yang sedang ditahan lama: popup pilihan lemparan muncul di atasnya.
   String? _throwFor;
 
-  List<({String kind, String icon, String label, int cost, bool ok})>
+  List<({String kind, String icon, String? asset, String label, int cost, bool ok})>
   _throwKinds(Map<String, dynamic> me) {
     final mine = _live(me);
     final fwLeft = _remaining(me['firework_cooldown_until']);
@@ -3738,6 +3747,7 @@ class _GameScreenState extends State<GameScreen>
       (
       kind: 'normal',
       icon: '🗑️',
+      asset: GIcon.trashSmall,
       label: 'Biasa',
       cost: 10,
       ok: mine.money >= 10 && mine.trash >= 1,
@@ -3745,6 +3755,7 @@ class _GameScreenState extends State<GameScreen>
       (
       kind: 'sack',
       icon: '🛍️',
+      asset: GIcon.trashBig,
       label: 'Karung',
       cost: 40,
       ok: mine.money >= 40 && mine.trash >= 1,
@@ -3752,6 +3763,7 @@ class _GameScreenState extends State<GameScreen>
       (
       kind: 'smog',
       icon: '☣️',
+      asset: GIcon.poison,
       label: 'Polusi',
       cost: 50,
       ok: mine.money >= 50,
@@ -3759,6 +3771,7 @@ class _GameScreenState extends State<GameScreen>
       (
       kind: 'firework',
       icon: '🎆',
+      asset: null,
       label: 'Gertak',
       cost: 10,
       ok: mine.money >= 10 && mine.trash >= 1 && fwLeft == 0,
@@ -3877,7 +3890,9 @@ class _GameScreenState extends State<GameScreen>
                         width: bubble - 6,
                         height: bubble - 6,
                         child: Center(
-                          child: Text(k.icon,
+                          child: k.asset != null
+                              ? GameIcon(k.asset!, size: (bubble - 6) * 0.84)
+                              : Text(k.icon,
                               style: const TextStyle(fontSize: 26)),
                         ),
                       ),
@@ -4498,7 +4513,7 @@ class _GameScreenState extends State<GameScreen>
         if (sp != null)
           IconButton(
             onPressed: () => pick.value = null,
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            icon: const GameIcon(GIcon.back, size: 28),
             visualDensity: VisualDensity.compact,
           )
         else
@@ -5266,7 +5281,8 @@ class _GameScreenState extends State<GameScreen>
     final overview = focusId == null;
     final atHome = focusId != null && focusId == _me;
 
-    Widget btn(IconData icon, String tip, bool active, VoidCallback? onTap) {
+    Widget btn(IconData icon, String tip, bool active, VoidCallback? onTap,
+        {String? asset}) {
       return Tooltip(
         message: tip,
         child: Material(
@@ -5278,7 +5294,12 @@ class _GameScreenState extends State<GameScreen>
             child: SizedBox(
               width: 36,
               height: 36,
-              child: Icon(
+              child: asset != null
+                  ? Opacity(
+                opacity: onTap == null ? 0.4 : 1,
+                child: GameIcon(asset, size: 30),
+              )
+                  : Icon(
                 icon,
                 size: 20,
                 color: active
@@ -5296,12 +5317,14 @@ class _GameScreenState extends State<GameScreen>
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (hasHome) btn(Icons.home_rounded, 'Zoom ke rumahku', atHome, _zoomHome),
+          if (hasHome) btn(Icons.home_rounded, 'Zoom ke rumahku', atHome, _zoomHome,
+              asset: GIcon.houseOwn),
           btn(
             Icons.holiday_village_rounded,
             'Lihat semua tetangga',
             overview,
             count > 1 ? _zoomAll : null,
+            asset: GIcon.houseNeighbor,
           ),
           if (count > 1) ...[
             const SizedBox(width: 2),

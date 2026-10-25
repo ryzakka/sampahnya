@@ -3,6 +3,8 @@ import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'game_icons.dart';
+
 // ====================================================================
 //  PAPAN SKOR KESINTASAN
 //  Daftar sederhana: peringkat, pemain, waktu bertahan.
@@ -135,7 +137,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
           IconButton(
             tooltip: 'Kembali',
             onPressed: () => Navigator.of(context).maybePop(),
-            icon: const Icon(Icons.arrow_back_rounded, color: Colors.white),
+            icon: const GameIcon(GIcon.back, size: 30),
           ),
           const Expanded(
             child: Column(
@@ -317,6 +319,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
     required String title,
     required String message,
     Widget? action,
+    String? asset,
     Key? key,
   }) {
     return Center(
@@ -326,7 +329,9 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 44, color: color),
+            asset != null
+                ? GameIcon(asset, size: 72)
+                : Icon(icon, size: 44, color: color),
             const SizedBox(height: 14),
             Text(
               title,
@@ -357,6 +362,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   Widget _emptyState() => _stateCard(
     key: const ValueKey('empty'),
     icon: Icons.emoji_events_outlined,
+    asset: GIcon.leaderboard,
     color: _amber,
     title: 'Belum ada skor',
     message: 'Main mode Kesintasan dan jadilah yang pertama\n'
@@ -370,7 +376,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
         shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14)),
       ),
-      icon: const Icon(Icons.play_arrow_rounded),
+      icon: const GameIcon(GIcon.play, size: 26),
       label: const Text('Main sekarang',
           style: TextStyle(fontWeight: FontWeight.w900)),
     ),

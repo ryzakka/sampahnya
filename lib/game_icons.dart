@@ -27,20 +27,59 @@ abstract final class GIcon {
   static const String cancel = '${_d}cancel.png'; //       tolak
   static const String accept = '${_d}accept.png'; //       terima
   static const String agree = '${_d}agree.png'; //         loket sampah / gabung
-  static const String load = '${_d}load.png'; //           kirim sampah ke gudang
-  static const String truckLoad = '${_d}truckload.png'; // buang gudang (truk gudang)
+  static const String load = '${_d}movebintowerehouse.png'; // kirim sampah ke gudang
+  static const String truckLoad = '${_d}truckwerehouse.png'; // buang gudang (truk gudang)
   static const String list = '${_d}list.png'; //           kabar terbaru
   static const String warning = '${_d}warning.png'; //     peringatan
   static const String defence = '${_d}defence.png'; //     tangkis
   static const String virus = '${_d}virus.png'; //         kabut / gas beracun
   static const String disaster = '${_d}disaster.png'; //   cuaca & bencana
 
+  // ---- set ikon baru ----
+  static const String nameTag = '${_d}name.png'; //                 kolom nama pemain / karakter
+  static const String addHouse = '${_d}addhouse.png'; //            buat ruangan
+  static const String joinRoom = '${_d}joinroom.png'; //            gabung ruangan
+  static const String play = '${_d}play.png'; //                    mulai / main
+  static const String addInvite = '${_d}addinvite.png'; //          slot pemain kosong
+  static const String back = '${_d}back.png'; //                    kembali
+  static const String survival = '${_d}survival.png'; //            mode kesintasan
+  static const String leaderboard = '${_d}leaderboard.png'; //      papan skor
+  static const String graphicHigh = '${_d}grafikhigh.png'; //       mode ringan: mati
+  static const String graphicMedium = '${_d}grafikmedium.png'; //   mode ringan: ringan
+  static const String graphicLow = '${_d}grafiklow.png'; //         mode ringan: sangat ringan
+  static const String setting = '${_d}setting.png'; //              pengaturan
+  static const String roomCode = '${_d}roomcode.png'; //            kode ruangan
+  static const String info = '${_d}info.png'; //                    info
+  static const String maps = '${_d}maps.png'; //                    peta / lokasi
+  static const String trashSmall = '${_d}sampahkecil.png'; //       lemparan biasa
+  static const String trashBig = '${_d}sampahbesar.png'; //         lemparan karung
+  static const String houseOwn = '${_d}houseown.png'; //            rumahku
+  static const String houseNeighbor = '${_d}houseneighbor.png'; //  rumah tetangga
+  static const String toga = '${_d}toga.png'; //                    musim mahasiswa baru
+  static const String poison = '${_d}poison.png'; //                lemparan polusi / racun
+  static const String bin1 = '${_d}sampah1.png'; //                 level bank sampah
+  static const String binPlus = '${_d}sampahplus.png'; //           upgrade kotak / mesin daur ulang
+  static const String incineratorPlus = '${_d}inseneratorplus.png'; //       upgrade insinerator polusi
+  static const String incineratorEcoPlus = '${_d}inseneratorecoplus.png'; // upgrade insinerator eco
+
   static const List<String> all = [
     addRoom, addBin, upHouse, callTruck, bin, addFence, addPet, coinBunk,
     emoji, warehouse, binBig, polutan, timer, construct, cancel, accept,
     agree, load, truckLoad, list, warning, defence, virus, disaster,
+    nameTag, addHouse, joinRoom, play, addInvite, back, survival, leaderboard,
+    graphicHigh, graphicMedium, graphicLow, setting, roomCode, info, maps,
+    trashSmall, trashBig, houseOwn, houseNeighbor, toga, poison, bin1, binPlus,
+    incineratorPlus, incineratorEcoPlus,
   ];
 }
+
+/// Ikon Mode Ringan menurut tingkat: 0 Mati = grafik tinggi,
+/// 1 Ringan = sedang, 2 Sangat Ringan = rendah.
+String perfIcon(int level) => switch (level) {
+  0 => GIcon.graphicHigh,
+  1 => GIcon.graphicMedium,
+  _ => GIcon.graphicLow,
+};
 
 /// Memuat semua ikon ke cache gambar supaya tidak berkedip saat pertama tampil.
 void precacheGameIcons(BuildContext context) {
@@ -83,6 +122,7 @@ String? assetForIcon(IconData i) {
   if (i == Icons.workspace_premium) return GIcon.upHouse;
   if (i == Icons.local_fire_department || i == Icons.factory) return GIcon.bin;
   if (i == Icons.emoji_emotions) return GIcon.emoji;
+  if (i == Icons.school) return GIcon.toga;
   if (i == Icons.thunderstorm ||
       i == Icons.water_drop ||
       i == Icons.air ||

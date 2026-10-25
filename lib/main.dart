@@ -994,6 +994,7 @@ class MainMenu extends StatelessWidget {
                           _ActionButton(
                             label: 'Mulai permainan',
                             icon: Icons.play_arrow_rounded,
+                            asset: GIcon.play,
                             onPressed: () => Navigator.of(context).push(
                               MaterialPageRoute(
                                 builder: (_) => const LobbyHome(),
@@ -1004,6 +1005,7 @@ class MainMenu extends StatelessWidget {
                           _ActionButton(
                             label: 'Info',
                             icon: Icons.info_outline_rounded,
+                            asset: GIcon.info,
                             outlined: true,
                             onPressed: () => Navigator.of(context).push(
                               MaterialPageRoute(
@@ -1031,7 +1033,7 @@ class MainMenu extends StatelessWidget {
                                     child: Row(
                                       mainAxisSize: MainAxisSize.min,
                                       children: [
-                                        Icon(Icons.speed, size: 16, color: col),
+                                        GameIcon(perfIcon(lv), size: 24),
                                         const SizedBox(width: 6),
                                         Flexible(
                                           child: Text(
@@ -1134,8 +1136,7 @@ class AboutScreen extends StatelessWidget {
                       IconButton(
                         tooltip: 'Kembali',
                         onPressed: () => Navigator.of(context).maybePop(),
-                        icon: const Icon(Icons.arrow_back_rounded,
-                            color: Colors.white),
+                        icon: const GameIcon(GIcon.back, size: 30),
                       ),
                       const Text('Info', style: _Ui.heading),
                     ],
@@ -1501,7 +1502,7 @@ class _LobbyHomeState extends State<LobbyHome>
                   ),
                   onPressed:
                   _busy ? null : () => Navigator.of(context).maybePop(),
-                  icon: const Icon(Icons.arrow_back_rounded),
+                  icon: const GameIcon(GIcon.back, size: 28),
                 ),
               ),
             ),
@@ -1649,7 +1650,7 @@ class _LobbyHomeState extends State<LobbyHome>
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(Icons.speed, size: 16, color: col),
+                    GameIcon(perfIcon(lv), size: 24),
                     const SizedBox(width: 6),
                     Text(
                       'Mode Ringan: ${KostPerf.names[lv]}  (ketuk untuk ganti)',
@@ -1711,6 +1712,7 @@ class _LobbyHomeState extends State<LobbyHome>
             decoration: _inputDecoration(
               hint: 'Contoh: Mama Kos',
               icon: Icons.badge_outlined,
+              asset: GIcon.nameTag,
             ),
           ),
           const SizedBox(height: 16),
@@ -1741,11 +1743,17 @@ class _LobbyHomeState extends State<LobbyHome>
   InputDecoration _inputDecoration({
     required String hint,
     required IconData icon,
+    String? asset,
   }) {
     return InputDecoration(
       hintText: hint,
       hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.32)),
-      prefixIcon: Icon(icon, color: _Ui.amber, size: 22),
+      prefixIcon: asset != null
+          ? Padding(
+        padding: const EdgeInsets.all(7),
+        child: GameIcon(asset, size: 30),
+      )
+          : Icon(icon, color: _Ui.amber, size: 22),
       counterText: '',
       filled: true,
       fillColor: Colors.white.withValues(alpha: 0.07),
@@ -1774,6 +1782,7 @@ class _LobbyHomeState extends State<LobbyHome>
             child: _modeTab(
               index: 0,
               icon: Icons.add_business_rounded,
+              asset: GIcon.addHouse,
               label: 'Buat ruangan',
             ),
           ),
@@ -1781,6 +1790,7 @@ class _LobbyHomeState extends State<LobbyHome>
             child: _modeTab(
               index: 1,
               icon: Icons.meeting_room_rounded,
+              asset: GIcon.joinRoom,
               label: 'Gabung',
             ),
           ),
@@ -1793,6 +1803,7 @@ class _LobbyHomeState extends State<LobbyHome>
     required int index,
     required IconData icon,
     required String label,
+    String? asset,
   }) {
     final selected = _tab == index;
     final color = selected ? _Ui.amber : Colors.white60;
@@ -1822,7 +1833,12 @@ class _LobbyHomeState extends State<LobbyHome>
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 18, color: color),
+              asset != null
+                  ? Opacity(
+                opacity: selected ? 1 : 0.55,
+                child: GameIcon(asset, size: 26),
+              )
+                  : Icon(icon, size: 18, color: color),
               const SizedBox(width: 7),
               Flexible(
                 child: Text(
@@ -1855,7 +1871,7 @@ class _LobbyHomeState extends State<LobbyHome>
         _ActionButton(
           label: _busyKey == 'create' ? 'Membuka lahan…' : 'Buat ruangan baru',
           icon: Icons.rocket_launch_rounded,
-          asset: GIcon.construct,
+          asset: GIcon.addHouse,
           busy: _busyKey == 'create',
           onPressed: _busy ? null : _createRoom,
         ),
@@ -1867,7 +1883,7 @@ class _LobbyHomeState extends State<LobbyHome>
             final survival = _ActionButton(
               label: _busyKey == 'survival' ? 'Menyiapkan…' : 'Kesintasan',
               icon: Icons.timer_rounded,
-              asset: GIcon.timer,
+              asset: GIcon.survival,
               busy: _busyKey == 'survival',
               outlined: true,
               height: 48,
@@ -1876,6 +1892,7 @@ class _LobbyHomeState extends State<LobbyHome>
             final board = _ActionButton(
               label: 'Papan skor',
               icon: Icons.emoji_events_rounded,
+              asset: GIcon.leaderboard,
               outlined: true,
               height: 48,
               onPressed: _busy
@@ -1933,6 +1950,10 @@ class _LobbyHomeState extends State<LobbyHome>
             letterSpacing: 8,
           ),
           decoration: InputDecoration(
+            prefixIcon: const Padding(
+              padding: EdgeInsets.all(8),
+              child: GameIcon(GIcon.roomCode, size: 30),
+            ),
             hintText: '• • • • • •',
             hintStyle: TextStyle(
               color: Colors.white.withValues(alpha: 0.22),
@@ -1964,7 +1985,7 @@ class _LobbyHomeState extends State<LobbyHome>
         _ActionButton(
           label: _busyKey == 'join' ? 'Menyambungkan…' : 'Gabung sekarang',
           icon: Icons.login_rounded,
-          asset: GIcon.agree,
+          asset: GIcon.joinRoom,
           busy: _busyKey == 'join',
           background: _Ui.greenBright,
           foreground: Colors.white,
@@ -2533,7 +2554,7 @@ class _RoomLobbyState extends State<RoomLobby>
             foregroundColor: Colors.white,
           ),
           onPressed: () => Navigator.of(context).maybePop(),
-          icon: const Icon(Icons.arrow_back_rounded),
+          icon: const GameIcon(GIcon.back, size: 28),
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -2596,6 +2617,8 @@ class _RoomLobbyState extends State<RoomLobby>
             ),
             child: Row(
               children: [
+                const GameIcon(GIcon.roomCode, size: 42),
+                const SizedBox(width: 10),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -2716,8 +2739,10 @@ class _RoomLobbyState extends State<RoomLobby>
         ),
         child: Row(
           children: [
-            Icon(Icons.person_add_alt_1_rounded,
-                size: 16, color: Colors.white.withValues(alpha: 0.28)),
+            const Opacity(
+              opacity: 0.4,
+              child: GameIcon(GIcon.addInvite, size: 24),
+            ),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
@@ -2837,6 +2862,7 @@ class _RoomLobbyState extends State<RoomLobby>
     final startBtn = _ActionButton(
       label: 'Mulai game',
       icon: Icons.play_arrow_rounded,
+      asset: GIcon.play,
       background: _Ui.amber,
       foreground: Colors.black87,
       onPressed: _busy || !allReady ? null : _startGame,
