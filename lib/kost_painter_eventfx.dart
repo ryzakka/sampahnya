@@ -135,7 +135,7 @@ extension KostPainterEventFx on KostPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0 * _fxScale
       ..color = const Color(0xFFE3F2FD).withValues(alpha: 0.5 * w);
-    final n = ((d.compact ? 6 : 22) * w).round();
+    final n = ((_lite ? 6 : 22) * w).round();
     for (var i = 0; i < n; i++) {
       final h = _hh(i + 300);
       final dx = _vl + ((h % 1000) / 1000 * spanX - t * 60) % spanX;
@@ -151,7 +151,7 @@ extension KostPainterEventFx on KostPainter {
       ..strokeCap = StrokeCap.round
       ..strokeWidth = 1.0 * _fxScale
       ..color = Colors.white.withValues(alpha: 0.30 * w);
-    final n = ((d.compact ? 4 : 12) * w).ceil();
+    final n = ((_lite ? 4 : 12) * w).ceil();
     for (var i = 0; i < n; i++) {
       final h = _hh(i + 700);
       final y = _vt + (h % 1000) / 1000 * spanY + math.sin(t * 3 + i) * 2;
@@ -200,7 +200,7 @@ extension KostPainterEventFx on KostPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0
       ..color = Colors.white.withValues(alpha: 0.10 * w);
-    final lines = (d.compact ? 2 : 5);
+    final lines = (_lite ? 2 : 5);
     for (var k = 0; k < lines; k++) {
       final y = _gy - 4 - k * 5.0;
       final path = Path()..moveTo(_vl, y);
@@ -242,7 +242,7 @@ extension KostPainterEventFx on KostPainter {
     // debu dan kerikil rontok dari atap
     final x0 = _bl, x1 = _bl + 4 * _cw;
     _p.style = PaintingStyle.fill;
-    final n = ((d.compact ? 5 : 16) * (0.3 + 0.7 * w)).round();
+    final n = ((_lite ? 5 : 16) * (0.3 + 0.7 * w)).round();
     for (var i = 0; i < n; i++) {
       final h = _hh(i + 1500);
       final life = (t * 0.9 + (h % 100) / 100) % 1.0;
@@ -257,7 +257,7 @@ extension KostPainterEventFx on KostPainter {
       ..strokeWidth = 1.0
       ..strokeJoin = StrokeJoin.round
       ..color = const Color(0xFF3E2723).withValues(alpha: 0.7 * w);
-    final cracks = d.compact ? 1 : 3;
+    final cracks = _lite ? 1 : 3;
     for (var k = 0; k < cracks; k++) {
       final xs = _vl + (_hh(k + 520) % 1000) / 1000 * spanX;
       var x = xs, y = _gy + 8.0;
@@ -276,7 +276,7 @@ extension KostPainterEventFx on KostPainter {
   void _warnRats(Canvas canvas, double t, double w, double spanX) {
     // bayangan tikus berlarian dari tepi layar
     _p.style = PaintingStyle.fill;
-    final n = d.compact ? 2 : 5;
+    final n = _lite ? 2 : 5;
     for (var i = 0; i < n; i++) {
       final h = _hh(i + 1600);
       final fromLeft = i.isEven;
@@ -301,7 +301,7 @@ extension KostPainterEventFx on KostPainter {
   void _warnSparkle(Canvas canvas, double t, double w, double spanX, double spanY,
       Color col) {
     _p.style = PaintingStyle.fill;
-    final n = ((d.compact ? 6 : 18) * w).round();
+    final n = ((_lite ? 6 : 18) * w).round();
     for (var i = 0; i < n; i++) {
       final h = _hh(i + 1700);
       final life = (t * 0.45 + (h % 100) / 100) % 1.0;
@@ -385,7 +385,7 @@ extension KostPainterEventFx on KostPainter {
     // puing mengapung (kantong, kardus, botol)
     _p.style = PaintingStyle.fill;
     const cols = [Color(0xFF455A64), Color(0xFF8D6E63), Color(0xFFB0BEC5), Color(0xFF8BC34A)];
-    final n = d.compact ? 3 : 8;
+    final n = _lite ? 3 : 8;
     final span = _vr - _vl;
     for (var i = 0; i < n; i++) {
       final h = _hh(i + 2100);
@@ -489,7 +489,7 @@ extension KostPainterEventFx on KostPainter {
     final wh = d.warehouse;
     if (wh != null && wh.built) {
       final b = _whBox(wh.tier);
-      final dustN = d.compact ? 5 : 12;
+      final dustN = _lite ? 5 : 12;
       for (var i = 0; i < dustN; i++) {
         final h = _hh(i + 1900);
         final u = _c01((ms - (h % 300)) / 1500);

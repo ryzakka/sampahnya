@@ -45,7 +45,7 @@ extension KostPainterWeather on KostPainter {
     _p
       ..style = PaintingStyle.stroke
       ..strokeWidth = 0.9;
-    final ripples = d.compact ? 4 : 9;
+    final ripples = _lite ? 4 : 9;
     for (var k = 0; k < ripples; k++) {
       final ph = (t * 1.3 + k * 0.37) % 1.0;
       final rx = _vl + (_hh(k + 410) % 1000) / 1000 * spanX;
@@ -61,7 +61,7 @@ extension KostPainterWeather on KostPainter {
     _p
       ..strokeWidth = 1.2 * _fxScale
       ..color = const Color(0xFFE3F2FD).withValues(alpha: 0.6);
-    final n = d.compact ? 28 : 90;
+    final n = _lite ? 28 : 90;
     for (var i = 0; i < n; i++) {
       final h = _hh(i + 300);
       final dx = _vl + ((h % 1000) / 1000 * spanX - t * 90) % spanX;
@@ -82,7 +82,7 @@ extension KostPainterWeather on KostPainter {
       ..strokeCap = StrokeCap.round
       ..strokeWidth = 1.0 * _fxScale
       ..color = Colors.white.withValues(alpha: 0.35);
-    final streaks = d.compact ? 10 : 26;
+    final streaks = _lite ? 10 : 26;
     for (var i = 0; i < streaks; i++) {
       final h = _hh(i + 700);
       final y = _vt + (h % 1000) / 1000 * spanY + math.sin(t * 3 + i) * 2;
@@ -101,7 +101,7 @@ extension KostPainterWeather on KostPainter {
       Color(0xFFB0BEC5), // plastik
     ];
     _p.style = PaintingStyle.fill;
-    final debris = d.compact ? 4 : 12;
+    final debris = _lite ? 4 : 12;
     for (var i = 0; i < debris; i++) {
       final h = _hh(i + 740);
       final speed = 210.0 + (h % 90);
@@ -144,7 +144,7 @@ extension KostPainterWeather on KostPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.0
       ..color = Colors.white.withValues(alpha: 0.11);
-    final lines = d.compact ? 3 : 7;
+    final lines = _lite ? 3 : 7;
     for (var k = 0; k < lines; k++) {
       final y = _gy - 4 - k * 5.0;
       final path = Path()..moveTo(_vl, y);
@@ -181,7 +181,7 @@ extension KostPainterWeather on KostPainter {
       ..strokeWidth = 1.4
       ..strokeJoin = StrokeJoin.round
       ..color = const Color(0xFF3E2723).withValues(alpha: 0.8);
-    final cracks = d.compact ? 2 : 5;
+    final cracks = _lite ? 2 : 5;
     for (var k = 0; k < cracks; k++) {
       final x0 = _vl + (_hh(k + 520) % 1000) / 1000 * spanX;
       final path = Path()..moveTo(x0, _gy + 8);
@@ -197,7 +197,7 @@ extension KostPainterWeather on KostPainter {
 
     // debu naik dari tanah
     _p.style = PaintingStyle.fill;
-    final dust = d.compact ? 10 : 28;
+    final dust = _lite ? 10 : 28;
     for (var i = 0; i < dust; i++) {
       final h = _hh(i + 560);
       final life = (t * 0.7 + (h % 100) / 100) % 1.0;
@@ -208,7 +208,7 @@ extension KostPainterWeather on KostPainter {
     }
 
     // puing kecil berjatuhan
-    final debris = d.compact ? 3 : 8;
+    final debris = _lite ? 3 : 8;
     _p.color = const Color(0xFF6D4C41).withValues(alpha: 0.85);
     for (var i = 0; i < debris; i++) {
       final h = _hh(i + 590);

@@ -13,6 +13,7 @@ import 'customize_screen.dart';
 import 'game_screen.dart';
 import 'kost_scene.dart';
 import 'kost_style.dart';
+import 'perf.dart';
 import 'sfx.dart';
 import 'survival_leaderboard.dart';
 
@@ -36,6 +37,7 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Bgm.instance.init();
   await Sfx.instance.init();
+  await KostPerf.load();
 
   if (supabaseAnonKey.isEmpty) {
     runApp(const MissingKeyApp());
@@ -165,28 +167,36 @@ class _GlassPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final panel = Container(
+      padding: padding,
+      decoration: BoxDecoration(
+        color: _Ui.surface.withValues(alpha: 0.84),
+        borderRadius: BorderRadius.circular(radius),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.10),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.40),
+            blurRadius: 28,
+            offset: const Offset(0, 12),
+          ),
+        ],
+      ),
+      child: child,
+    );
     return ClipRRect(
       borderRadius: BorderRadius.circular(radius),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
-        child: Container(
-          padding: padding,
-          decoration: BoxDecoration(
-            color: _Ui.surface.withValues(alpha: 0.84),
-            borderRadius: BorderRadius.circular(radius),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.10),
-              width: 1,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: 0.40),
-                blurRadius: 28,
-                offset: const Offset(0, 12),
-              ),
-            ],
-          ),
-          child: child,
+      // Mode Ringan: tanpa blur kaca (BackdropFilter mahal di GPU lemah);
+      // panel sudah hampir buram (alpha 0,84) jadi tampilan nyaris sama.
+      child: ValueListenableBuilder<bool>(
+        valueListenable: KostPerf.lite,
+        builder: (_, lite, __) => lite
+            ? panel
+            : BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+          child: panel,
         ),
       ),
     );
@@ -1386,13 +1396,58 @@ class _LobbyHomeState extends State<LobbyHome>
   }
 
   Widget _buildFooter({bool left = false}) {
-    return Text(
-      'Sampahnya! v$appVersion',
-      textAlign: left ? TextAlign.left : TextAlign.center,
-      style: TextStyle(
-        color: Colors.white.withValues(alpha: 0.35),
-        fontSize: 11,
-      ),
+    return Column(
+      crossAxisAlignment:
+      left ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // Mode Ringan: untuk perangkat rendah (fps dibatasi, efek dikurangi)
+        ValueListenableBuilder<bool>(
+          valueListenable: KostPerf.lite,
+          builder: (_, on, __) => InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: () => KostPerf.set(!on),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.speed,
+                      size: 16, color: on ? _Ui.amber : Colors.white54),
+                  const SizedBox(width: 6),
+                  Text(
+                    on ? 'Mode Ringan: AKTIF' : 'Mode Ringan: mati',
+                    style: TextStyle(
+                      color: on ? _Ui.amber : Colors.white54,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  SizedBox(
+                    height: 24,
+                    child: FittedBox(
+                      child: Switch(
+                        value: on,
+                        onChanged: (v) => KostPerf.set(v),
+                        activeColor: _Ui.amber,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Text(
+          'Sampahnya! v$appVersion',
+          textAlign: left ? TextAlign.left : TextAlign.center,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.35),
+            fontSize: 11,
+          ),
+        ),
+      ],
     );
   }
 

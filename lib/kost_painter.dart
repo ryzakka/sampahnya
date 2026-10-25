@@ -148,6 +148,9 @@ class KostPainter extends CustomPainter {
   double _fxScale = 1.0; // pembesar partikel cuaca saat kamera menjauh
 
 
+  /// Mode hemat: kamera jauh (compact) ATAU Mode Ringan pemain menyala.
+  bool get _lite => d.compact || KostPerf.on;
+
   int get _floors => math.min(3, math.max(1, (d.rooms / 4).ceil()));
   double get _roofY => _gy - _floors * _fh;
   bool get _critical => d.trashRatio >= 0.9 && !d.eliminated;
@@ -781,7 +784,7 @@ extension KostPainterScenery on KostPainter {
       if (starVis > 0.02) {
         final c0 = (_vl / 26).floor();
         final c1 = (_vr / 26).ceil();
-        final step = d.compact ? 2 : 1;
+        final step = _lite ? 2 : 1;
         for (var k = c0; k < c1; k += step) {
           final h = _hh(k + 5000);
           if (h % 3 == 0) continue;
@@ -857,7 +860,7 @@ extension KostPainterScenery on KostPainter {
       cloudColor = _mix(cloudColor, const Color(0xFF2B3558), night * 0.88);
     }
     final nClouds =
-    _street ? (6 * span / 450).ceil() : (d.compact ? 3 : 6);
+    _street ? (6 * span / 450).ceil() : (_lite ? 3 : 6);
     for (var i = 0; i < nClouds; i++) {
       final x =
           ((t * (3 + (i % 6) * 1.4) + i * 170) % (span + 160)) + spanStart - 80;
@@ -1101,7 +1104,7 @@ extension KostPainterScenery on KostPainter {
       _p
         ..strokeWidth = 1.1 * _fxScale
         ..color = const Color(0xFFE3F2FD).withValues(alpha: 0.55);
-      final nDrops = d.compact ? 18 : 55;
+      final nDrops = _lite ? 18 : 55;
       final spanX = _vr - _vl;
       final spanY = _vb - _vt;
       for (var i = 0; i < nDrops; i++) {

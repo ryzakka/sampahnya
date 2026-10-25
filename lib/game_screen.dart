@@ -10,6 +10,7 @@ import 'kost_scene.dart';
 import 'kost_style.dart';
 import 'kost_warehouse.dart';
 import 'kost_pets.dart';
+import 'perf.dart';
 import 'bgm.dart';
 import 'sfx.dart';
 
@@ -155,6 +156,8 @@ class _GameScreenState extends State<GameScreen>
   Timer? _uiTimer;
   Timer? _tickTimer;
   late final AnimationController _anim;
+  int _uiTick = 0;
+  late final ThrottledListenable _scenePulse; // gambar ulang adegan (dibatasi di Mode Ringan)
   String? _activeRpc;
   bool _loaded = false;
 
@@ -176,6 +179,13 @@ class _GameScreenState extends State<GameScreen>
     AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..repeat();
     // Kamera jalan bergerak halus menuju targetnya di setiap frame.
+    _scenePulse = ThrottledListenable(_anim);
+    KostPerf.onAutoEnabled = () {
+      if (!mounted) return;
+      _showNotice('Perangkat terasa berat: Mode Ringan dinyalakan otomatis (ikon ⚡ untuk mematikan).',
+          icon: Icons.speed, color: const Color(0xFFFFA000));
+    };
+    KostPerf.startAutoDetect();
     _anim.addListener(_cam.step);
     _anim.addListener(_cineStep);
     _anim.addListener(_ghostStep);
@@ -186,6 +196,8 @@ class _GameScreenState extends State<GameScreen>
     _tickServer();
     _uiTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
       if (!mounted) return;
+      // Mode Ringan: rebuild UI tiap 100 ms (bukan 50 ms)
+      if (KostPerf.on && (_uiTick++).isOdd) return;
       final now = sceneNowMs();
       for (final l in _fx.values) {
         l.removeWhere((f) =>
@@ -231,6 +243,8 @@ class _GameScreenState extends State<GameScreen>
     Sfx.instance.stopAll(); // hujan + semua efek yang masih bunyi
     Bgm.instance.enterLobby();
     if (kostDoorHook == _onDoor) kostDoorHook = null;
+    KostPerf.onAutoEnabled = null;
+    _scenePulse.dispose();
     _anim.dispose();
     if (_channel != null) _db.removeChannel(_channel!);
     super.dispose();
@@ -2042,7 +2056,7 @@ class _GameScreenState extends State<GameScreen>
                       ghosts: _ghosts.values.toList(),
                       backdrop: backdrop,
                       camera: _cam,
-                      repaint: _anim,
+                      repaint: _scenePulse,
                       insets: insets,
                     ),
                   ),
@@ -2063,7 +2077,7 @@ class _GameScreenState extends State<GameScreen>
               Positioned.fill(
                 child: CinematicWorldLayer(
                   director: _cine,
-                  repaint: _anim,
+                  repaint: _scenePulse,
                   stage: stage,
                 ),
               ),
@@ -2072,7 +2086,7 @@ class _GameScreenState extends State<GameScreen>
               Positioned.fill(
                 child: CineHudFade(
                   director: _cine,
-                  repaint: _anim,
+                  repaint: _scenePulse,
                   child: Stack(
                     clipBehavior: Clip.none,
                     children: [
@@ -2089,7 +2103,7 @@ class _GameScreenState extends State<GameScreen>
                       //    Dibangun ulang tiap frame agar mengikuti kamera saat zoom.
                       Positioned.fill(
                         child: AnimatedBuilder(
-                          animation: _anim,
+                          animation: _scenePulse,
                           builder: (context, _) => Stack(
                             clipBehavior: Clip.none,
                             children: [
@@ -2231,7 +2245,7 @@ class _GameScreenState extends State<GameScreen>
               Positioned.fill(
                 child: CinematicTopLayer(
                   director: _cine,
-                  repaint: _anim,
+                  repaint: _scenePulse,
                   stage: stage,
                   onSkip: _cine.skipIntro,
                 ),
@@ -2590,6 +2604,18 @@ class _GameScreenState extends State<GameScreen>
       tooltip: 'Kabar terbaru',
       onTap: _showFeed,
     );
+    final perf = ValueListenableBuilder<bool>(
+      valueListenable: KostPerf.lite,
+      builder: (_, on, __) => _hudIcon(
+        icon: Icons.speed,
+        tooltip: on ? 'Mode Ringan: AKTIF (ketuk untuk mematikan)' : 'Mode Ringan',
+        color: on ? const Color(0xFFFFCA28) : Colors.white54,
+        onTap: () {
+          KostPerf.set(!on);
+          _toast(on ? 'Mode Ringan dimatikan.' : 'Mode Ringan dinyalakan: tampilan lebih hemat.');
+        },
+      ),
+    );
     final code = Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
@@ -2670,6 +2696,7 @@ class _GameScreenState extends State<GameScreen>
             ],
             Expanded(child: polMeter),
             const SizedBox(width: 2),
+            perf,
             history,
           ],
         ),
@@ -2697,6 +2724,7 @@ class _GameScreenState extends State<GameScreen>
               const SizedBox(width: 6),
               code,
               const SizedBox(width: 2),
+              perf,
               history,
             ],
           ),
@@ -2924,7 +2952,7 @@ class _GameScreenState extends State<GameScreen>
       constraints: const BoxConstraints(maxWidth: 520),
       builder: (ctx) => SafeArea(
         child: AnimatedBuilder(
-          animation: _anim,
+          animation: _scenePulse,
           builder: (_, __) {
             final me = _states[_me];
             final fid = _focusId;
@@ -4030,7 +4058,7 @@ class _GameScreenState extends State<GameScreen>
         ),
       ),
       child: AnimatedBuilder(
-        animation: _anim,
+        animation: _scenePulse,
         builder: (context, child) => Transform.scale(
           scale: 1 + 0.045 * sin(_anim.value * 2 * pi),
           child: child,
@@ -4775,7 +4803,7 @@ class _GameScreenState extends State<GameScreen>
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 460, maxHeight: 600),
           child: AnimatedBuilder(
-            animation: _anim,
+            animation: _scenePulse,
             builder: (ctx, _) => SingleChildScrollView(
               padding: const EdgeInsets.fromLTRB(12, 14, 12, 12),
               child: _warehousePanel(),
@@ -4957,7 +4985,7 @@ class _GameScreenState extends State<GameScreen>
       ),
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSheet) => AnimatedBuilder(
-          animation: _anim,
+          animation: _scenePulse,
           builder: (ctx, _) {
             final me = _states[_me];
             if (me == null || me['eliminated_at'] != null) {

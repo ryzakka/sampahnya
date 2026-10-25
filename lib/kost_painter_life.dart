@@ -833,7 +833,7 @@ extension KostPainterResidents on KostPainter {
   }
 
   void _drawCrows(Canvas canvas, double t) {
-    if (d.compact || !(_critical || d.eliminated)) return;
+    if (_lite || !(_critical || d.eliminated)) return;
     for (var k = 0; k < 3; k++) {
       final cx = k % 2 == 0 ? 350.0 : 50.0;
       final ang = t * 0.8 + k * 2.1;
@@ -1155,7 +1155,7 @@ extension KostPainterFx on KostPainter {
   // ------------------------------------------- efek sinematik & dramatis
 
   void _drawGodRays(Canvas canvas, double t, double p) {
-    if (d.compact || p > 0.45 || d.eliminated || _isRainy) {
+    if (_lite || p > 0.45 || d.eliminated || _isRainy) {
       return;
     }
     // Berkas cahaya hanya saat matahari tinggi (siang), bukan senja/malam.
@@ -1321,7 +1321,7 @@ extension KostPainterFx on KostPainter {
 
   void _drawAsh(Canvas canvas, double t, double p) {
     if (p < 0.55 && !d.smog) return;
-    final n = d.compact ? 8 : 34;
+    final n = _lite ? 8 : 34;
     final spanX = _vr - _vl;
     final spanY = _gy - _vt;
     _p

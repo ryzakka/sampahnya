@@ -130,7 +130,7 @@ extension KostPainterTrees on KostPainter {
     if (n < 2) return;
     final e = _treeEnv();
     final pool = _treePool(d.biome);
-    final lite = d.compact || _fxScale > 1.8;
+    final lite = _lite || _fxScale > 1.8;
     final base = _gy + 3.0;
 
     for (var i = 1; i < n; i++) {

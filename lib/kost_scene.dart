@@ -6,6 +6,7 @@ import 'kost_style.dart';
 import 'kost_traffic.dart';
 import 'kost_warehouse.dart';
 import 'kost_pets.dart';
+import 'perf.dart';
 
 // ====================================================================
 //  Adegan visual kost (v5 - Smart Trash Overflow & Animated Emoji)
