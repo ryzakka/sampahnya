@@ -335,6 +335,7 @@ class KostPainter extends CustomPainter {
     _drawWarehouse(canvas, t);
     _drawFleeing(canvas, t);
     _drawDefense(canvas, t);
+    _drawWalkersFront(canvas, t);
     _drawBags(canvas);
     _drawResidents(canvas, t);
     _drawOwner(canvas, t);
@@ -630,6 +631,7 @@ extension KostPainterScenery on KostPainter {
     _drawWarehouse(canvas, t);
     _drawFleeing(canvas, t);
     _drawDefense(canvas, t);
+    _drawWalkersFront(canvas, t);
     _drawBags(canvas);
     _drawResidents(canvas, t);
     _drawOwner(canvas, t);
@@ -1165,6 +1167,13 @@ extension KostPainterScenery on KostPainter {
       rain: _isRainy,
       density: _trafficDensity,
     );
+  }
+
+  /// Pejalan kaki digambar SETELAH pertahanan (pagar/tembok) supaya kepala
+  /// mereka tidak tertutup pagar saat lewat di trotoar depan kost.
+  void _drawWalkersFront(Canvas canvas, double t) {
+    final worldL = _street ? 0.0 : _vl;
+    final worldR = _street ? _streetW : _vr;
     _drawStreetWalkers(canvas, t, worldL - 350, worldR + 350);
   }
 
