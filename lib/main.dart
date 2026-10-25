@@ -265,36 +265,113 @@ class _Pill extends StatelessWidget {
   }
 }
 
-/// Garis pemisah dengan teks di tengah.
-class _OrDivider extends StatelessWidget {
-  const _OrDivider(this.label);
-  final String label;
+/// Tombol kotak berisi ikon PNG penuh (tanpa teks). Keterangannya muncul saat
+/// ditahan (layar sentuh) atau kursor diarahkan ke tombol (desktop/web).
+/// [size] null = mengikuti lebar yang tersedia (untuk deretan kotak).
+class _IconTile extends StatefulWidget {
+  const _IconTile({
+    required this.asset,
+    required this.tip,
+    required this.onTap,
+    this.size,
+    this.ring = Colors.white54,
+    this.selected = false,
+    this.busy = false,
+  });
+
+  final String asset;
+  final String tip;
+  final VoidCallback? onTap;
+  final double? size;
+  final Color ring;
+  final bool selected;
+  final bool busy;
+
+  @override
+  State<_IconTile> createState() => _IconTileState();
+}
+
+class _IconTileState extends State<_IconTile> {
+  bool _down = false;
+
+  void _setDown(bool v) {
+    if (_down != v && mounted) setState(() => _down = v);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final line = Expanded(
-      child: Divider(
-        height: 1,
-        thickness: 1,
-        color: Colors.white.withValues(alpha: 0.10),
-      ),
-    );
-    return Row(
-      children: [
-        line,
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Text(
-            label,
-            style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.45),
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
+    final enabled = widget.onTap != null;
+    return LayoutBuilder(
+      builder: (context, c) {
+        final size = widget.size ?? c.maxWidth;
+        final ring = widget.selected ? _Ui.amber : widget.ring;
+        return Tooltip(
+          message: widget.tip,
+          waitDuration: const Duration(milliseconds: 300),
+          triggerMode: TooltipTriggerMode.longPress,
+          child: Semantics(
+            button: true,
+            enabled: enabled,
+            label: widget.tip,
+            child: MouseRegion(
+              cursor: enabled
+                  ? SystemMouseCursors.click
+                  : SystemMouseCursors.basic,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapDown: enabled ? (_) => _setDown(true) : null,
+                onTapUp: (_) => _setDown(false),
+                onTapCancel: () => _setDown(false),
+                onTap: widget.onTap,
+                child: AnimatedScale(
+                  scale: _down ? 0.92 : 1,
+                  duration: const Duration(milliseconds: 90),
+                  child: Opacity(
+                    opacity: (enabled || widget.busy) ? 1 : 0.45,
+                    child: Container(
+                      width: size,
+                      height: size,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(size * 0.26),
+                        border: Border.all(
+                            color: ring, width: widget.selected ? 3 : 2),
+                        boxShadow: const [
+                          BoxShadow(
+                              color: Colors.black45,
+                              blurRadius: 8,
+                              offset: Offset(0, 3)),
+                        ],
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(size * 0.2),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            GameIcon(widget.asset, size: size),
+                            if (widget.busy)
+                              Container(
+                                color: Colors.black54,
+                                alignment: Alignment.center,
+                                child: SizedBox(
+                                  width: size * 0.38,
+                                  height: size * 0.38,
+                                  child: const CircularProgressIndicator(
+                                    strokeWidth: 3,
+                                    color: _Ui.amber,
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
-        ),
-        line,
-      ],
+        );
+      },
     );
   }
 }
@@ -995,67 +1072,54 @@ class MainMenu extends StatelessWidget {
                             ),
                           ),
                           const SizedBox(height: 36),
-                          _ActionButton(
-                            label: 'Mulai permainan',
-                            icon: Icons.play_arrow_rounded,
-                            asset: GIcon.play,
-                            onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const LobbyHome(),
-                              ),
-                            ),
-                          ),
-                          _Ui.gap12,
-                          _ActionButton(
-                            label: 'Info',
-                            icon: Icons.info_outline_rounded,
-                            asset: GIcon.info,
-                            outlined: true,
-                            onPressed: () => Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => const AboutScreen(),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 20),
-                          // Mode Ringan bertingkat: Mati -> Ringan -> Sangat Ringan
-                          ValueListenableBuilder<int>(
-                            valueListenable: KostPerf.level,
-                            builder: (_, lv, __) {
-                              final col = lv == 0
-                                  ? Colors.white54
-                                  : (lv == 1
-                                  ? _Ui.amber
-                                  : const Color(0xFFFF7043));
-                              return Center(
-                                child: InkWell(
-                                  borderRadius: BorderRadius.circular(12),
-                                  onTap: KostPerf.cycle,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 12, vertical: 8),
-                                    child: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        GameIconBadge(perfIcon(lv), size: 26, ring: col, ringWidth: 1.8),
-                                        const SizedBox(width: 6),
-                                        Flexible(
-                                          child: Text(
-                                            'Mode Ringan: ${KostPerf.names[lv]}  (ketuk untuk ganti)',
-                                            style: TextStyle(
-                                              color: col,
-                                              fontSize: 12,
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
+                          // Tiga tombol ikon: Info - Main - Grafis.
+                          // Keterangan muncul saat ditahan / kursor di atasnya.
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              _IconTile(
+                                asset: GIcon.info,
+                                tip: 'Info',
+                                size: 68,
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const AboutScreen(),
                                   ),
                                 ),
-                              );
-                            },
+                              ),
+                              const SizedBox(width: 22),
+                              _IconTile(
+                                asset: GIcon.play,
+                                tip: 'Mulai permainan',
+                                size: 96,
+                                ring: _Ui.amber,
+                                onTap: () => Navigator.of(context).push(
+                                  MaterialPageRoute(
+                                    builder: (_) => const LobbyHome(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 22),
+                              // Mode Ringan: Mati -> Ringan -> Sangat Ringan
+                              ValueListenableBuilder<int>(
+                                valueListenable: KostPerf.level,
+                                builder: (_, lv, __) => _IconTile(
+                                  asset: perfIcon(lv),
+                                  tip: 'Mode Ringan: ${KostPerf.names[lv]} '
+                                      '(ketuk untuk ganti)',
+                                  size: 68,
+                                  ring: lv == 0
+                                      ? Colors.white54
+                                      : (lv == 1
+                                      ? _Ui.amber
+                                      : const Color(0xFFFF7043)),
+                                  onTap: KostPerf.cycle,
+                                ),
+                              ),
+                            ],
                           ),
+                          const SizedBox(height: 22),
                           const SizedBox(height: 8),
                           Text(
                             'v$appVersion',
@@ -1728,13 +1792,18 @@ class _LobbyHomeState extends State<LobbyHome>
             ),
           ),
           const SizedBox(height: 16),
-          _buildModeSwitcher(),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
+          _buildActionTiles(),
           AnimatedSize(
             duration: const Duration(milliseconds: 250),
             curve: Curves.easeOutCubic,
             alignment: Alignment.topCenter,
-            child: _tab == 0 ? _buildCreateSection() : _buildJoinSection(),
+            child: _tab == 1
+                ? Padding(
+              padding: const EdgeInsets.only(top: 18),
+              child: _buildJoinSection(),
+            )
+                : const SizedBox(width: double.infinity),
           ),
           AnimatedSize(
             duration: const Duration(milliseconds: 200),
@@ -1782,159 +1851,59 @@ class _LobbyHomeState extends State<LobbyHome>
     );
   }
 
-  Widget _buildModeSwitcher() {
-    return Container(
-      decoration: BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.12)),
-        ),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _modeTab(
-              index: 0,
-              icon: Icons.add_business_rounded,
-              asset: GIcon.addHouse,
-              label: 'Buat ruangan',
-            ),
-          ),
-          Expanded(
-            child: _modeTab(
-              index: 1,
-              icon: Icons.meeting_room_rounded,
-              asset: GIcon.joinRoom,
-              label: 'Gabung',
-            ),
-          ),
-        ],
-      ),
+  /// Empat kotak ikon sejajar: Buat - Gabung - Kesintasan - Papan skor.
+  /// Teks keterangan muncul saat ditahan / kursor di atasnya.
+  Widget _buildActionTiles() {
+    Widget cell(Widget tile) => Expanded(
+      child: AspectRatio(aspectRatio: 1, child: tile),
     );
-  }
-
-  Widget _modeTab({
-    required int index,
-    required IconData icon,
-    required String label,
-    String? asset,
-  }) {
-    final selected = _tab == index;
-    final color = selected ? _Ui.amber : Colors.white60;
-    return Semantics(
-      button: true,
-      selected: selected,
-      label: label,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _busy
-            ? null
-            : () => setState(() {
-          _tab = index;
-          _error = null;
-        }),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            border: Border(
-              bottom: BorderSide(
-                color: selected ? _Ui.amber : Colors.transparent,
-                width: 2.5,
-              ),
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              asset != null
-                  ? Opacity(
-                opacity: selected ? 1 : 0.6,
-                child: GameIconBadge(
-                  asset,
-                  size: 30,
-                  ring: selected ? _Ui.amber : Colors.white38,
-                ),
-              )
-                  : Icon(icon, size: 18, color: color),
-              const SizedBox(width: 7),
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontWeight: FontWeight.w800,
-                    fontSize: 13.5,
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildCreateSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Row(
       children: [
-        Text(
-          'Buat ruangan untuk 2–4 pemain, lalu bagikan kodenya ke teman-temanmu.',
-          style: _Ui.body(0.62).copyWith(fontSize: 12.5),
-        ),
-        _Ui.gap12,
-        _ActionButton(
-          label: _busyKey == 'create' ? 'Membuka lahan…' : 'Buat ruangan baru',
-          icon: Icons.rocket_launch_rounded,
+        cell(_IconTile(
           asset: GIcon.addHouse,
+          tip: 'Buat ruangan baru (2–4 pemain)',
+          ring: _Ui.amber,
           busy: _busyKey == 'create',
-          onPressed: _busy ? null : _createRoom,
-        ),
-        _Ui.gap16,
-        const _OrDivider('atau main sendiri'),
-        _Ui.gap16,
-        LayoutBuilder(
-          builder: (context, c) {
-            final survival = _ActionButton(
-              label: _busyKey == 'survival' ? 'Menyiapkan…' : 'Kesintasan',
-              icon: Icons.timer_rounded,
-              asset: GIcon.survival,
-              busy: _busyKey == 'survival',
-              outlined: true,
-              height: 48,
-              onPressed: _busy ? null : _startSurvival,
-            );
-            final board = _ActionButton(
-              label: 'Papan skor',
-              icon: Icons.emoji_events_rounded,
-              asset: GIcon.leaderboard,
-              outlined: true,
-              height: 48,
-              onPressed: _busy
-                  ? null
-                  : () => Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => const SurvivalLeaderboardScreen(),
-                ),
-              ),
-            );
-            if (c.maxWidth < 280) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [survival, _Ui.gap8, board],
-              );
+          onTap: _busy ? null : _createRoom,
+        )),
+        const SizedBox(width: 10),
+        cell(_IconTile(
+          asset: GIcon.joinRoom,
+          tip: 'Gabung ke ruangan teman',
+          selected: _tab == 1,
+          onTap: _busy
+              ? null
+              : () {
+            setState(() {
+              _tab = _tab == 1 ? 0 : 1;
+              _error = null;
+            });
+            if (_tab == 1) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) _codeFocus.requestFocus();
+              });
             }
-            return Row(
-              children: [
-                Expanded(child: survival),
-                const SizedBox(width: 10),
-                Expanded(child: board),
-              ],
-            );
           },
-        ),
+        )),
+        const SizedBox(width: 10),
+        cell(_IconTile(
+          asset: GIcon.survival,
+          tip: 'Kesintasan (main sendiri)',
+          busy: _busyKey == 'survival',
+          onTap: _busy ? null : _startSurvival,
+        )),
+        const SizedBox(width: 10),
+        cell(_IconTile(
+          asset: GIcon.leaderboard,
+          tip: 'Papan skor',
+          onTap: _busy
+              ? null
+              : () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const SurvivalLeaderboardScreen(),
+            ),
+          ),
+        )),
       ],
     );
   }
@@ -1945,70 +1914,75 @@ class _LobbyHomeState extends State<LobbyHome>
       children: [
         const Text('Kode ruangan', style: _Ui.label),
         _Ui.gap8,
-        TextField(
-          controller: _codeController,
-          focusNode: _codeFocus,
-          maxLength: 6,
-          enabled: !_busy,
-          textAlign: TextAlign.center,
-          textCapitalization: TextCapitalization.characters,
-          textInputAction: TextInputAction.done,
-          onChanged: (_) => _clearError(),
-          onSubmitted: (_) {
-            if (!_busy) _joinRoom();
-          },
-          inputFormatters: [
-            FilteringTextInputFormatter.allow(RegExp('[a-zA-Z0-9]')),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _codeController,
+                focusNode: _codeFocus,
+                maxLength: 6,
+                enabled: !_busy,
+                textAlign: TextAlign.center,
+                textCapitalization: TextCapitalization.characters,
+                textInputAction: TextInputAction.done,
+                onChanged: (_) => _clearError(),
+                onSubmitted: (_) {
+                  if (!_busy) _joinRoom();
+                },
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp('[a-zA-Z0-9]')),
+                ],
+                style: const TextStyle(
+                  color: _Ui.amber,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 8,
+                ),
+                decoration: InputDecoration(
+                  prefixIconConstraints:
+                  const BoxConstraints(minWidth: 0, minHeight: 0),
+                  prefixIcon: const Padding(
+                    padding: EdgeInsets.fromLTRB(10, 8, 6, 8),
+                    child: GameIconBadge(GIcon.roomCode, size: 34, ring: _Ui.amber),
+                  ),
+                  hintText: '• • • • • •',
+                  hintStyle: TextStyle(
+                    color: Colors.white.withValues(alpha: 0.22),
+                    fontSize: 18,
+                    fontWeight: FontWeight.w500,
+                    letterSpacing: 4,
+                  ),
+                  counterText: '',
+                  filled: true,
+                  fillColor: Colors.white.withValues(alpha: 0.07),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 16),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(_Ui.radiusField),
+                    borderSide: BorderSide.none,
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(_Ui.radiusField),
+                    borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 2),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            _IconTile(
+              asset: GIcon.accept,
+              tip: 'Gabung ke ruangan',
+              size: 60,
+              ring: _Ui.greenBright,
+              busy: _busyKey == 'join',
+              onTap: _busy ? null : _joinRoom,
+            ),
           ],
-          style: const TextStyle(
-            color: _Ui.amber,
-            fontSize: 24,
-            fontWeight: FontWeight.w900,
-            letterSpacing: 8,
-          ),
-          decoration: InputDecoration(
-            prefixIconConstraints:
-            const BoxConstraints(minWidth: 0, minHeight: 0),
-            prefixIcon: const Padding(
-              padding: EdgeInsets.fromLTRB(10, 8, 6, 8),
-              child: GameIconBadge(GIcon.roomCode, size: 34, ring: _Ui.amber),
-            ),
-            hintText: '• • • • • •',
-            hintStyle: TextStyle(
-              color: Colors.white.withValues(alpha: 0.22),
-              fontSize: 18,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 4,
-            ),
-            counterText: '',
-            filled: true,
-            fillColor: Colors.white.withValues(alpha: 0.07),
-            contentPadding: const EdgeInsets.symmetric(vertical: 16),
-            border: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(_Ui.radiusField),
-              borderSide: BorderSide.none,
-            ),
-            focusedBorder: OutlineInputBorder(
-              borderRadius: BorderRadius.circular(_Ui.radiusField),
-              borderSide: const BorderSide(color: Color(0xFF4CAF50), width: 2),
-            ),
-          ),
         ),
         const SizedBox(height: 6),
         Text(
           'Minta kode 6 karakter dari pembuat ruangan.',
           textAlign: TextAlign.center,
           style: _Ui.body(0.55).copyWith(fontSize: 12),
-        ),
-        _Ui.gap16,
-        _ActionButton(
-          label: _busyKey == 'join' ? 'Menyambungkan…' : 'Gabung sekarang',
-          icon: Icons.login_rounded,
-          asset: GIcon.joinRoom,
-          busy: _busyKey == 'join',
-          background: _Ui.greenBright,
-          foreground: Colors.white,
-          onPressed: _busy ? null : _joinRoom,
         ),
       ],
     );
