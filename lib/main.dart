@@ -505,9 +505,513 @@ class SampahnyaApp extends StatelessWidget {
           child: child ?? const SizedBox.shrink(),
         );
       },
-      home: const LobbyHome(),
+      home: const SplashScreen(),
     );
   }
+}
+
+// ====================================================================
+//  LAYAR PEMBUKA
+// ====================================================================
+
+/// Layar pertama: jalan kost beranimasi (kamera menyusuri jalan, langit
+/// berubah dari siang ke senja, penghuni beraktivitas, sampah beterbangan)
+/// dengan judul dan tombol MULAI. Menekan MULAI membuka [LobbyHome].
+class SplashScreen extends StatefulWidget {
+  const SplashScreen({super.key});
+
+  @override
+  State<SplashScreen> createState() => _SplashScreenState();
+}
+
+class _SplashScreenState extends State<SplashScreen>
+    with TickerProviderStateMixin {
+  static const int _houseCount = 7;
+  static const List<int> _rooms = [8, 4, 12, 8, 12, 4, 8];
+  static const List<int> _tiers = [0, 1, 0, 2, 0, 1, 0];
+
+  late final AnimationController _anim; // pemicu gambar ulang (1 dtk, berulang)
+  late final AnimationController _enter; // animasi masuk judul & tombol
+  late final AnimationController _pulse; // denyut tombol MULAI
+  final KostStreetCamera _cam = KostStreetCamera();
+  final List<KostOwner> _owners = [];
+  final FocusNode _focus = FocusNode();
+  late final int _t0;
+  double _scale = 0.6;
+  bool _leaving = false;
+  bool _reduceMotion = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _t0 = sceneNowMs();
+    for (var i = 0; i < _houseCount; i++) {
+      final id = 'splash$i';
+      _owners.add(KostOwner(seed: kostSeedFor(id))
+        ..look = kostLookFor(id, null));
+    }
+    _anim = AnimationController(vsync: this, duration: const Duration(seconds: 1))
+      ..repeat();
+    _anim.addListener(() {
+      _cam.setTarget(_panX(_seconds), _scale);
+      _cam.step();
+    });
+    _enter = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1700),
+    )..forward();
+    _pulse = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1800),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _reduceMotion = MediaQuery.maybeOf(context)?.disableAnimations ?? false;
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    _enter.dispose();
+    _pulse.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  double get _seconds => (sceneNowMs() - _t0) / 1000.0;
+
+  /// Posisi kamera: bolak-balik menyusuri jalan, melambat di kedua ujung.
+  double _panX(double t) {
+    final u = _reduceMotion ? 0.3 : (1 - cos(t * 2 * pi / 70)) / 2;
+    return kStreetSlotW * (0.5 + u * (_houseCount - 1));
+  }
+
+  /// Fase hari: tengah hari (0.5) perlahan menuju senja (0.8).
+  double _phase(double t) =>
+      _reduceMotion ? 0.5 : 0.5 + 0.30 * (1 - cos(t * 2 * pi / 90)) / 2;
+
+  List<KostSceneData> _houses(double phase) => [
+    for (var i = 0; i < _houseCount; i++)
+      KostSceneData(
+        rooms: _rooms[i],
+        maxRooms: 12,
+        defense: i % 3 == 0 ? 1 : 0,
+        wasteLevel: 1,
+        kostTier: _tiers[i],
+        trashRatio: 0.06 + 0.04 * (i % 3),
+        pollution: 4,
+        wall: KostPalette.walls[(i * 5 + 1) % KostPalette.walls.length],
+        seed: kostSeedFor('splash$i') % 1000,
+        lights: 1.0,
+        owner: _owners[i],
+        dayPhase: phase,
+      ),
+  ];
+
+  void _start() {
+    if (_leaving) return;
+    _leaving = true;
+    HapticFeedback.selectionClick();
+    Navigator.of(context).pushReplacement(
+      PageRouteBuilder<void>(
+        transitionDuration: const Duration(milliseconds: 650),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+        pageBuilder: (_, __, ___) => const LobbyHome(),
+        transitionsBuilder: (_, animation, __, child) {
+          final c = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic);
+          return FadeTransition(
+            opacity: c,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 1.04, end: 1.0).animate(c),
+              child: child,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// Muncul bertahap: memudar + naik sedikit, pada rentang [a]..[b] animasi masuk.
+  Widget _reveal(double a, double b, Widget child) {
+    final curve = CurvedAnimation(
+      parent: _enter,
+      curve: Interval(a, b, curve: Curves.easeOutCubic),
+    );
+    return FadeTransition(
+      opacity: curve,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.28),
+          end: Offset.zero,
+        ).animate(curve),
+        child: child,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _Ui.bg,
+      body: Focus(
+        focusNode: _focus,
+        autofocus: true,
+        onKeyEvent: (_, e) {
+          if (e is KeyDownEvent &&
+              (e.logicalKey == LogicalKeyboardKey.enter ||
+                  e.logicalKey == LogicalKeyboardKey.numpadEnter ||
+                  e.logicalKey == LogicalKeyboardKey.space)) {
+            _start();
+            return KeyEventResult.handled;
+          }
+          return KeyEventResult.ignored;
+        },
+        child: LayoutBuilder(
+          builder: (context, c) {
+            final w = c.maxWidth;
+            final h = c.maxHeight;
+            // Rumah memenuhi ±40% tinggi layar di bagian bawah; sisanya
+            // (langit) dipakai untuk judul dan tombol.
+            final scale = min(
+              min(w / (kStreetSlotW * 1.5), h * 0.40 / kStreetSlotH),
+              1.5,
+            ).clamp(0.3, 1.5).toDouble();
+            _scale = scale;
+            _cam.setTarget(_panX(_seconds), scale);
+            final contentH = max(150.0, h - 250 * scale - 8);
+            final titleSize = _Ui.fluid(w, 40, 76, from: 320, to: 1100);
+            final short = contentH < 300;
+            final btnW = min(300.0, max(200.0, w - 64));
+
+            return Stack(
+              children: [
+                // 1) Jalan kost hidup.
+                Positioned.fill(
+                  child: AnimatedBuilder(
+                    animation: _anim,
+                    builder: (context, _) {
+                      final phase = _phase(_seconds);
+                      return KostStreet(
+                        houses: _houses(phase),
+                        backdrop: KostSceneData(
+                          rooms: 0,
+                          maxRooms: 12,
+                          defense: 0,
+                          trashRatio: 0,
+                          pollution: 4,
+                          dayPhase: phase,
+                        ),
+                        camera: _cam,
+                        repaint: _anim,
+                        ids: [for (var i = 0; i < _houseCount; i++) 'splash$i'],
+                      );
+                    },
+                  ),
+                ),
+                // 2) Penggelap lembut di langit agar judul terbaca.
+                Positioned.fill(
+                  child: IgnorePointer(
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          stops: const [0.0, 0.5, 1.0],
+                          colors: [
+                            _Ui.bg.withValues(alpha: 0.62),
+                            _Ui.bg.withValues(alpha: 0.18),
+                            _Ui.bg.withValues(alpha: 0.0),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // 3) Sampah & daun beterbangan di depan.
+                if (!_reduceMotion)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      child: CustomPaint(painter: _DriftPainter(_anim, _t0)),
+                    ),
+                  ),
+                // 4) Judul + tombol.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: contentH,
+                  child: SafeArea(
+                    bottom: false,
+                    child: Center(
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 24, vertical: 8),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (!short) ...[
+                                _reveal(0.0, 0.45, _buildLogo()),
+                                const SizedBox(height: 16),
+                              ],
+                              _reveal(
+                                0.1,
+                                0.6,
+                                Text(
+                                  'SAMPAHNYA!',
+                                  maxLines: 1,
+                                  textAlign: TextAlign.center,
+                                  style: _Ui.title.copyWith(
+                                    fontSize: short ? min(titleSize, 48) : titleSize,
+                                  ),
+                                ),
+                              ),
+                              if (!short) ...[
+                                const SizedBox(height: 12),
+                                _reveal(
+                                  0.25,
+                                  0.75,
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(maxWidth: 380),
+                                    child: Text(
+                                      'Bangun kamar, kelola limbah, atau timbun kost tetangga!',
+                                      textAlign: TextAlign.center,
+                                      style: _Ui.body(0.9).copyWith(
+                                        fontSize: 15.5,
+                                        height: 1.45,
+                                        shadows: const [
+                                          Shadow(color: Colors.black, blurRadius: 10),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              SizedBox(height: short ? 16 : 30),
+                              _reveal(
+                                0.45,
+                                1.0,
+                                Semantics(
+                                  button: true,
+                                  label: 'Mulai bermain',
+                                  child: _StartButton(
+                                    width: btnW,
+                                    pulse: _pulse,
+                                    onPressed: _start,
+                                  ),
+                                ),
+                              ),
+                              if (!short) ...[
+                                const SizedBox(height: 14),
+                                _reveal(
+                                  0.6,
+                                  1.0,
+                                  Text(
+                                    'Multipemain 2–4 orang, atau main sendiri',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      color: Colors.white.withValues(alpha: 0.6),
+                                      fontSize: 12.5,
+                                      shadows: const [
+                                        Shadow(color: Colors.black, blurRadius: 8),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                // 5) Versi di dasar layar.
+                Positioned(
+                  left: 0,
+                  right: 0,
+                  bottom: 6,
+                  child: SafeArea(
+                    top: false,
+                    child: Text(
+                      'Sampahnya! v1.4.9 (2410:2)',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Colors.white.withValues(alpha: 0.4),
+                        fontSize: 11,
+                        shadows: const [Shadow(color: Colors.black, blurRadius: 6)],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Ikon logo yang melayang pelan naik-turun.
+  Widget _buildLogo() {
+    return AnimatedBuilder(
+      animation: _pulse,
+      builder: (context, child) => Transform.translate(
+        offset: Offset(0, _reduceMotion ? 0 : -4 * Curves.easeInOut.transform(_pulse.value)),
+        child: child,
+      ),
+      child: Container(
+        width: 64,
+        height: 64,
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFFFFD54F), Color(0xFFFFA000)],
+          ),
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: [
+            BoxShadow(
+              color: _Ui.amber.withValues(alpha: 0.4),
+              blurRadius: 22,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: const Icon(Icons.delete_sweep_rounded,
+            size: 34, color: Colors.black87),
+      ),
+    );
+  }
+}
+
+/// Tombol MULAI berbentuk pil dengan cahaya yang berdenyut.
+class _StartButton extends StatelessWidget {
+  const _StartButton({
+    required this.onPressed,
+    required this.pulse,
+    required this.width,
+  });
+
+  final VoidCallback onPressed;
+  final Animation<double> pulse;
+  final double width;
+
+  @override
+  Widget build(BuildContext context) {
+    const radius = 32.0;
+    return AnimatedBuilder(
+      animation: pulse,
+      builder: (context, child) {
+        final p = Curves.easeInOut.transform(pulse.value);
+        return Container(
+          width: width,
+          height: 64,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(radius),
+            gradient: const LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFFFFD54F), Color(0xFFFFB300)],
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: _Ui.amber.withValues(alpha: 0.22 + 0.25 * p),
+                blurRadius: 18 + 14 * p,
+                spreadRadius: 1 + 3 * p,
+              ),
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.35),
+                blurRadius: 14,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: child,
+        );
+      },
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(radius),
+          onTap: onPressed,
+          child: const Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.play_arrow_rounded, size: 32, color: Colors.black87),
+              SizedBox(width: 6),
+              Text(
+                'MULAI',
+                style: TextStyle(
+                  color: Colors.black87,
+                  fontSize: 21,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 3,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Serpihan sampah (kertas, kaleng, daun, tutup botol) yang melayang pelan
+/// dari kanan ke kiri. Murni dekorasi; posisi dihitung dari waktu.
+class _DriftPainter extends CustomPainter {
+  _DriftPainter(Listenable repaint, this.t0) : super(repaint: repaint);
+
+  final int t0;
+
+  static const List<Color> _cols = [
+    Color(0xFFF5F5F5),
+    Color(0xFF8BC34A),
+    Color(0xFFC49A6C),
+    Color(0xFF90A4AE),
+    Color(0xFFFFE082),
+  ];
+
+  static double _r(int s) => ((s * 9301 + 49297) % 233280) / 233280.0;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final t = (sceneNowMs() - t0) / 1000.0;
+    final p = Paint();
+    final span = size.width + 80;
+    for (var i = 0; i < 20; i++) {
+      final r1 = _r(i * 3 + 1);
+      final r2 = _r(i * 3 + 2);
+      final r3 = _r(i * 3 + 3);
+      final speed = 18 + 26 * r1;
+      final x = size.width + 40 - ((r2 * span + t * speed) % span);
+      final y = size.height * (0.06 + 0.52 * r3) + sin(t * 0.9 + i) * 14;
+      final sz = 3.5 + 4 * r1;
+      canvas.save();
+      canvas.translate(x, y);
+      canvas.rotate(t * (0.8 + r2 * 1.6) + i);
+      p.color = _cols[i % _cols.length].withValues(alpha: 0.30 + 0.25 * r3);
+      if (i % 3 == 0) {
+        canvas.drawCircle(Offset.zero, sz * 0.55, p);
+      } else {
+        canvas.drawRRect(
+          RRect.fromRectAndRadius(
+            Rect.fromCenter(center: Offset.zero, width: sz * 1.8, height: sz),
+            const Radius.circular(1.5),
+          ),
+          p,
+        );
+      }
+      canvas.restore();
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _DriftPainter old) => false;
 }
 
 // ====================================================================
