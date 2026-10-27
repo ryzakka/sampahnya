@@ -3,8 +3,8 @@ const MANIFEST = 'flutter-app-manifest';
 const TEMP = 'flutter-temp-cache';
 const CACHE_NAME = 'flutter-app-cache';
 
-const RESOURCES = {"assets/AssetManifest.bin": "3d9912d7622fb1f5a8098e35d19c5267",
-"assets/AssetManifest.bin.json": "bd2ebf93993d47ba196f5a5aef5605ba",
+const RESOURCES = {"assets/AssetManifest.bin": "365d1d90bc70c1ec2802035e7c984a52",
+"assets/AssetManifest.bin.json": "872d786205dffbd150d25e021e58f5cf",
 "assets/assets/audio/beach1.mp3": "5ae7bc4955ba87266ba453cb77f72ae4",
 "assets/assets/audio/beach2.mp3": "af2c5373ae7eb3f66f612fe7c991f27e",
 "assets/assets/audio/friendly1.mp3": "2b13064e4feaf78bd38b40bba978c88d",
@@ -59,6 +59,8 @@ const RESOURCES = {"assets/AssetManifest.bin": "3d9912d7622fb1f5a8098e35d19c5267
 "assets/assets/icon/left.png": "0127ff0a68763948516abf445bbcd036",
 "assets/assets/icon/list.png": "94e9d9eed93ec60916b796ccdbbedbd1",
 "assets/assets/icon/load.png": "3c34cd75f83d9335cb9e7d18208247bc",
+"assets/assets/icon/logo-embun.png": "67f4157b8885c7c010604d94a25378f1",
+"assets/assets/icon/logo-linguistichegemony.png": "8b4c9821a248cad9e31fc0a608a4b6e0",
 "assets/assets/icon/logo.png": "864cf7e6049a215db126b366ef2301d4",
 "assets/assets/icon/maps.png": "7f784e2e9c1a8a095b1dbdd68402c5ef",
 "assets/assets/icon/menang.png": "3085724a3774109021e0e4307e5995bd",
@@ -142,14 +144,14 @@ const RESOURCES = {"assets/AssetManifest.bin": "3d9912d7622fb1f5a8098e35d19c5267
 "canvaskit/skwasm_heavy.wasm": "b0be7910760d205ea4e011458df6ee01",
 "favicon.png": "cef9945067c8e42e22ce854272d61ca7",
 "flutter.js": "24bc71911b75b5f8135c949e27a2984e",
-"flutter_bootstrap.js": "ae97096e5b54185eaff43730dbd65479",
+"flutter_bootstrap.js": "72f5a58dc5d71c70e8700b85b0b0d301",
 "icons/Icon-192.png": "10fdcb59872d56c2f23bf5ce0f3647e4",
 "icons/Icon-512.png": "ca04c82c18140ba47e642f4073fe916c",
 "icons/Icon-maskable-192.png": "10fdcb59872d56c2f23bf5ce0f3647e4",
 "icons/Icon-maskable-512.png": "ca04c82c18140ba47e642f4073fe916c",
 "index.html": "cc4e10eefc1c6dc0b52c2fef8de73ba0",
 "/": "cc4e10eefc1c6dc0b52c2fef8de73ba0",
-"main.dart.js": "1a66c71f271c9b592606e7c0415b5921",
+"main.dart.js": "33f090e548823e1c4b50af46b3efc0f5",
 "manifest.json": "d316d9ed99bda221a3552b255fc6882b",
 "vercel.json": "12493a52135ce2c149db40c740fb0c03",
 "version.json": "05a7c32c8c504f08296b220fd7485482"};

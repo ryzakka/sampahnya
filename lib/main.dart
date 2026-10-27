@@ -28,8 +28,11 @@ const supabaseAnonKey = String.fromEnvironment(
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRia29pdXlkaXF2ZmVkamlxbGloIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI2NTQ1MTgsImV4cCI6MjEwODIzMDUxOH0.JC_xoqEn2YMQnayqbxMtSMPjzdtxsJ7dc0nMj4SwVJQ',
 );
 
-/// Gim lain buatan Anda, ditampilkan di beranda.
+/// Gim lain buatan kami, ditampilkan di beranda dan layar info.
 const linguistifyUrl = 'https://linguistify.vercel.app/';
+const embunUrl = 'https://biarembun.vercel.app/';
+const linguisticLogoAsset = 'assets/icon/logo-linguistichegemony.png';
+const embunLogoAsset = 'assets/icon/logo-embun.png';
 
 /// Nomor versi yang tampil di menu dan layar info.
 const appVersion = '1.5.0 (2510:5)';
@@ -540,21 +543,81 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-/// Tautan ke gim lain (Linguistify), tanpa wadah.
+/// Permainan lainnya dari kami: Linguistic Hegemony dan Embun.
 class _MoreGamesCard extends StatelessWidget {
   const _MoreGamesCard({this.center = false});
   final bool center;
+
+  Widget _game(
+      BuildContext context, {
+        required String asset,
+        required String name,
+        required String url,
+        required Color ring,
+      }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _IconTile(
+          asset: asset,
+          tip: 'Mainkan $name',
+          size: 56,
+          ring: ring,
+          onTap: () => _Ui.openLink(context, url),
+        ),
+        const SizedBox(height: 5),
+        SizedBox(
+          width: 96,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              name,
+              maxLines: 1,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w800,
+                shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Align(
       alignment: center ? Alignment.center : Alignment.centerLeft,
-      child: _IconTile(
-        asset: GIcon.otherGames,
-        tip: 'Gim lain: Linguistic Hegemony',
-        size: 56,
-        ring: _Ui.violet,
-        onTap: () => _Ui.openLink(context, linguistifyUrl),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment:
+        center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
+        children: [
+          const Text('Permainan lainnya dari kami', style: _Ui.label),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _game(
+                context,
+                asset: linguisticLogoAsset,
+                name: 'Linguistic Hegemony',
+                url: linguistifyUrl,
+                ring: _Ui.violet,
+              ),
+              const SizedBox(width: 16),
+              _game(
+                context,
+                asset: embunLogoAsset,
+                name: 'Embun',
+                url: embunUrl,
+                ring: _Ui.green,
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
