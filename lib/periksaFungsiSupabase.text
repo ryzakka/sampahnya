@@ -81,3 +81,7 @@ CREATE TABLE public.game_events (
   CONSTRAINT game_events_pkey PRIMARY KEY (id),
   CONSTRAINT game_events_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id)
 );
+
+
+
+flutter build web --release && git add . && git add build/web -f && git commit -m "feat: perbarui konten aplikasi" && git push origin main

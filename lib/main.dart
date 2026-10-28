@@ -543,46 +543,109 @@ class _ErrorBanner extends StatelessWidget {
   }
 }
 
-/// Permainan lainnya dari kami: Linguistic Hegemony dan Embun.
+/// Tombol "More Games": ikon [GIcon.otherGames]; ketika diketuk muncul pop up
+/// berisi daftar permainan lainnya dari kami.
 class _MoreGamesCard extends StatelessWidget {
   const _MoreGamesCard({this.center = false});
   final bool center;
 
-  Widget _game(
+  void _openList(BuildContext context) {
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: _Ui.surface,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: Colors.white12),
+        ),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text('Permainan lainnya dari kami',
+                          style: _Ui.heading),
+                    ),
+                    IconButton(
+                      tooltip: 'Tutup',
+                      onPressed: () => Navigator.of(ctx).pop(),
+                      icon: const Icon(Icons.close, color: Colors.white70),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                _gameRow(
+                  ctx,
+                  asset: linguisticLogoAsset,
+                  name: 'Linguistic Hegemony',
+                  url: linguistifyUrl,
+                  ring: _Ui.violet,
+                ),
+                const SizedBox(height: 10),
+                _gameRow(
+                  ctx,
+                  asset: embunLogoAsset,
+                  name: 'Embun',
+                  url: embunUrl,
+                  ring: _Ui.greenSoft,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _gameRow(
       BuildContext context, {
         required String asset,
         required String name,
         required String url,
         required Color ring,
       }) {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _IconTile(
-          asset: asset,
-          tip: 'Mainkan $name',
-          size: 56,
-          ring: ring,
-          onTap: () => _Ui.openLink(context, url),
-        ),
-        const SizedBox(height: 5),
-        SizedBox(
-          width: 96,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(
-              name,
-              maxLines: 1,
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-                shadows: [Shadow(color: Colors.black87, blurRadius: 4)],
+    return Material(
+      color: Colors.white.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () => _Ui.openLink(context, url),
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Row(
+            children: [
+              _IconTile(
+                asset: asset,
+                tip: name,
+                size: 56,
+                ring: ring,
+                onTap: () => _Ui.openLink(context, url),
               ),
-            ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Text(
+                  name,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const Icon(Icons.open_in_new, color: Colors.white54, size: 18),
+            ],
           ),
         ),
-      ],
+      ),
     );
   }
 
@@ -590,34 +653,12 @@ class _MoreGamesCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Align(
       alignment: center ? Alignment.center : Alignment.centerLeft,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment:
-        center ? CrossAxisAlignment.center : CrossAxisAlignment.start,
-        children: [
-          const Text('Permainan lainnya dari kami', style: _Ui.label),
-          const SizedBox(height: 8),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _game(
-                context,
-                asset: linguisticLogoAsset,
-                name: 'Linguistic Hegemony',
-                url: linguistifyUrl,
-                ring: _Ui.violet,
-              ),
-              const SizedBox(width: 16),
-              _game(
-                context,
-                asset: embunLogoAsset,
-                name: 'Embun',
-                url: embunUrl,
-                ring: _Ui.green,
-              ),
-            ],
-          ),
-        ],
+      child: _IconTile(
+        asset: GIcon.otherGames,
+        tip: 'Permainan lainnya dari kami',
+        size: 56,
+        ring: _Ui.violet,
+        onTap: () => _openList(context),
       ),
     );
   }
