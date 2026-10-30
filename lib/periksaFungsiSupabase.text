@@ -1,87 +1,15 @@
--- WARNING: This schema is for context only and is not meant to be run.
--- Table order and constraints may not be valid for execution.
-
-CREATE TABLE public.rooms (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  code text NOT NULL UNIQUE,
-  host_id uuid NOT NULL,
-  status text NOT NULL DEFAULT 'waiting'::text CHECK (status = ANY (ARRAY['waiting'::text, 'playing'::text, 'finished'::text])),
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  pollution numeric NOT NULL DEFAULT 0,
-  pollution_updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  max_players integer NOT NULL DEFAULT 4,
-  smog_until timestamp with time zone,
-  last_tick_at timestamp with time zone NOT NULL DEFAULT now(),
-  started_at timestamp with time zone,
-  finished_at timestamp with time zone,
-  winner_id uuid,
-  world_event text,
-  world_event_until timestamp with time zone,
-  next_event_at timestamp with time zone DEFAULT (now() + '00:00:45'::interval),
-  bounty_id uuid,
-  CONSTRAINT rooms_pkey PRIMARY KEY (id),
-  CONSTRAINT rooms_host_id_fkey FOREIGN KEY (host_id) REFERENCES auth.users(id),
-  CONSTRAINT rooms_winner_id_fkey FOREIGN KEY (winner_id) REFERENCES auth.users(id)
-);
-CREATE TABLE public.room_players (
-  room_id uuid NOT NULL,
-  player_id uuid NOT NULL,
-  player_name text NOT NULL CHECK (char_length(player_name) >= 1 AND char_length(player_name) <= 18),
-  is_ready boolean NOT NULL DEFAULT false,
-  joined_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT room_players_pkey PRIMARY KEY (room_id, player_id),
-  CONSTRAINT room_players_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id),
-  CONSTRAINT room_players_player_id_fkey FOREIGN KEY (player_id) REFERENCES auth.users(id)
-);
-CREATE TABLE public.player_state (
-  room_id uuid NOT NULL,
-  player_id uuid NOT NULL,
-  money numeric NOT NULL DEFAULT 100,
-  trash numeric NOT NULL DEFAULT 0,
-  trash_capacity numeric NOT NULL DEFAULT 100,
-  rooms_count integer NOT NULL DEFAULT 1,
-  defense integer NOT NULL DEFAULT 0,
-  last_burn_at timestamp with time zone,
-  burn_penalty_until timestamp with time zone,
-  burn_cooldown_until timestamp with time zone,
-  throw_cooldown_until timestamp with time zone,
-  hauler_busy_until timestamp with time zone,
-  updated_at timestamp with time zone NOT NULL DEFAULT now(),
-  eliminated_at timestamp with time zone,
-  income_rate numeric NOT NULL DEFAULT 2,
-  trash_rate numeric NOT NULL DEFAULT 0.1,
-  burn_stacks integer NOT NULL DEFAULT 0,
-  hauler_amount numeric NOT NULL DEFAULT 0,
-  hit_streak integer NOT NULL DEFAULT 0,
-  last_hit_at timestamp with time zone,
-  protected_until timestamp with time zone,
-  waste_level integer NOT NULL DEFAULT 0 CHECK (waste_level >= 0 AND waste_level <= 12),
-  kost_tier integer NOT NULL DEFAULT 0 CHECK (kost_tier >= 0 AND kost_tier <= 2),
-  sabotage_cooldown_until timestamp with time zone,
-  sealed_until timestamp with time zone,
-  pending_attack_type text,
-  pending_attack_from uuid,
-  pending_attack_amount numeric NOT NULL DEFAULT 0,
-  pending_attack_until timestamp with time zone,
-  parry_cooldown_until timestamp with time zone,
-  revenge_target uuid,
-  revenge_until timestamp with time zone,
-  CONSTRAINT player_state_pkey PRIMARY KEY (room_id, player_id),
-  CONSTRAINT player_state_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id),
-  CONSTRAINT player_state_player_id_fkey FOREIGN KEY (player_id) REFERENCES auth.users(id)
-);
-CREATE TABLE public.game_events (
-  id bigint NOT NULL DEFAULT nextval('game_events_id_seq'::regclass),
-  room_id uuid NOT NULL,
-  actor_id uuid,
-  target_id uuid,
-  type text NOT NULL,
-  amount numeric,
-  created_at timestamp with time zone NOT NULL DEFAULT now(),
-  CONSTRAINT game_events_pkey PRIMARY KEY (id),
-  CONSTRAINT game_events_room_id_fkey FOREIGN KEY (room_id) REFERENCES public.rooms(id)
-);
+SELECT
+    p.proname AS nama_fungsi,
+    pg_catalog.pg_get_function_arguments(p.oid) AS argumen,
+    pg_catalog.pg_get_function_result(p.oid) AS tipe_kembalian,
+    p.prosrc AS kode_sumber
+FROM pg_proc p
+LEFT JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' -- Hanya menampilkan fungsi di skema public (buatan Anda)
+ORDER BY nama_fungsi;
 
 
 
 flutter build web --release && git add . && git add build/web -f && git commit -m "feat: perbarui konten aplikasi" && git push origin main
+
+.

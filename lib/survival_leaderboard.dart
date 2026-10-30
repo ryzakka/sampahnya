@@ -44,6 +44,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   late final AnimationController _pulse; // denyut placeholder saat memuat
 
   List<Map<String, dynamic>> _rows = const [];
+  String _board = 'solo'; // 'solo' | 'coop'
   bool _loading = true;
   String? _error;
 
@@ -68,8 +69,9 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
       _error = null;
     });
     try {
-      final res = await Supabase.instance.client
-          .rpc('survival_leaderboard', params: {'p_limit': 10});
+      final res = await Supabase.instance.client.rpc(
+          _board == 'coop' ? 'coop_leaderboard' : 'survival_leaderboard',
+          params: {'p_limit': 10});
       if (!mounted) return;
       setState(() {
         _rows = List<Map<String, dynamic>>.from(
@@ -101,6 +103,51 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
   };
 
   double _sec(Map<String, dynamic> r) => (r['seconds'] as num).toDouble();
+
+  /// Solo: nama pemain. Co-op: nama anggota tim digabung.
+  String _title(Map<String, dynamic> r) =>
+      '${_board == 'coop' ? r['team_names'] : r['player_name']}';
+
+  Object? _rooms(Map<String, dynamic> r) =>
+      _board == 'coop' ? r['total_rooms'] : r['rooms_count'];
+
+  /// Statistik kedua: Solo = Bank Sampah, Co-op = ukuran tim.
+  Widget _stat2(Map<String, dynamic> r, {double icon = 20}) =>
+      _board == 'coop'
+          ? _stat(GIcon.player, '${r['team_size']} pemain', icon: icon)
+          : _stat(GIcon.bin1, 'Bank Lv ${r['waste_level']}', icon: icon);
+
+  Widget _boardSwitch() {
+    Widget chip(String id, String label) => Expanded(
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        child: ChoiceChip(
+          label: SizedBox(
+            width: double.infinity,
+            child: Text(label, textAlign: TextAlign.center),
+          ),
+          selected: _board == id,
+          selectedColor: _amber,
+          backgroundColor: _surface,
+          labelStyle: TextStyle(
+            color: _board == id ? Colors.black87 : Colors.white70,
+            fontWeight: FontWeight.w800,
+          ),
+          onSelected: _loading
+              ? null
+              : (_) {
+            if (_board == id) return;
+            setState(() => _board = id);
+            _load();
+          },
+        ),
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 4, 12, 0),
+      child: Row(children: [chip('solo', 'Solo'), chip('coop', 'Co-op')]),
+    );
+  }
 
   static const _tabular = [FontFeature.tabularFigures()];
 
@@ -169,6 +216,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
                 child: Column(
                   children: [
                     _topBar(),
+                    _boardSwitch(),
                     Expanded(
                       child: AnimatedSwitcher(
                         duration: const Duration(milliseconds: 220),
@@ -199,14 +247,14 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
           const SizedBox(width: 12),
           const GameIcon(GIcon.leaderboard, size: 44),
           const SizedBox(width: 10),
-          const Expanded(
+          Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
-                  'MODE KESINTASAN',
-                  style: TextStyle(
+                  _board == 'coop' ? 'MODE CO-OP' : 'MODE KESINTASAN',
+                  style: const TextStyle(
                     color: _green,
                     fontSize: 10.5,
                     fontWeight: FontWeight.w800,
@@ -339,7 +387,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
           ),
           const SizedBox(height: 8),
           Text(
-            '${r['player_name']}',
+            _title(r),
             maxLines: 2,
             textAlign: TextAlign.center,
             overflow: TextOverflow.ellipsis,
@@ -373,8 +421,8 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
             spacing: 10,
             runSpacing: 2,
             children: [
-              _stat(GIcon.addRoom, '${r['rooms_count']} kamar', icon: 18),
-              _stat(GIcon.bin1, 'Bank Lv ${r['waste_level']}', icon: 18),
+              _stat(GIcon.addRoom, '${_rooms(r)} kamar', icon: 18),
+              _stat2(r, icon: 18),
             ],
           ),
         ],
@@ -410,7 +458,7 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  '${r['player_name']}',
+                  _title(r),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
@@ -424,8 +472,8 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
                   spacing: 12,
                   runSpacing: 2,
                   children: [
-                    _stat(GIcon.addRoom, '${r['rooms_count']} kamar'),
-                    _stat(GIcon.bin1, 'Bank Lv ${r['waste_level']}'),
+                    _stat(GIcon.addRoom, '${_rooms(r)} kamar'),
+                    _stat2(r),
                   ],
                 ),
               ],
@@ -533,7 +581,10 @@ class _SurvivalLeaderboardScreenState extends State<SurvivalLeaderboardScreen>
     key: const ValueKey('empty'),
     asset: GIcon.waiting,
     title: 'Belum ada skor',
-    message: 'Main mode Kesintasan dan jadilah yang pertama\n'
+    message: _board == 'coop'
+        ? 'Main Co-op bersama temanmu dan jadilah tim pertama\n'
+        'tercatat di papan skor!'
+        : 'Main mode Kesintasan dan jadilah yang pertama\n'
         'tercatat di papan skor!',
     action: Column(
       mainAxisSize: MainAxisSize.min,

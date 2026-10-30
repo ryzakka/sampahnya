@@ -14,6 +14,7 @@ import 'perf.dart';
 import 'bgm.dart';
 import 'sfx.dart';
 import 'game_icons.dart';
+import 'team_mode.dart';
 
 class GameScreen extends StatefulWidget {
   const GameScreen({super.key, required this.roomId, required this.roomCode});
@@ -1206,20 +1207,40 @@ class _GameScreenState extends State<GameScreen>
   /// Mode Kesintasan (singleplayer): bertahan selama mungkin.
   bool get _isSurvival => _room['mode'] == 'survival';
 
+  /// Co-op Survival (2-4 pemain satu tim) dan Team 2v2.
+  bool get _isCoop => _room['mode'] == 'coop';
+  bool get _isTeam2v2 => _room['mode'] == 'team2v2';
+  bool get _isTeamMode => _isCoop || _isTeam2v2;
+
+  int? _teamOf(String id) => (_states[id]?['team'] as num?)?.toInt();
+
+  /// Rekan satu tim (bukan diri sendiri): tidak boleh diserang/disabotase.
+  bool _isMate(String id) {
+    if (id == _me) return false;
+    if (_isCoop) return true;
+    final t = _teamOf(id);
+    return _isTeam2v2 && t != null && t == _teamOf(_me);
+  }
+
   /// Pengali laju sampah. HARUS sama dengan public._pressure_for() di SQL.
   ///   versus   : +20% tiap 2 menit
   ///   survival : 1 + 0.12*m + 0.01*m^2  (m = menit, mulus & mempercepat)
+  ///   coop     : 1 + 0.13*m + 0.011*m^2
   double get _pressure {
-    if (_isSurvival) {
+    if (_isSurvival || _isCoop) {
       final m = _elapsedSec / 60;
-      return 1.0 + 0.12 * m + 0.01 * m * m;
+      return _isCoop
+          ? 1.0 + 0.13 * m + 0.011 * m * m
+          : 1.0 + 0.12 * m + 0.01 * m * m;
     }
     return 1.0 + 0.2 * (_elapsedSec / 120).floor();
   }
 
   /// Survival masih berjalan & pemain masih hidup (untuk konfirmasi menyerah).
   bool get _survivalLive {
-    if (!_isSurvival || _room['status'] != 'playing') return false;
+    if (!(_isSurvival || _isTeamMode) || _room['status'] != 'playing') {
+      return false;
+    }
     final me = _states[_me];
     return me != null && me['eliminated_at'] == null;
   }
@@ -1239,7 +1260,12 @@ class _GameScreenState extends State<GameScreen>
         title: const Text('Menyerah?',
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900)),
         content: Text(
-          'Kost dianggap tertimbun. Waktu bertahan ${_fmtDur(_elapsedSec)} '
+          _isCoop
+              ? 'Kost Anda dianggap tertimbun. Rekan setim tetap bermain; '
+              'skor tim dihitung sampai pemain terakhir tertimbun.'
+              : _isTeam2v2
+              ? 'Kost Anda dianggap tertimbun. Rekan setim tetap bermain.'
+              : 'Kost dianggap tertimbun. Waktu bertahan ${_fmtDur(_elapsedSec)} '
               'tetap dicatat di papan skor.',
           style: const TextStyle(color: Colors.white70),
         ),
@@ -1264,7 +1290,8 @@ class _GameScreenState extends State<GameScreen>
 
   Future<void> _quitSurvival() async {
     try {
-      await _db.rpc('survival_quit', params: {'p_room': widget.roomId});
+      await _db.rpc(_isTeamMode ? 'team_surrender' : 'survival_quit',
+          params: {'p_room': widget.roomId});
     } catch (_) {}
     if (mounted) Navigator.of(context).popUntil((r) => r.isFirst);
   }
@@ -2023,6 +2050,16 @@ class _GameScreenState extends State<GameScreen>
                       final id = order[i];
                       if (id == _me) return;
                       if (_states[id]?['eliminated_at'] != null) return;
+                      if (_isCoop) {
+                        _toast('Mode co-op: tidak ada lawan. Titip sampah '
+                            'ke rekan lewat Loket Sampah.');
+                        return;
+                      }
+                      if (_isMate(id)) {
+                        _toast('Tidak bisa menyerang rekan setim.',
+                            error: true);
+                        return;
+                      }
                       setState(() => _throwFor = id);
                     },
                     onTapUp: (d) {
@@ -2654,7 +2691,7 @@ class _GameScreenState extends State<GameScreen>
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-          _isSurvival
+          (_isSurvival || _isCoop)
               ? '${_fmtDur(_elapsedSec)} · ×${_pressure.toStringAsFixed(1)}'
               : widget.roomCode,
           style: const TextStyle(
@@ -3234,20 +3271,137 @@ class _GameScreenState extends State<GameScreen>
     );
   }
 
+  /// Hasil Co-op: waktu tim bertahan + ringkasan tiap anggota.
+  Widget _coopFinishedCard() {
+    final secs = _num(_room['survival_seconds']);
+    final start = _ts(_room['started_at']);
+    final rows = <Widget>[];
+    for (final id in _order) {
+      final s = _states[id];
+      if (s == null) continue;
+      final end = _ts(s['eliminated_at']);
+      final survived = (start != null && end != null)
+          ? end.difference(start).inMilliseconds / 1000.0
+          : secs.toDouble();
+      final isMe = id == _me;
+      rows.add(Padding(
+        padding: const EdgeInsets.symmetric(vertical: 3),
+        child: Row(
+          children: [
+            KostHeadIcon(
+              look: kostLookFor(id, _styles[id]),
+              size: 22,
+              ring: isMe ? const Color(0xFFFFCA28) : null,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _name(id),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: isMe ? const Color(0xFFFFCA28) : Colors.white,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                ),
+              ),
+            ),
+            Text(
+              '🏠${_num(s['rooms_count']).toInt()} '
+                  '♻️${_num(s['waste_level']).toInt()}',
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+            const SizedBox(width: 10),
+            Text(
+              _fmtDur(survived),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+                fontSize: 13.5,
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: const Color(0xFF16281F),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: const Color(0xFFFFCA28), width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.5),
+            blurRadius: 24,
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const GameIcon(GIcon.lose, size: 120),
+          const SizedBox(height: 8),
+          Text(
+            'Tim bertahan ${_fmtDur(secs)}',
+            style: const TextStyle(
+              color: Color(0xFFFFCA28),
+              fontSize: 28,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 190),
+            child: SingleChildScrollView(child: Column(children: rows)),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: GameIconButton(
+              asset: GIcon.home,
+              tip: 'Kembali ke beranda',
+              size: 60,
+              ring: const Color(0xFFFFCA28),
+              onTap: () => Navigator.of(context).popUntil((r) => r.isFirst),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _finishedCard() {
     if (!_endSfxDone) {
       _endSfxDone = true;
-      final win = !_isSurvival && _room['winner_id'] == _me;
+      final wt = (_room['winner_team'] as num?)?.toInt();
+      final win = _isCoop
+          ? false
+          : _isTeam2v2
+          ? (wt != null && wt == _teamOf(_me))
+          : (!_isSurvival && _room['winner_id'] == _me);
       Sfx.instance.rainStop();
       WidgetsBinding.instance.addPostFrameCallback((_) =>
           Sfx.instance.play(win ? 'game-win' : 'game-lose', minGapMs: 0));
     }
     if (_isSurvival) return _survivalFinishedCard();
+    if (_isCoop) return _coopFinishedCard();
     final winner = _room['winner_id'];
-    final isWin = winner == _me;
-    final text = isWin
-        ? 'Selamat! Kost Anda paling tangguh dan bersih dari kepungan sampah!'
-        : '${_name(winner)} memenangkan pertandingan. Kost Anda telah tertimbun sampah.';
+    final wTeam = (_room['winner_team'] as num?)?.toInt();
+    final isWin =
+    _isTeam2v2 ? (wTeam != null && wTeam == _teamOf(_me)) : winner == _me;
+    final String text;
+    if (_isTeam2v2) {
+      text = wTeam == null
+          ? 'Seri! Kedua tim tertimbun bersamaan.'
+          : isWin
+          ? 'Selamat! Tim ${teamName(wTeam)} menang, kalian paling tangguh!'
+          : 'Tim ${teamName(wTeam)} memenangkan pertandingan. '
+          'Tim Anda telah tertimbun sampah.';
+    } else {
+      text = isWin
+          ? 'Selamat! Kost Anda paling tangguh dan bersih dari kepungan sampah!'
+          : '${_name(winner)} memenangkan pertandingan. Kost Anda telah tertimbun sampah.';
+    }
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -3574,6 +3728,9 @@ class _GameScreenState extends State<GameScreen>
     final isBounty = id == _bountyId;
     final revenge = _hasRevenge(me, id);
     final narrow = w < 130;
+    final teamTag = _isTeam2v2 && _teamOf(id) != null
+        ? '${teamEmoji(_teamOf(id))} '
+        : (_isCoop && !isMe ? '🤝 ' : '');
 
     final header = InkWell(
       onTap: focused ? null : () => _zoomTo(id),
@@ -3586,12 +3743,16 @@ class _GameScreenState extends State<GameScreen>
             KostHeadIcon(
               look: kostLookFor(id, _styles[id]),
               size: 20,
-              ring: isMe ? const Color(0xFFFFCA28) : _wallFor(id),
+              ring: isMe
+                  ? const Color(0xFFFFCA28)
+                  : (_isTeam2v2
+                  ? (teamColor(_teamOf(id)) ?? _wallFor(id))
+                  : _wallFor(id)),
             ),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
-                '${isBounty ? '👑 ' : ''}${revenge ? '🔥 ' : ''}${_name(id)}',
+                '${isBounty ? '👑 ' : ''}${revenge ? '🔥 ' : ''}$teamTag${_name(id)}',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -3959,6 +4120,7 @@ class _GameScreenState extends State<GameScreen>
     for (var i = 0; i < order.length; i++) {
       final id = order[i];
       if (id == _me) continue;
+      if (_isMate(id)) continue; // rekan tidak jadi sasaran Sidak/Bajak
       final st = _states[id];
       if (st == null || st['eliminated_at'] != null) continue;
 
@@ -5019,7 +5181,7 @@ class _GameScreenState extends State<GameScreen>
 
   void _openBooth() {
     var amount = 20.0;
-    var price = 40.0;
+    var price = _isCoop ? 0.0 : 40.0;
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -5051,6 +5213,10 @@ class _GameScreenState extends State<GameScreen>
               for (final e in _states.entries)
                 if (e.key != _me && e.value['eliminated_at'] == null) e.key
             ];
+            // Rekan setim boleh dititipi tanpa membuka loket (dan gratis).
+            final mates = [for (final r in rivals) if (_isMate(r)) r];
+            final foes = [for (final r in rivals) if (!_isMate(r)) r];
+            final targets = open ? rivals : mates;
 
             return SafeArea(
               child: SingleChildScrollView(
@@ -5083,7 +5249,7 @@ class _GameScreenState extends State<GameScreen>
                         ],
                       ),
                       const SizedBox(height: 8),
-                      if (!open) ...[
+                      if (!open && foes.isNotEmpty) ...[
                         const Text(
                           'Buka loket (30 uang, aktif 40 detik) untuk menawar uang kepada pemain lain agar mau menampung sampahmu. Mereka boleh menolak.',
                           style: TextStyle(color: Colors.white70, fontSize: 13),
@@ -5100,9 +5266,11 @@ class _GameScreenState extends State<GameScreen>
                                 : 'Uang belum cukup (30)'),
                           ),
                         ),
-                      ] else if (rivals.isEmpty) ...[
-                        const Text('Tidak ada pemain lain yang bisa ditawari.',
-                            style: TextStyle(color: Colors.white70)),
+                      ],
+                      if (targets.isEmpty) ...[
+                        if (open || foes.isEmpty)
+                          const Text('Tidak ada pemain lain yang bisa ditawari.',
+                              style: TextStyle(color: Colors.white70)),
                       ] else ...[
                         Text('Jumlah sampah: ${amount.round()}',
                             style: const TextStyle(color: Colors.white)),
@@ -5128,10 +5296,12 @@ class _GameScreenState extends State<GameScreen>
                         Wrap(
                           spacing: 8,
                           children: [
-                            for (final r in rivals)
+                            for (final r in targets)
                               FilledButton.icon(
                                 icon: const Icon(Icons.send, size: 16),
-                                label: Text('Tawar ${_name(r)}'),
+                                label: Text(_isMate(r)
+                                    ? 'Titip ke ${_name(r)} 🤝'
+                                    : 'Tawar ${_name(r)}'),
                                 onPressed: (!_offerBusy &&
                                     mine.trash >= amount &&
                                     mine.money >= price)
@@ -5142,9 +5312,13 @@ class _GameScreenState extends State<GameScreen>
                           ],
                         ),
                         const SizedBox(height: 6),
-                        const Text(
-                          'Tawaran berlaku 10 detik. Uang berpindah hanya bila lawan menerima.',
-                          style: TextStyle(color: Colors.white38, fontSize: 11),
+                        Text(
+                          _isTeamMode
+                              ? 'Tawaran berlaku 10 detik. Rekan setim tidak '
+                              'perlu Loket dan boleh gratis (0 uang).'
+                              : 'Tawaran berlaku 10 detik. Uang berpindah hanya bila lawan menerima.',
+                          style: const TextStyle(
+                              color: Colors.white38, fontSize: 11),
                         ),
                       ],
                     ],

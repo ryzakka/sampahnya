@@ -17,6 +17,7 @@ import 'kost_style.dart';
 import 'perf.dart';
 import 'sfx.dart';
 import 'survival_leaderboard.dart';
+import 'team_mode.dart';
 
 const supabaseUrl = String.fromEnvironment(
   'SUPABASE_URL',
@@ -35,7 +36,7 @@ const linguisticLogoAsset = 'assets/icon/logo-linguistichegemony.png';
 const embunLogoAsset = 'assets/icon/logo-embun.png';
 
 /// Nomor versi yang tampil di menu dan layar info.
-const appVersion = '1.5.0 (2510:5)';
+const appVersion = '1.5.1 (2510:5)';
 
 /// Ganti dengan nama Anda / studio Anda.
 const developerName = 'ryzakka';
@@ -1454,7 +1455,7 @@ class _LobbyHomeState extends State<LobbyHome>
     return List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
   }
 
-  Future<void> _createRoom() async {
+  Future<void> _createRoom([String mode = 'versus']) async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
       _nameFocus.requestFocus();
@@ -1474,7 +1475,15 @@ class _LobbyHomeState extends State<LobbyHome>
       if (user == null) throw Exception('Sesi anonim belum tersedia.');
 
       Map<String, dynamic>? room;
-      for (var attempt = 0; attempt < 4; attempt++) {
+      if (mode != 'versus') {
+        // Co-op / Team 2v2: ruangan + baris host dibuat oleh RPC.
+        final id = (await _db.rpc('create_team_room',
+            params: {'p_name': name, 'p_mode': mode}))
+            .toString();
+        room =
+        await _db.from('rooms').select('id, code').eq('id', id).single();
+      }
+      for (var attempt = 0; room == null && attempt < 4; attempt++) {
         final code = _makeRoomCode();
         try {
           room = await _db
@@ -1494,12 +1503,14 @@ class _LobbyHomeState extends State<LobbyHome>
       }
       if (room == null) throw Exception('Tidak berhasil membuat kode ruangan.');
 
-      await _db.from('room_players').insert({
-        'room_id': room['id'],
-        'player_id': user.id,
-        'player_name': name,
-        'is_ready': false,
-      });
+      if (mode == 'versus') {
+        await _db.from('room_players').insert({
+          'room_id': room['id'],
+          'player_id': user.id,
+          'player_name': name,
+          'is_ready': false,
+        });
+      }
 
       if (!mounted) return;
       await Navigator.of(context).push(
@@ -1569,6 +1580,88 @@ class _LobbyHomeState extends State<LobbyHome>
         });
       }
     }
+  }
+
+  /// Ketuk "Buat": pilih mode dulu (Versus / Co-op / Team 2v2).
+  Future<void> _chooseModeAndCreate() async {
+    final name = _nameController.text.trim();
+    if (name.isEmpty) {
+      _nameFocus.requestFocus();
+      setState(() => _error = 'Masukkan nama pemain kost terlebih dahulu!');
+      return;
+    }
+    final mode = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: _Ui.surface,
+      constraints: const BoxConstraints(maxWidth: 520),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text('Pilih mode ruangan', style: _Ui.heading),
+              const SizedBox(height: 10),
+              for (final m in const ['versus', 'coop', 'team2v2'])
+                _modeOption(ctx, m),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (mode != null) await _createRoom(mode);
+  }
+
+  Widget _modeOption(BuildContext ctx, String m) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          onTap: () => Navigator.of(ctx).pop(m),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                Text(modeEmoji(m), style: const TextStyle(fontSize: 30)),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        modeLabel(m),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 15.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        modeDesc(m),
+                        style: TextStyle(
+                          color: Colors.white.withValues(alpha: 0.65),
+                          fontSize: 12.5,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _joinRoom() async {
@@ -2006,7 +2099,7 @@ class _LobbyHomeState extends State<LobbyHome>
           tip: 'Buat ruangan baru (2–4 pemain)',
           ring: _Ui.amber,
           busy: _busyKey == 'create',
-          onTap: _busy ? null : _createRoom,
+          onTap: _busy ? null : _chooseModeAndCreate,
         ), 'Buat'),
         const SizedBox(width: 10),
         cell(_IconTile(
@@ -2176,6 +2269,7 @@ class _RoomLobbyState extends State<RoomLobby>
   String? _error;
   RealtimeChannel? _channel;
   String? _hostId;
+  String _mode = 'versus';
   bool _navigated = false;
 
   @override
@@ -2233,7 +2327,7 @@ class _RoomLobbyState extends State<RoomLobby>
     try {
       final data = await _db
           .from('room_players')
-          .select('player_id, player_name, is_ready, style, style_status')
+          .select('player_id, player_name, is_ready, style, style_status, team')
           .eq('room_id', widget.roomId)
           .order('player_name');
 
@@ -2282,11 +2376,14 @@ class _RoomLobbyState extends State<RoomLobby>
     try {
       final room = await _db
           .from('rooms')
-          .select('host_id, status')
+          .select('host_id, status, mode')
           .eq('id', widget.roomId)
           .single();
       if (!mounted) return;
-      setState(() => _hostId = room['host_id']?.toString());
+      setState(() {
+        _hostId = room['host_id']?.toString();
+        _mode = (room['mode'] ?? 'versus').toString();
+      });
       if (room['status'] == 'playing' && !_navigated) {
         _navigated = true;
         // pushAndRemoveUntil: lobi DAN layar kustomisasi (bila sedang terbuka
@@ -2413,6 +2510,10 @@ class _RoomLobbyState extends State<RoomLobby>
   // ------------------------------------------------------------------
 
   static const int _maxPlayers = 4;
+  int get _minPlayers => _mode == 'team2v2' ? 4 : 2;
+
+  int? _teamOfRow(Map<String, dynamic> p) =>
+      _mode == 'team2v2' ? (p['team'] as num?)?.toInt() : null;
 
   @override
   Widget build(BuildContext context) {
@@ -2421,7 +2522,8 @@ class _RoomLobbyState extends State<RoomLobby>
     final ready = me?['is_ready'] == true;
     final isHost = _hostId != null && _hostId == userId;
     final readyCount = _players.where((p) => p['is_ready'] == true).length;
-    final allReady = _players.length >= 2 && readyCount == _players.length;
+    final allReady =
+        _players.length >= _minPlayers && readyCount == _players.length;
 
     return Scaffold(
       body: Stack(
@@ -2567,12 +2669,29 @@ class _RoomLobbyState extends State<RoomLobby>
           onTap: () => Navigator.of(context).maybePop(),
         ),
         const SizedBox(width: 12),
-        const Expanded(
-          child: Text(
-            'Ruang tunggu',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: _Ui.heading,
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Ruang tunggu',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _Ui.heading,
+              ),
+              if (_mode != 'versus')
+                Text(
+                  '${modeEmoji(_mode)} ${modeLabel(_mode)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: _Ui.amber,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+            ],
           ),
         ),
         const SizedBox(width: 8),
@@ -2717,8 +2836,77 @@ class _RoomLobbyState extends State<RoomLobby>
               );
             },
           ),
+          if (_mode == 'team2v2') ...[
+            const SizedBox(height: 12),
+            _buildTeamPicker(userId),
+          ],
         ],
       ),
+    );
+  }
+
+  Future<void> _pickTeam(int team) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await _db.rpc('set_team',
+          params: {'p_room': widget.roomId, 'p_team': team});
+      await _refreshPlayers();
+    } on PostgrestException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Pilih tim (hanya 2v2). Tim belum 2 lawan 2 saat mulai = diacak server.
+  Widget _buildTeamPicker(String? userId) {
+    final me = _players.where((p) => p['player_id'] == userId).firstOrNull;
+    final myTeam = (me?['team'] as num?)?.toInt();
+    int count(int t) =>
+        _players.where((p) => (p['team'] as num?)?.toInt() == t).length;
+    final balanced = count(1) == 2 && count(2) == 2;
+
+    Widget btn(int t) {
+      final col = teamColor(t)!;
+      final sel = myTeam == t;
+      return Expanded(
+        child: OutlinedButton(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.white,
+            disabledForegroundColor: Colors.white,
+            backgroundColor:
+            sel ? col.withValues(alpha: 0.30) : Colors.transparent,
+            side: BorderSide(color: col, width: sel ? 2.2 : 1.2),
+            padding: const EdgeInsets.symmetric(vertical: 10),
+          ),
+          onPressed: (_busy || me == null || sel) ? null : () => _pickTeam(t),
+          child: Text(
+            '${teamEmoji(t)} Tim ${teamName(t)} (${count(t)}/2)',
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5),
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Row(children: [btn(1), const SizedBox(width: 8), btn(2)]),
+        const SizedBox(height: 6),
+        Text(
+          balanced
+              ? 'Tim sudah seimbang 2 lawan 2.'
+              : 'Pilih tim. Jika belum 2 lawan 2 saat mulai, tim diacak otomatis.',
+          style: _Ui.body(0.55).copyWith(fontSize: 11.5),
+        ),
+      ],
     );
   }
 
@@ -2782,7 +2970,7 @@ class _RoomLobbyState extends State<RoomLobby>
           KostHeadIcon(
             look: kostLookFor(pid, KostStyle.fromJson(p['style'])),
             size: 24,
-            ring: isMe ? _Ui.amber : null,
+            ring: isMe ? _Ui.amber : teamColor(_teamOfRow(p)),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -2797,6 +2985,24 @@ class _RoomLobbyState extends State<RoomLobby>
               ),
             ),
           ),
+          if (_teamOfRow(p) != null)
+            Container(
+              margin: const EdgeInsets.only(left: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: teamColor(_teamOfRow(p))!.withValues(alpha: 0.25),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: teamColor(_teamOfRow(p))!),
+              ),
+              child: Text(
+                teamName(_teamOfRow(p)),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
           if (isHost)
             const Padding(
               padding: EdgeInsets.only(left: 4),
@@ -2826,8 +3032,14 @@ class _RoomLobbyState extends State<RoomLobby>
     'Menunggu pemain lain selesai berkustomisasi…',
     _Ui.amber
     )
-        : n < 2
-        ? (GIcon.waiting, 'Butuh minimal 2 pemain untuk mulai.', Colors.white70)
+        : n < _minPlayers
+        ? (
+    GIcon.waiting,
+    _mode == 'team2v2'
+        ? 'Butuh tepat 4 pemain (2 lawan 2) untuk mulai.'
+        : 'Butuh minimal 2 pemain untuk mulai.',
+    Colors.white70
+    )
         : allReady
         ? (
     GIcon.alreadyOrSip,
@@ -3112,7 +3324,7 @@ class _RoomLobbyState extends State<RoomLobby>
                 look: kostLookFor(
                     p['player_id'].toString(), KostStyle.fromJson(p['style'])),
                 size: 18,
-                ring: isMe ? _Ui.amber : null,
+                ring: isMe ? _Ui.amber : teamColor(_teamOfRow(p)),
               ),
               const SizedBox(width: 5),
               if (isHost)
