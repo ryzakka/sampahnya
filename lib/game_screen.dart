@@ -1212,6 +1212,24 @@ class _GameScreenState extends State<GameScreen>
   bool get _isTeam2v2 => _room['mode'] == 'team2v2';
   bool get _isTeamMode => _isCoop || _isTeam2v2;
 
+  /// Mode varian: Juragan Pertama, Main Cepat, Dilarang Membakar, dst.
+  String? get _modeKey => _room['mode']?.toString();
+  bool get _isBlitz => _modeKey == 'blitz';
+  bool get _isJuragan => _modeKey == 'juragan';
+  bool get _burnBan => burnBanned(_modeKey);
+  bool get _haulBan => haulBanned(_modeKey);
+
+  /// Sisa waktu Main Cepat (detik).
+  double get _blitzLeft => max(0.0, kBlitzSeconds - _elapsedSec);
+
+  /// Ringkasan progres menuju Juragan: kamar & kelas kost pemain [id].
+  String _juraganProgress(String id) {
+    final s = _states[id];
+    final rooms = _num(s?['rooms_count']).toInt();
+    final tier = _num(s?['kost_tier']).toInt();
+    return '👑 $rooms/$_maxRooms · ${tier >= 2 ? 'Sultan' : 'K$tier/2'}';
+  }
+
   int? _teamOf(String id) => (_states[id]?['team'] as num?)?.toInt();
 
   /// Rekan satu tim (bukan diri sendiri): tidak boleh diserang/disabotase.
@@ -1226,7 +1244,12 @@ class _GameScreenState extends State<GameScreen>
   ///   versus   : +20% tiap 2 menit
   ///   survival : 1 + 0.12*m + 0.01*m^2  (m = menit, mulus & mempercepat)
   ///   coop     : 1 + 0.13*m + 0.011*m^2
+  ///   blitz    : 1.5 + 0.35*m + 0.04*m^2
   double get _pressure {
+    if (_isBlitz) {
+      final m = _elapsedSec / 60;
+      return 1.5 + 0.35 * m + 0.04 * m * m;
+    }
     if (_isSurvival || _isCoop) {
       final m = _elapsedSec / 60;
       return _isCoop
@@ -2691,8 +2714,12 @@ class _GameScreenState extends State<GameScreen>
         borderRadius: BorderRadius.circular(20),
       ),
       child: Text(
-          (_isSurvival || _isCoop)
+          _isBlitz
+              ? '⚡ ${_fmtDur(_blitzLeft)} · ×${_pressure.toStringAsFixed(1)}'
+              : (_isSurvival || _isCoop)
               ? '${_fmtDur(_elapsedSec)} · ×${_pressure.toStringAsFixed(1)}'
+              : _isJuragan
+              ? _juraganProgress(_me)
               : widget.roomCode,
           style: const TextStyle(
               color: Colors.white,
@@ -2834,7 +2861,15 @@ class _GameScreenState extends State<GameScreen>
       final el = _elapsedSec;
       final pr = _pressure;
       final next = 120 - (el % 120);
-      timer = _StatusItem(
+      timer = _isBlitz
+          ? _StatusItem(
+        Icons.bolt,
+        '${_clock(_blitzLeft)} · ×${pr.toStringAsFixed(1)}',
+        'MAIN CEPAT · sisa ${_clock(_blitzLeft)} · Tekanan sampah '
+            '×${pr.toStringAsFixed(1)}. Saat habis, kost paling bersih menang.',
+        _blitzLeft < 60 ? Colors.red.shade700 : Colors.deepOrange.shade800,
+      )
+          : _StatusItem(
         Icons.timer,
         pr > 1.0 ? '${_clock(el)} · ×${pr.toStringAsFixed(1)}' : _clock(el),
         pr > 1.0
@@ -3397,6 +3432,15 @@ class _GameScreenState extends State<GameScreen>
           ? 'Selamat! Tim ${teamName(wTeam)} menang, kalian paling tangguh!'
           : 'Tim ${teamName(wTeam)} memenangkan pertandingan. '
           'Tim Anda telah tertimbun sampah.';
+    } else if (_isJuragan) {
+      text = isWin
+          ? 'Selamat! Kamu juragan pertama: 12 kamar dan Kost Sultan!'
+          : '${_name(winner)} lebih dulu menjadi Juragan dengan 12 kamar dan '
+          'Kost Sultan.';
+    } else if (_isBlitz && _states[_me]?['eliminated_at'] == null) {
+      text = isWin
+          ? 'Waktu habis! Kost Anda paling bersih, Anda menang!'
+          : 'Waktu habis. ${_name(winner)} punya kost paling bersih.';
     } else {
       text = isWin
           ? 'Selamat! Kost Anda paling tangguh dan bersih dari kepungan sampah!'
@@ -3552,16 +3596,21 @@ class _GameScreenState extends State<GameScreen>
         color: Colors.green,
         title: 'Truk Sampah',
         shortTitle: 'Truk',
-        shortSub: strike
+        shortSub: _haulBan
+            ? 'Dipecat'
+            : strike
             ? 'Mogok'
             : (haulLeft > 0 ? '${haulLeft.ceil()}s' : '~$haulCost'),
-        subtitle: strike
+        subtitle: _haulBan
+            ? 'Tukang sampah dipecat!'
+            : strike
             ? 'Mogok kerja!'
             : (haulLeft > 0
             ? 'Angkut ${haulLeft.ceil()}s'
             : 'Biaya ~$haulCost'),
         busy: _activeRpc == 'hire_hauler',
         onTap: canAct &&
+            !_haulBan &&
             !strike &&
             haulLeft == 0 &&
             live.trash >= 1 &&
@@ -3576,10 +3625,14 @@ class _GameScreenState extends State<GameScreen>
         color: Colors.deepOrangeAccent,
         title: 'Bakar Sampah',
         shortTitle: 'Bakar',
-        shortSub: burnLeft > 0
+        shortSub: _burnBan
+            ? 'Dilarang'
+            : burnLeft > 0
             ? '${burnLeft.ceil()}s'
             : (wind ? 'Angin' : smog ? 'Kabut' : (wasteLv >= 10 ? 'Eco' : 'Polusi')),
-        subtitle: burnLeft > 0
+        subtitle: _burnBan
+            ? 'Dilarang membakar!'
+            : burnLeft > 0
             ? 'Jeda ${burnLeft.ceil()}s'
             : wind
             ? 'Angin kencang!'
@@ -3587,7 +3640,12 @@ class _GameScreenState extends State<GameScreen>
             ? 'Kabut asap!'
             : (wasteLv >= 10 ? 'Rendah polusi' : 'Polusi naik'),
         busy: _activeRpc == 'burn',
-        onTap: canAct && burnLeft == 0 && !smog && !wind && live.trash >= 2
+        onTap: canAct &&
+            !_burnBan &&
+            burnLeft == 0 &&
+            !smog &&
+            !wind &&
+            live.trash >= 2
             ? () => _act('burn')
             : null,
       ),

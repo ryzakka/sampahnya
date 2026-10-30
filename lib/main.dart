@@ -36,7 +36,7 @@ const linguisticLogoAsset = 'assets/icon/logo-linguistichegemony.png';
 const embunLogoAsset = 'assets/icon/logo-embun.png';
 
 /// Nomor versi yang tampil di menu dan layar info.
-const appVersion = '1.5.1 (2510:5)';
+const appVersion = '1.5.2 (3010:2)';
 
 /// Ganti dengan nama Anda / studio Anda.
 const developerName = 'ryzakka';
@@ -1476,8 +1476,9 @@ class _LobbyHomeState extends State<LobbyHome>
 
       Map<String, dynamic>? room;
       if (mode != 'versus') {
-        // Co-op / Team 2v2: ruangan + baris host dibuat oleh RPC.
-        final id = (await _db.rpc('create_team_room',
+        // Co-op / Team 2v2 / mode varian: ruangan + baris host dibuat oleh RPC.
+        final id = (await _db.rpc(
+            isVariantMode(mode) ? 'create_variant_room' : 'create_team_room',
             params: {'p_name': name, 'p_mode': mode}))
             .toString();
         room =
@@ -1582,7 +1583,7 @@ class _LobbyHomeState extends State<LobbyHome>
     }
   }
 
-  /// Ketuk "Buat": pilih mode dulu (Versus / Co-op / Team 2v2).
+  /// Ketuk "Buat": pilih mode dulu (Versus / Co-op / Team 2v2 / varian).
   Future<void> _chooseModeAndCreate() async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
@@ -1592,6 +1593,7 @@ class _LobbyHomeState extends State<LobbyHome>
     }
     final mode = await showModalBottomSheet<String>(
       context: context,
+      isScrollControlled: true,
       backgroundColor: _Ui.surface,
       constraints: const BoxConstraints(maxWidth: 520),
       shape: const RoundedRectangleBorder(
@@ -1606,8 +1608,20 @@ class _LobbyHomeState extends State<LobbyHome>
             children: [
               const Text('Pilih mode ruangan', style: _Ui.heading),
               const SizedBox(height: 10),
-              for (final m in const ['versus', 'coop', 'team2v2'])
-                _modeOption(ctx, m),
+              Flexible(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (final m in const [
+                        'versus', 'coop', 'team2v2',
+                        'juragan', 'blitz', 'noburn', 'nohaul', 'nobh',
+                      ])
+                        _modeOption(ctx, m),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),
