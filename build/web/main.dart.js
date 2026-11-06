@@ -110247,7 +110247,7 @@ T(a){var s=this.c?B.u:B.bO
 return new A.dm(s,null,null,A.lK("assets/icon/othergames.png",!1,new A.aAL(this,a),B.u5,!1,56,"Permainan lainnya dari kami"),null)}}
 A.aAK.prototype={
 $1(a){var s=null,r=A.aX(20),q=t.p,p=this.a
-return A.a61(s,B.da,new A.c9(B.KA,new A.aL(B.Tm,A.aG(A.c([A.aT(A.c([B.TX,A.aaS(s,s,B.wc,s,s,new A.aAJ(a),s,s,"Tutup",s)],q),B.p,B.m,B.v,0),B.cI,p.SZ(a,"assets/icon/logo-linguistichegemony.png","Linguistic Hegemony",B.u5,"https://linguistify.vercel.app/"),B.b8,p.SZ(a,"assets/icon/logo-embun.png","Embun",B.ck,"https://biarembun.vercel.app/")],q),B.ai,B.m,B.t),s),s),s,s,s,B.is,B.qy,s,new A.cM(r,B.Kk),s)},
+return A.a61(s,B.da,new A.c9(B.KA,new A.aL(B.Tm,A.aG(A.c([A.aT(A.c([B.TX,A.aaS(s,s,B.wc,s,s,new A.aAJ(a),s,s,"Tutup",s)],q),B.p,B.m,B.v,0),B.cI,p.SZ(a,"assets/icon/logo-linguistichegemony.png","Linguistic Hegemony",B.u5,"https://linguistify.vercel.app/"),B.b8,p.SZ(a,"assets/icon/logo-embun.png","Embun",B.ck,"https://embun.pages.dev/")],q),B.ai,B.m,B.t),s),s),s,s,s,B.is,B.qy,s,new A.cM(r,B.Kk),s)},
 $S:130}
 A.aAJ.prototype={
 $0(){return A.cI(this.a,!1).eL()},

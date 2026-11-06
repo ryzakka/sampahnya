@@ -31,7 +31,7 @@ const supabaseAnonKey = String.fromEnvironment(
 
 /// Gim lain buatan kami, ditampilkan di beranda dan layar info.
 const linguistifyUrl = 'https://linguistify.vercel.app/';
-const embunUrl = 'https://biarembun.vercel.app/';
+const embunUrl = 'https://embun.pages.dev/';
 const linguisticLogoAsset = 'assets/icon/logo-linguistichegemony.png';
 const embunLogoAsset = 'assets/icon/logo-embun.png';
 
