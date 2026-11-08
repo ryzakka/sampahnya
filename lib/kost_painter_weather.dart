@@ -28,6 +28,10 @@ extension KostPainterWeather on KostPainter {
         _wxQuake(canvas, t);
       case 'night_market':
         _wxNightMarket(canvas, t);
+      case 'kerja_bakti':
+        _evKerjaBakti(canvas, t);
+      case 'sampah_kiriman':
+        _evSampahKiriman(canvas, t);
     }
   }
 

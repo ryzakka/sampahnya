@@ -1449,12 +1449,6 @@ class _LobbyHomeState extends State<LobbyHome>
     }
   }
 
-  String _makeRoomCode() {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    final random = Random.secure();
-    return List.generate(6, (_) => chars[random.nextInt(chars.length)]).join();
-  }
-
   Future<void> _createRoom([String mode = 'versus']) async {
     final name = _nameController.text.trim();
     if (name.isEmpty) {
@@ -1474,50 +1468,22 @@ class _LobbyHomeState extends State<LobbyHome>
       final user = _db.auth.currentUser;
       if (user == null) throw Exception('Sesi anonim belum tersedia.');
 
-      Map<String, dynamic>? room;
-      if (mode != 'versus') {
-        // Co-op / Team 2v2 / mode varian: ruangan + baris host dibuat oleh RPC.
-        final id = (await _db.rpc(
-            isVariantMode(mode) ? 'create_variant_room' : 'create_team_room',
-            params: {'p_name': name, 'p_mode': mode}))
-            .toString();
-        room =
-        await _db.from('rooms').select('id, code').eq('id', id).single();
-      }
-      for (var attempt = 0; room == null && attempt < 4; attempt++) {
-        final code = _makeRoomCode();
-        try {
-          room = await _db
-              .from('rooms')
-              .insert({
-            'code': code,
-            'status': 'waiting',
-            'host_id': user.id,
-            'max_players': 4,
-          })
-              .select('id, code')
-              .single();
-          break;
-        } on PostgrestException catch (e) {
-          if (e.code != '23505') rethrow;
-        }
-      }
-      if (room == null) throw Exception('Tidak berhasil membuat kode ruangan.');
-
-      if (mode == 'versus') {
-        await _db.from('room_players').insert({
-          'room_id': room['id'],
-          'player_id': user.id,
-          'player_name': name,
-          'is_ready': false,
-        });
-      }
+      // Semua mode (termasuk versus) dibuat lewat RPC: ruangan + baris host
+      // dibuat server, klien tidak lagi meng-INSERT langsung ke rooms.
+      final rpcName = (mode == 'versus' || isVariantMode(mode))
+          ? 'create_variant_room'
+          : 'create_team_room';
+      final id = (await _db.rpc(rpcName,
+          params: {'p_name': name, 'p_mode': mode}))
+          .toString();
+      final Map<String, dynamic> room =
+      await _db.from('rooms').select('id, code').eq('id', id).single();
 
       if (!mounted) return;
       await Navigator.of(context).push(
         MaterialPageRoute(
           builder: (_) => RoomLobby(
-            roomId: room!['id'].toString(),
+            roomId: room['id'].toString(),
             roomCode: room['code'].toString(),
             playerName: name,
           ),

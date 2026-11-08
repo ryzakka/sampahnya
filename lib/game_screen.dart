@@ -1097,6 +1097,8 @@ class _GameScreenState extends State<GameScreen>
     'rat_plague': 22,
     'earthquake': 8,
     'night_market': 20,
+    'kerja_bakti': 20,
+    'sampah_kiriman': 18,
   };
   static const double _evFadeSec = 1.6;
 
@@ -1391,6 +1393,8 @@ class _GameScreenState extends State<GameScreen>
     final dt = max(0.0, _serverNow.difference(t).inMilliseconds / 1000);
     var delta = switch (_activeWorldEvent) {
       'eco_subsidy' || 'heavy_rain' => -0.8,
+      'kerja_bakti' => -0.7,
+      'sampah_kiriman' => -0.2,
       'strong_wind' => -1.2,
       'drought' => -0.1,
       _ => -0.4,
@@ -1497,6 +1501,18 @@ class _GameScreenState extends State<GameScreen>
         Icons.festival,
         Colors.pink.shade600,
         );
+      case 'kerja_bakti':
+        return (
+        'KERJA BAKTI · Sampah -20%, Polusi cepat turun',
+        Icons.cleaning_services,
+        Colors.teal.shade600,
+        );
+      case 'sampah_kiriman':
+        return (
+        'SAMPAH KIRIMAN · Sampah +25%, Polusi susah turun',
+        Icons.waves,
+        Colors.brown.shade500,
+        );
       default:
         return (ev, Icons.public, Colors.blueGrey);
     }
@@ -1536,6 +1552,10 @@ class _GameScreenState extends State<GameScreen>
         return 'PERINGATAN: TANAH MULAI BERGETAR! Gempa sebentar lagi!';
       case 'night_market':
         return 'KABAR: Lampion dipasang, pasar malam segera dibuka.';
+      case 'kerja_bakti':
+        return 'KABAR: Warga menyiapkan sapu dan karung, kerja bakti segera dimulai!';
+      case 'sampah_kiriman':
+        return 'PERINGATAN: Sampah kiriman dari hulu mulai hanyut ke kawasan kost!';
       case 'rain_flood':
         return 'PERINGATAN: Banjir segera datang, siapkan truk!';
       case 'hauler_strike':
@@ -1576,6 +1596,10 @@ class _GameScreenState extends State<GameScreen>
         return 'BENCANA: GEMPA BUMI! Pegangan yang kuat!';
       case 'event_night_market':
         return 'EVENT: Pasar Malam dibuka! Hewan diskon 20%.';
+      case 'event_kerja_bakti':
+        return 'EVENT: Kerja Bakti! Laju sampah turun 20%.';
+      case 'event_sampah_kiriman':
+        return 'BENCANA: Sampah kiriman hanyut ke sini! Laju sampah naik 25%.';
       case 'burn':
         return '$a membakar $amt sampah! Polusi naik.';
       case 'throw_launch':

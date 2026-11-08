@@ -56,6 +56,8 @@ extension KostPainterEventFx on KostPainter {
     'hauler_strike' => const Color(0xFFFF6F00),
     'eco_subsidy' => const Color(0xFF00E676),
     'night_market' => const Color(0xFFE040FB),
+    'kerja_bakti' => const Color(0xFF26A69A),
+    'sampah_kiriman' => const Color(0xFF9E9D24),
     _ => const Color(0xFFFFFFFF),
   };
 
@@ -103,8 +105,10 @@ extension KostPainterEventFx on KostPainter {
         canvas.saveLayer(view, Paint()..color = Color.fromRGBO(0, 0, 0, w));
         _wxNightMarket(canvas, t);
         canvas.restore();
-      case 'new_semester' || 'eco_subsidy':
+      case 'new_semester' || 'eco_subsidy' || 'kerja_bakti':
         _warnSparkle(canvas, t, w, spanX, spanY, col);
+      case 'sampah_kiriman':
+        _warnBags(canvas, t, w, spanX);
     }
     _p.style = PaintingStyle.fill;
   }

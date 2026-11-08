@@ -127,6 +127,9 @@ class KostPetCrew {
             pose = PetPose.alert;
             tx = _doorX - threat * 40;
             ic = '‼️';
+          case PetSpecies.turtle:
+            pose = PetPose.alert; // masuk ke cangkang, diam di tempat
+            tx = a.x;
         }
       } else if (cheer) {
         pose = PetPose.cheer;
@@ -177,9 +180,18 @@ class KostPetCrew {
               speed = stay ? 0 : 16;
               pose = stay ? PetPose.peck : PetPose.walk;
             }
+          case PetSpecies.turtle:
+            {
+              final b = (t / 10).floor();
+              final stay = _hh(seed * 3 + a.slot * 41 + b) % 2 == 0;
+              tx = 124.0 + _hh(seed * 17 + a.slot * 83 + b) % 164;
+              speed = stay ? 0 : 9;
+              pose = stay ? PetPose.sit : PetPose.walk;
+            }
         }
       }
 
+      if (sp == PetSpecies.turtle) speed = math.min(speed, 22.0); // lambat
       tx = tx.clamp(_minX, _maxX).toDouble();
       final dx = tx - a.x;
       final moving = speed > 0 && dx.abs() > 0.8;
@@ -239,6 +251,8 @@ extension KostPainterPets on KostPainter {
           _petHen(canvas, def, a, t);
         case PetSpecies.dog:
           _petDog(canvas, def, a, t);
+        case PetSpecies.turtle:
+          _petTurtle(canvas, def, a, t);
       }
       canvas.restore();
 

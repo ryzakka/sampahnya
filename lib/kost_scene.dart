@@ -23,6 +23,8 @@ part 'kost_painter_biome.dart';
 part 'kost_painter_weather.dart';
 part 'kost_painter_eventfx.dart';
 part 'kost_painter_trees.dart';
+part 'kost_painter_polish.dart';
+part 'kost_painter_content.dart';
 
 final Stopwatch _clock = Stopwatch()..start();
 

@@ -328,6 +328,7 @@ class KostPainter extends CustomPainter {
 
     final p = _c01(d.pollution / 100);
     _drawSky(canvas, t, p);
+    _drawShootingStar(canvas, t, p);
     _drawHills(canvas, p, t);
     _drawSkyline(canvas, p);
     _drawTrees(canvas, t, p);
@@ -337,6 +338,7 @@ class KostPainter extends CustomPainter {
     _drawCars(canvas, t);
     _drawBuilding(canvas, t);
     _drawBountyCrown(canvas, t);
+    _drawCleanGlint(canvas, t);
     _drawWasteFacility(canvas, t);
     _drawWarehouse(canvas, t);
     _drawFleeing(canvas, t);
@@ -346,6 +348,8 @@ class KostPainter extends CustomPainter {
     _drawResidents(canvas, t);
     _drawOwner(canvas, t);
     _drawPets(canvas, t);
+    _drawFireflies(canvas, t, p);
+    _drawButterflies(canvas, t, p);
     _drawRats(canvas, t);
     _drawStinkAndFlies(canvas, t);
     _drawCrows(canvas, t);
@@ -361,6 +365,7 @@ class KostPainter extends CustomPainter {
     _drawWorldEventFront(canvas, t);
     _drawAsh(canvas, t, p);
     _drawHaze(canvas, p);
+    _drawDustMotes(canvas, t, p);
     _drawConfetti(canvas, t);
     _drawVignette(canvas, t, p);
     _drawEmojiReactions(canvas, t);
@@ -529,6 +534,7 @@ extension KostPainterScenery on KostPainter {
     _setView(view);
     final p = _c01(d.pollution / 100);
     _drawSky(canvas, t, p);
+    _drawShootingStar(canvas, t, p);
     _drawHills(canvas, p, t);
     _drawSkyline(canvas, p);
     _drawTrees(canvas, t, p);
@@ -537,6 +543,8 @@ extension KostPainterScenery on KostPainter {
     _drawStreetTrees(canvas, t, p); // pohon pembatas antar rumah
     _drawLampPosts(canvas);
     _drawCars(canvas, t);
+    _drawFireflies(canvas, t, p);
+    _drawButterflies(canvas, t, p);
   }
 
   /// Tiang lampu jalan di tiap slot rumah (x lokal 20). Hanya saat siklus
@@ -633,6 +641,7 @@ extension KostPainterScenery on KostPainter {
     _drawWorldEventBack(canvas, t);
     _drawBuilding(canvas, t);
     _drawBountyCrown(canvas, t);
+    _drawCleanGlint(canvas, t);
     _drawWasteFacility(canvas, t);
     _drawWarehouse(canvas, t);
     _drawFleeing(canvas, t);
@@ -675,6 +684,7 @@ extension KostPainterScenery on KostPainter {
     _drawWorldEventFront(canvas, t);
     _drawAsh(canvas, t, p);
     _drawHaze(canvas, p);
+    _drawDustMotes(canvas, t, p);
 
     // Peredam malam (biru gelap, makin pekat ke bawah agar bulan/bintang
     // tetap terang) + semburat hangat saat senja/fajar.

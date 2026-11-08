@@ -7,23 +7,27 @@ import 'dart:ui';
 //  (server yang menentukan; klien hanya menampilkan perkiraan).
 // ====================================================================
 
-enum PetSpecies { cat, hen, dog }
+enum PetSpecies { cat, hen, dog, turtle }
 
 extension PetSpeciesX on PetSpecies {
   String get label => switch (this) {
     PetSpecies.cat => 'Kucing',
     PetSpecies.hen => 'Ayam',
     PetSpecies.dog => 'Anjing',
+    PetSpecies.turtle => 'Kura-kura',
   };
   String get emoji => switch (this) {
     PetSpecies.cat => '🐈',
     PetSpecies.hen => '🐔',
     PetSpecies.dog => '🐕',
+    PetSpecies.turtle => '🐢',
   };
   String get perkText => switch (this) {
     PetSpecies.cat => 'Menjaga tikus: laju sampah dasar turun.',
     PetSpecies.hen => 'Telur harian: income naik.',
     PetSpecies.dog => 'Penjaga: sampah lemparan yang masuk berkurang.',
+    PetSpecies.turtle =>
+    'Cangkang tangguh: income naik & sampah lemparan berkurang.',
   };
 }
 
@@ -66,9 +70,12 @@ class PetDef {
   /// Teks efek untuk kartu di UI.
   String get perkLine {
     String pct(double v) => '${(v * 100).round()}%';
-    if (incBonus > 0) return 'Income +${pct(incBonus)}';
-    if (trReduction > 0) return 'Laju sampah -${pct(trReduction)}';
-    return 'Sampah masuk -${pct(defBonus)}';
+    final parts = <String>[
+      if (incBonus > 0) 'Income +${pct(incBonus)}',
+      if (trReduction > 0) 'Laju sampah -${pct(trReduction)}',
+      if (defBonus > 0) 'Sampah masuk -${pct(defBonus)}',
+    ];
+    return parts.join(' · ');
   }
 }
 
@@ -105,6 +112,16 @@ abstract final class Pets {
     PetDef(key: 'dog_husky', species: PetSpecies.dog, variant: 'Husky',
         rarity: 2, price: 700, defBonus: 0.12,
         body: Color(0xFF8FA3B5), accent: Color(0xFFF4F7FA), eye: Color(0xFF4FC3F7)),
+
+    PetDef(key: 'turtle_green', species: PetSpecies.turtle, variant: 'Hijau',
+        rarity: 0, price: 200, incBonus: 0.02, defBonus: 0.03,
+        body: Color(0xFF6B9A4B), accent: Color(0xFF3F6B2A), eye: Color(0xFF111111)),
+    PetDef(key: 'turtle_sea', species: PetSpecies.turtle, variant: 'Biru Laut',
+        rarity: 1, price: 400, incBonus: 0.03, defBonus: 0.05,
+        body: Color(0xFF4A8FA8), accent: Color(0xFF2B5F73), eye: Color(0xFF111111)),
+    PetDef(key: 'turtle_crystal', species: PetSpecies.turtle, variant: 'Kristal',
+        rarity: 2, price: 750, incBonus: 0.05, defBonus: 0.07,
+        body: Color(0xFFB39DDB), accent: Color(0xFF7E57C2), eye: Color(0xFFFFD54F)),
   ];
 
   static final Map<String, PetDef> _byKey = {
